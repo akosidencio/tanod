@@ -1381,9 +1381,7 @@ mod tests {
         header
             .insert_header(crate::cache::TRANSIENT_HEADER, "1")
             .unwrap();
-        header
-            .insert_header("x-tanod-cache-tags", "ghost")
-            .unwrap();
+        header.insert_header("x-tanod-cache-tags", "ghost").unwrap();
         let now = SystemTime::now();
         let meta = CacheMeta::new(now + Duration::from_secs(60), now, 0, 0, header);
         let key = CacheKey::new("", "/transient", "");

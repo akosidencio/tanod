@@ -33,7 +33,7 @@ origin_requests() {
 }
 
 tanod_status() {
-  sed -n 's/^[Xx]-[Hh]armost: //p' "$1" | tr -d '\r'
+  sed -n 's/^[Xx]-[Tt]anod: //p' "$1" | tr -d '\r'
 }
 
 target/debug/tanod check --config bench/nextjs-replicated.yaml >/dev/null \

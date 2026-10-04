@@ -192,10 +192,7 @@ fn init(args: &[String]) -> ExitCode {
         .filter(|parent| !parent.as_os_str().is_empty())
         && let Err(error) = std::fs::create_dir_all(parent)
     {
-        eprintln!(
-            "tanod init: could not create {}: {error}",
-            parent.display()
-        );
+        eprintln!("tanod init: could not create {}: {error}", parent.display());
         return ExitCode::FAILURE;
     }
     if let Err(error) = std::fs::write(&options.config, contents) {
@@ -365,6 +362,7 @@ fn proxy_max_attempts(retry: &tanod::config::schema::Retry) -> usize {
 }
 
 fn run(path: &str, flags: RunFlags) -> ExitCode {
+    use std::sync::Arc;
     use tanod::admin::Admin;
     use tanod::admin::drain::{DrainShutdownSignalWatch, DrainState, DrainWatcher};
     use tanod::admission::AdmissionController;
@@ -373,7 +371,6 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
     use tanod::proxy::Tanod;
     use tanod::upstream::UpstreamPool;
     use tanod::upstream::health::HealthChecker;
-    use std::sync::Arc;
 
     let cfg = match tanod::config::load(path) {
         Ok(c) => c,

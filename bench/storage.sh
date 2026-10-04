@@ -58,7 +58,7 @@ MED_MISS=$(timed_urls $MISS_URLS | sed '/^$/d' | bench_median)
 # ---- hit: one URL, warmed, then measured
 WARM_URL="http://127.0.0.1:$LISTEN_PORT/big/$BODY_MIB?hit=1"
 curl -s -o /dev/null "$WARM_URL"
-STATUS=$(curl -s -o /dev/null -D - "$WARM_URL" | tr -d '\r' | sed -n 's/^[Xx]-[Hh]armost: //p')
+STATUS=$(curl -s -o /dev/null -D - "$WARM_URL" | tr -d '\r' | sed -n 's/^[Xx]-[Tt]anod: //p')
 [ "$STATUS" = "HIT" ] || bench_fail "the measured URL was $STATUS, not HIT; there is no hit path to measure"
 HIT_URLS=""
 for i in $(seq 0 "$SAMPLES"); do HIT_URLS="$HIT_URLS $WARM_URL"; done

@@ -288,7 +288,7 @@ done
 AFTER=$(metric_sum next-image)
 ORIGIN_REQUESTS=$((AFTER - BEFORE))
 
-tanod_status() { sed -n 's/^[Xx]-[Hh]armost: //p' "$1" | tr -d '\r'; }
+tanod_status() { sed -n 's/^[Xx]-[Tt]anod: //p' "$1" | tr -d '\r'; }
 img_type() { sed -n 's/^[Cc]ontent-[Tt]ype: //p' "$1" | tr -d '\r'; }
 
 # The origin negotiated Vary: Accept, so Tanod must have honoured it.

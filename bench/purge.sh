@@ -32,7 +32,7 @@ bench_start_tanod tanod "$CONFIG" "$LISTEN_PORT" "$METRICS_PORT"
 bench_wait_http "http://127.0.0.1:$ADMIN_PORT/health/live" "tanod admin"
 bench_origin_reset "$ORIGIN_PORT"
 
-get() { curl -sS -o /dev/null -D - "http://127.0.0.1:$LISTEN_PORT$1" | tr -d '\r' | sed -n 's/^[Xx]-[Hh]armost: //p'; }
+get() { curl -sS -o /dev/null -D - "http://127.0.0.1:$LISTEN_PORT$1" | tr -d '\r' | sed -n 's/^[Xx]-[Tt]anod: //p'; }
 purge() { # query, token -> http status
   curl -sS -o "$BENCH_DIR/purge-body" -w '%{http_code}' -X POST \
     -H "Authorization: Bearer $2" \
