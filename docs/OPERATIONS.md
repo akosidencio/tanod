@@ -269,13 +269,13 @@ spec:
 
           # Kubernetes removes the pod from endpoints and sends SIGTERM at the
           # same time, and endpoint propagation is not instant. The sleep is
-          # the window in which kube-proxy on every node catches up; SIGUSR1
-          # makes readiness fail immediately so anything that polls directly
-          # also stops.
+          # the window in which kube-proxy on every node catches up; Tanod's
+          # own SIGTERM handling then fails readiness and drains. The image
+          # has no shell, so this is the built-in sleep action (Kubernetes
+          # 1.30+), not an exec of `sleep`.
           lifecycle:
             preStop:
-              exec:
-                command: ["/bin/sh", "-c", "kill -USR1 1; sleep 15"]
+              sleep: { seconds: 15 }
 
           resources:
             requests: { cpu: "500m", memory: "512Mi" }

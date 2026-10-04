@@ -564,7 +564,11 @@ docker pull ghcr.io/akosidencio/tanod:<version>
 ```
 
 The published image is built **with** `--features tls`, because nobody can
-recompile a container to turn a feature on.
+recompile a container to turn a feature on. It is the static binary on
+`scratch` — about 6 MB compressed — with only a CA bundle, `/tmp` and an
+unprivileged `tanod` user (uid 10001) beside it. There is no shell: probe it
+over HTTP (`/health/ready` on the admin listener), and use an ephemeral
+container (`kubectl debug`) to look inside a running pod.
 
 To build from source:
 

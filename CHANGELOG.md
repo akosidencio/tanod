@@ -16,6 +16,7 @@ names.
 - Added `${VAR}` environment references in the config, for secrets and per-environment values.
 - Added OTLP metric push (`telemetry.metrics.otlp`) and `https://` with custom headers for OTLP export in TLS builds, so no collector is needed beside Tanod.
 - Added a static musl binary to releases, and npm publishing of `@tanod/next` and `@tanod/linux-x64`; both share Tanod's version.
+- Shrank the container image from 155 MB to about 22 MB (6 MB compressed): the static binary on `scratch`, with no shell. Kubernetes `preStop` hooks that exec a shell need the built-in `sleep` action instead.
 - Upgrade note: every `harmost` name is now `tanod` — binary, image, config paths, systemd unit, `TANOD_*` environment variables, `X-Tanod-*` headers, `tanod_*` metrics, and `@tanod/next`. Update dashboards and alerts; metric history does not carry over.
 
 ## 0.1.4 — 2026-09-26
