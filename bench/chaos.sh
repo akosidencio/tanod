@@ -134,10 +134,10 @@ for round in $(seq 1 "$ROUNDS"); do
   before=$(wc -l < "$(bench_log tanod)")
   kill -HUP "$PID"
   for attempt in $(seq 1 100); do
-    tail -n "+$((before + 1))" "$(bench_log tanod)" | grep -q "config reloaded" && break
+    bench_log_has_since "$(bench_log tanod)" "$before" "config reloaded" && break
     sleep 0.1
   done
-  tail -n "+$((before + 1))" "$(bench_log tanod)" | grep -q "config reloaded" \
+  bench_log_has_since "$(bench_log tanod)" "$before" "config reloaded" \
     || bench_fail "SIGHUP during an origin outage did not reload"
 
   echo "  bringing both backends back"

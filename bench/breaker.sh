@@ -96,8 +96,10 @@ curl -fsS -o /dev/null --max-time 5 "http://127.0.0.1:$ORIGIN_B/__heal" \
 RECOVERED=0
 for _ in $(seq 1 60); do
   drive 4
-  if curl -s --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics" \
-    | grep -q "^tanod_upstream_ejected{upstream=\"127.0.0.1:$ORIGIN_B\"} 0$"; then
+  # Captured first: `curl | grep -q` under pipefail fails when grep exits
+  # before curl has finished writing (see bench_log_has_since).
+  METRICS=$(curl -s --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics")
+  if grep -q "^tanod_upstream_ejected{upstream=\"127.0.0.1:$ORIGIN_B\"} 0$" <<<"$METRICS"; then
     RECOVERED=1
     break
   fi

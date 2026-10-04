@@ -175,6 +175,17 @@ bench_log() {
   echo "$BENCH_DIR/logs/$1.log"
 }
 
+# Whether a line of log $1 after line $2 contains the fixed string $3.
+#
+# One process, no pipe. `tail | grep -q` under pipefail is a coin toss: grep
+# exits at the first match, tail takes SIGPIPE if it is still writing, and the
+# pipeline then reports failure for a line that was found. The busier the log
+# after the match, the likelier that is, which is why it surfaced in the chaos
+# run, where an origin outage fills the log.
+bench_log_has_since() { # log line string
+  awk -v n="$2" -v s="$3" 'NR > n && index($0, s) { found = 1; exit } END { exit !found }' "$1"
+}
+
 bench_alive() {
   kill -0 "$1" 2>/dev/null
 }

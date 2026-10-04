@@ -108,10 +108,10 @@ rm -f "$CONFIG.bak"
 before=$(wc -l < "$(bench_log tanod)")
 kill -HUP "$PID"
 for _ in $(seq 1 100); do
-  tail -n "+$((before + 1))" "$(bench_log tanod)" | grep -q "config reloaded" && break
+  bench_log_has_since "$(bench_log tanod)" "$before" "config reloaded" && break
   sleep 0.1
 done
-tail -n "+$((before + 1))" "$(bench_log tanod)" | grep -q "config reloaded" \
+bench_log_has_since "$(bench_log tanod)" "$before" "config reloaded" \
   || bench_fail "SIGHUP did not apply telemetry.tracing.trust_incoming: $(tail -n 3 "$(bench_log tanod)")"
 
 IGNORED=$(echoed /d -H "traceparent: $INBOUND" -H 'tracestate: vendor=abc')

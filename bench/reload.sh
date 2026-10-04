@@ -66,7 +66,7 @@ signal_and_wait() { # pattern
   before=$(wc -l < "$(bench_log tanod)")
   kill -HUP "$PID"
   for _ in $(seq 1 100); do
-    if tail -n "+$((before + 1))" "$(bench_log tanod)" | grep -q "$1"; then return 0; fi
+    if bench_log_has_since "$(bench_log tanod)" "$before" "$1"; then return 0; fi
     sleep 0.1
   done
   bench_fail "tanod never logged '$1' after SIGHUP"
