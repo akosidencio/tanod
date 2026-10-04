@@ -1,10 +1,10 @@
 # The outer proxy of the origin-TLS chain: plaintext downstream, TLS upstream
-# to another Harmost that is terminating it.
+# to another Tanod that is terminating it.
 #
 # `verify_cert: false` because the chain is a self-signed certificate minted
 # for this run, and because Pingora 0.8's rustls connector does not read a
-# per-peer CA store — a limitation Harmost rejects at startup rather than
-# papering over. `harmost check` prints a warning for exactly this setting.
+# per-peer CA store — a limitation Tanod rejects at startup rather than
+# papering over. `tanod check` prints a warning for exactly this setting.
 version: 1
 server:
   listen: "127.0.0.1:@LISTEN@"

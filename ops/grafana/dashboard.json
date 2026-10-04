@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "Harmost: origin workload governor. Panels are ordered by the question an operator actually asks, health first. Every metric here is labelled only by config-derived values \u2014 route id, upstream address, limiter name \u2014 never by anything a client controls.",
+  "description": "Tanod: origin workload governor. Panels are ordered by the question an operator actually asks, health first. Every metric here is labelled only by config-derived values — route id, upstream address, limiter name — never by anything a client controls.",
   "editable": true,
   "graphTooltip": 1,
   "links": [],
@@ -92,7 +92,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(harmost_draining)",
+          "expr": "sum(tanod_draining{environment=~\"$environment\"})",
           "legendFormat": "",
           "range": true,
           "refId": "A"
@@ -103,7 +103,7 @@
       "id": 3,
       "type": "stat",
       "title": "Healthy upstreams",
-      "description": "Backends passing their health check, across the fleet. Zero does not stop Harmost serving \u2014 refusing to pick would turn a degraded origin into a guaranteed outage \u2014 but it means users are on stale_if_error.",
+      "description": "Backends passing their health check, across the fleet. Zero does not stop Tanod serving — refusing to pick would turn a degraded origin into a guaranteed outage — but it means users are on stale_if_error.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -158,7 +158,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(harmost_upstream_healthy)",
+          "expr": "sum(tanod_upstream_healthy{environment=~\"$environment\"})",
           "legendFormat": "",
           "range": true,
           "refId": "A"
@@ -224,7 +224,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "count(count_values(\"fingerprint\", harmost_config_fingerprint))",
+          "expr": "count(count_values(\"fingerprint\", tanod_config_fingerprint{environment=~\"$environment\"}))",
           "legendFormat": "",
           "range": true,
           "refId": "A"
@@ -235,7 +235,7 @@
       "id": 5,
       "type": "stat",
       "title": "Origin work avoided",
-      "description": "Confirmed cache reuse: HIT and STALE responses divided by requests where reuse was genuinely possible. This conservative ratio never mixes private or bypassed origin calls into the numerator.",
+      "description": "Of the requests the cache could have answered, the share it did (hit or stale). Numerator and denominator both come from tanod_cache_total, so the value stays between 0 and 100%. (tanod_reuse_eligible_requests_total is counted at a different point and can disagree with it.)",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -286,7 +286,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(harmost_cache_total{status=~\"hit|stale\"}[5m])) / clamp_min(sum(rate(harmost_reuse_eligible_requests_total[5m])), 0.001)",
+          "expr": "sum(rate(tanod_cache_total{environment=~\"$environment\", status=~\"hit|stale\"}[5m])) / clamp_min(sum(rate(tanod_cache_total{environment=~\"$environment\", status=~\"hit|stale|miss\"}[5m])), 0.001)",
           "legendFormat": "",
           "range": true,
           "refId": "A"
@@ -348,7 +348,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(harmost_requests_total[5m]))",
+          "expr": "sum(rate(tanod_requests_total{environment=~\"$environment\"}[5m]))",
           "legendFormat": "",
           "range": true,
           "refId": "A"
@@ -358,7 +358,7 @@
     {
       "id": 7,
       "type": "row",
-      "title": "Origin load \u2014 is the ceiling holding, and is it the right one?",
+      "title": "Origin load — is the ceiling holding, and is it the right one?",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -426,7 +426,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "in flight \u2014 global"
+              "options": "in flight — global"
             },
             "properties": [
               {
@@ -441,7 +441,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "ceiling \u2014 global"
+              "options": "ceiling — global"
             },
             "properties": [
               {
@@ -474,8 +474,8 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (limiter) (harmost_origin_in_flight)",
-          "legendFormat": "in flight \u2014 {{limiter}}",
+          "expr": "sum by (limiter) (tanod_origin_in_flight{environment=~\"$environment\"})",
+          "legendFormat": "in flight — {{limiter}}",
           "range": true,
           "refId": "A"
         },
@@ -485,8 +485,8 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (limiter) (harmost_concurrency_limit)",
-          "legendFormat": "ceiling \u2014 {{limiter}}",
+          "expr": "sum by (limiter) (tanod_concurrency_limit{environment=~\"$environment\"})",
+          "legendFormat": "ceiling — {{limiter}}",
           "range": true,
           "refId": "B"
         }
@@ -628,7 +628,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (decision) (rate(harmost_admission_total[5m]))",
+          "expr": "sum by (decision) (rate(tanod_admission_total{environment=~\"$environment\"}[5m]))",
           "legendFormat": "{{decision}}",
           "range": true,
           "refId": "A"
@@ -639,7 +639,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "Origin render latency",
-      "description": "Measured from Harmost's side, so it includes the origin's own queueing. Three quantiles on one seconds axis.",
+      "description": "Measured from Tanod's side, so it includes the origin's own queueing. Three quantiles on one seconds axis.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -756,7 +756,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(harmost_origin_latency_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(tanod_origin_latency_seconds_bucket{environment=~\"$environment\"}[5m])))",
           "legendFormat": "p50",
           "range": true,
           "refId": "A"
@@ -767,7 +767,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(harmost_origin_latency_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(tanod_origin_latency_seconds_bucket{environment=~\"$environment\"}[5m])))",
           "legendFormat": "p95",
           "range": true,
           "refId": "B"
@@ -778,7 +778,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(harmost_origin_latency_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(tanod_origin_latency_seconds_bucket{environment=~\"$environment\"}[5m])))",
           "legendFormat": "p99",
           "range": true,
           "refId": "C"
@@ -860,7 +860,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (limiter) (harmost_queue_depth)",
+          "expr": "sum by (limiter) (tanod_queue_depth{environment=~\"$environment\"})",
           "legendFormat": "{{limiter}}",
           "range": true,
           "refId": "A"
@@ -870,7 +870,7 @@
     {
       "id": 12,
       "type": "row",
-      "title": "Reuse \u2014 what is being shared, and what is refused",
+      "title": "Reuse — what is being shared, and what is refused",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -1031,7 +1031,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (status) (rate(harmost_cache_total[5m]))",
+          "expr": "sum by (status) (rate(tanod_cache_total{environment=~\"$environment\"}[5m]))",
           "legendFormat": "{{status}}",
           "range": true,
           "refId": "A"
@@ -1113,7 +1113,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (reason) (rate(harmost_cache_bypass_reason_total[5m]))",
+          "expr": "sum by (reason) (rate(tanod_cache_bypass_reason_total{environment=~\"$environment\"}[5m]))",
           "legendFormat": "{{reason}}",
           "range": true,
           "refId": "A"
@@ -1226,7 +1226,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(harmost_cache_bytes)",
+          "expr": "sum(tanod_cache_bytes{environment=~\"$environment\"})",
           "legendFormat": "used",
           "range": true,
           "refId": "A"
@@ -1237,7 +1237,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(harmost_cache_max_bytes)",
+          "expr": "sum(tanod_cache_max_bytes{environment=~\"$environment\"})",
           "legendFormat": "budget",
           "range": true,
           "refId": "B"
@@ -1350,7 +1350,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(harmost_spool_bytes)",
+          "expr": "sum(tanod_spool_bytes{environment=~\"$environment\"})",
           "legendFormat": "used",
           "range": true,
           "refId": "A"
@@ -1361,7 +1361,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(harmost_spool_max_bytes)",
+          "expr": "sum(tanod_spool_max_bytes{environment=~\"$environment\"})",
           "legendFormat": "budget",
           "range": true,
           "refId": "B"
@@ -1443,7 +1443,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (class) (rate(harmost_requests_total[5m]))",
+          "expr": "sum by (class) (rate(tanod_requests_total{environment=~\"$environment\"}[5m]))",
           "legendFormat": "{{class}}",
           "range": true,
           "refId": "A"
@@ -1451,15 +1451,591 @@
       ]
     },
     {
-      "id": 18,
+      "id": 100,
       "type": "row",
-      "title": "Telemetry \u2014 never load-bearing, still worth watching",
+      "title": "Visitors — who was turned away, and was it the site’s own API?",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
         "y": 38
+      },
+      "panels": []
+    },
+    {
+      "id": 101,
+      "type": "stat",
+      "title": "Requests turned away",
+      "description": "Share of all requests Tanod refused (queue full, queue timeout, or a coalescing wait that ran out) over 5 minutes. Visitors receive these as an error page; on App Platform the 503 arrives as 504.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 39
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.01
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(tanod_cache_total{environment=~\"$environment\", status=\"shed\"}[5m])) / clamp_min(sum(rate(tanod_cache_total{environment=~\"$environment\"}[5m])), 0.001)"
+        }
+      ]
+    },
+    {
+      "id": 102,
+      "type": "stat",
+      "title": "Site API calls turned away",
+      "description": "The same share for the `api` route only: session, cart, wishlist and other calls the pages make. When these fail, signed-in pages break even if the page itself loaded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 39
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.01
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(tanod_cache_total{environment=~\"$environment\", route=\"api\", status=\"shed\"}[5m])) / clamp_min(sum(rate(tanod_cache_total{environment=~\"$environment\", route=\"api\"}[5m])), 0.001)"
+        }
+      ]
+    },
+    {
+      "id": 103,
+      "type": "stat",
+      "title": "Purges (last hour)",
+      "description": "Invalidations received on the admin listener in the last hour. Content edits in the CMS should show up here; zero during a day of edits means the storefront’s /api/revalidate is not reaching Tanod.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 39
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(increase(tanod_cache_purged_total{environment=~\"$environment\"}[1h]))"
+        }
+      ]
+    },
+    {
+      "id": 104,
+      "type": "stat",
+      "title": "Upstream breaker trips (last hour)",
+      "description": "Times an origin instance was taken out of rotation after failures, in the last hour.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 39
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 4
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(increase(tanod_upstream_breaker_trips_total{environment=~\"$environment\"}[1h]))"
+        }
+      ]
+    },
+    {
+      "id": 105,
+      "type": "timeseries",
+      "title": "Turned away, by route",
+      "description": "Requests per second refused, per route. A route that sheds while others do not has hit its own concurrency limit, not the global one.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "lineInterpolation": "smooth"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (route) (rate(tanod_cache_total{environment=~\"$environment\", status=\"shed\"}[5m]))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "id": 106,
+      "type": "timeseries",
+      "title": "Cache hit ratio, by route",
+      "description": "Share of cacheable requests answered from the cache, per route.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 43
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (route) (rate(tanod_cache_total{environment=~\"$environment\", status=~\"hit|stale\"}[5m])) / clamp_min(sum by (route) (rate(tanod_cache_total{environment=~\"$environment\", status=~\"hit|stale|miss\"}[5m])), 0.001)",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "lineInterpolation": "smooth"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 107,
+      "type": "row",
+      "title": "Origin instances — is the work spread, and are they all healthy?",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 51
+      },
+      "panels": []
+    },
+    {
+      "id": 108,
+      "type": "timeseries",
+      "title": "Requests per origin instance",
+      "description": "Origin requests per second, per resolved instance address. The lines should sit together; one carrying everything means the others are not being resolved or are ejected.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 52
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "lineInterpolation": "smooth"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (upstream) (rate(tanod_origin_requests_total{environment=~\"$environment\"}[5m]))",
+          "legendFormat": "{{upstream}}"
+        }
+      ]
+    },
+    {
+      "id": 109,
+      "type": "timeseries",
+      "title": "Work in flight per origin instance",
+      "description": "Requests each instance is rendering right now.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 52
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "lineInterpolation": "smooth"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (upstream) (tanod_upstream_in_flight{environment=~\"$environment\"})",
+          "legendFormat": "{{upstream}}"
+        }
+      ]
+    },
+    {
+      "id": 110,
+      "type": "timeseries",
+      "title": "Instance health",
+      "description": "Healthy (1) and ejected (1) per upstream, plus how many addresses each upstream name resolves to.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 52
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "lineInterpolation": "smooth"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (upstream) (tanod_upstream_healthy{environment=~\"$environment\"})",
+          "legendFormat": "healthy {{upstream}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (upstream) (tanod_upstream_ejected{environment=~\"$environment\"})",
+          "legendFormat": "ejected {{upstream}}"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (upstream) (tanod_upstream_addresses{environment=~\"$environment\"})",
+          "legendFormat": "addresses {{upstream}}"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "row",
+      "title": "Telemetry — never load-bearing, still worth watching",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 60
       },
       "panels": []
     },
@@ -1476,7 +2052,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 61
       },
       "fieldConfig": {
         "defaults": {
@@ -1599,7 +2175,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (outcome) (rate(harmost_spans_total[5m]))",
+          "expr": "sum by (outcome) (rate(tanod_spans_total{environment=~\"$environment\"}[5m]))",
           "legendFormat": "{{outcome}}",
           "range": true,
           "refId": "A"
@@ -1619,7 +2195,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 39
+        "y": 61
       },
       "fieldConfig": {
         "defaults": {
@@ -1727,7 +2303,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (reason) (rate(harmost_spool_total[5m]))",
+          "expr": "sum by (reason) (rate(tanod_spool_total{environment=~\"$environment\"}[5m]))",
           "legendFormat": "{{reason}}",
           "range": true,
           "refId": "A"
@@ -1738,7 +2314,7 @@
   "refresh": "30s",
   "schemaVersion": 39,
   "tags": [
-    "harmost",
+    "tanod",
     "proxy",
     "ssr"
   ],
@@ -1750,7 +2326,7 @@
           "text": "Prometheus",
           "value": "prometheus"
         },
-        "description": "Prometheus-compatible data source containing Harmost metrics.",
+        "description": "Prometheus-compatible data source containing Tanod metrics.",
         "hide": 0,
         "includeAll": false,
         "label": "Metrics data source",
@@ -1762,6 +2338,33 @@
         "regex": "",
         "skipUrlSync": false,
         "type": "datasource"
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(tanod_requests_total, environment)",
+          "refId": "environment"
+        },
+        "definition": "label_values(tanod_requests_total, environment)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1,
+        "hide": 0,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "description": "The environment label the collector stamps on every series (staging, production)."
       }
     ]
   },
@@ -1771,8 +2374,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Harmost",
-  "uid": "harmost-overview",
-  "version": 1,
+  "title": "Tanod",
+  "uid": "tanod-overview",
+  "version": 2,
   "weekStart": ""
 }

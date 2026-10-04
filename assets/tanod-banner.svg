@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2172" height="724" viewBox="0 0 2172 724">
+  <rect width="2172" height="724" fill="#0B1730"/>
+
+  <g transform="translate(-184 -15)">
+  <!-- Mark: many requests in, one bounded stream out to the origin. -->
+  <g fill="none" stroke="#22D3EE" stroke-width="8" stroke-linecap="round">
+    <path d="M560 262 C650 262 660 362 722 362" opacity="0.35"/>
+    <path d="M560 312 C640 312 670 362 722 362" opacity="0.55"/>
+    <path d="M560 362 L722 362" opacity="0.8"/>
+    <path d="M560 412 C640 412 670 362 722 362" opacity="0.55"/>
+    <path d="M560 462 C650 462 660 362 722 362" opacity="0.35"/>
+    <path d="M758 362 L852 362"/>
+  </g>
+  <rect x="728" y="272" width="22" height="180" rx="11" fill="#22D3EE"/>
+  <circle cx="880" cy="362" r="18" fill="#FACC15"/>
+
+  <text x="950" y="410" font-family="Montserrat" font-weight="700" font-size="200" fill="#F8FAFC" letter-spacing="-4">Tanod</text>
+  <text x="956" y="486" font-family="Open Sans" font-size="46" fill="#94A3B8">Stop traffic spikes from becoming render spikes.</text>
+  </g>
+</svg>

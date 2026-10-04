@@ -28,14 +28,14 @@ bench_spawn origin-a "$(bench_bin slow-origin)" "$ORIGIN_A" "$RENDER_MS"
 bench_spawn origin-b "$(bench_bin slow-origin)" "$ORIGIN_B" "$RENDER_MS"
 bench_wait_port 127.0.0.1 "$ORIGIN_A" "slow-origin a"
 bench_wait_port 127.0.0.1 "$ORIGIN_B" "slow-origin b"
-bench_start_harmost harmost "$CONFIG" "$LISTEN_PORT" "$METRICS_PORT"
+bench_start_tanod tanod "$CONFIG" "$LISTEN_PORT" "$METRICS_PORT"
 
 # Both backends must be passing before anything is asserted, or the first
 # phase measures the health checker's startup instead of the breaker.
-bench_wait_http "http://127.0.0.1:$ADMIN_PORT/health/ready" "harmost admin"
+bench_wait_http "http://127.0.0.1:$ADMIN_PORT/health/ready" "tanod admin"
 for _ in $(seq 1 100); do
   HEALTHY=$(curl -s --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics" \
-    | grep -c '^harmost_upstream_healthy{[^}]*} 1$')
+    | grep -c '^tanod_upstream_healthy{[^}]*} 1$')
   [ "${HEALTHY:-0}" -ge 2 ] && break
   sleep 0.1
 done
@@ -64,11 +64,11 @@ drive "$REQUESTS"
 # Prove the premise before the conclusion: if the health check had noticed,
 # this would be a test of health checking and not of the breaker.
 STILL_HEALTHY=$(curl -s --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics" \
-  | grep -c '^harmost_upstream_healthy{[^}]*} 1$')
+  | grep -c '^tanod_upstream_healthy{[^}]*} 1$')
 bench_assert_eq "${STILL_HEALTHY:-0}" 2 "backends still passing their health check"
 
 EJECTED=$(curl -s --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics" \
-  | grep -c "^harmost_upstream_ejected{upstream=\"127.0.0.1:$ORIGIN_B\"} 1$")
+  | grep -c "^tanod_upstream_ejected{upstream=\"127.0.0.1:$ORIGIN_B\"} 1$")
 bench_assert_eq "${EJECTED:-0}" 1 "origin-b ejected while its health check passes"
 
 # ---- phase 3: with it ejected, the good backend takes the traffic
@@ -97,7 +97,7 @@ RECOVERED=0
 for _ in $(seq 1 60); do
   drive 4
   if curl -s --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics" \
-    | grep -q "^harmost_upstream_ejected{upstream=\"127.0.0.1:$ORIGIN_B\"} 0$"; then
+    | grep -q "^tanod_upstream_ejected{upstream=\"127.0.0.1:$ORIGIN_B\"} 0$"; then
     RECOVERED=1
     break
   fi
@@ -120,5 +120,5 @@ bench_result healthy_split "${BASE_A:-?}/${BASE_B:-?}"
 bench_result ejected_split "${AFTER_A:-?}/${AFTER_B:-?}"
 bench_result recovered_split "${BACK_A:-?}/${BACK_B:-?}"
 
-bench_assert_no_panics harmost
+bench_assert_no_panics tanod
 bench_pass "a backend passing its health check and failing every render was ejected (${AFTER_B:-?} of $REQUESTS afterwards), then returned to rotation on a recovery probe once it healed (${BACK_B:-?} of $REQUESTS)"

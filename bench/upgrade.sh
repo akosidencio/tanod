@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Restarting without dropping requests, both ways Harmost supports it.
+# Restarting without dropping requests, both ways Tanod supports it.
 #
 # **The socket handover is Linux-only.** Pingora passes listening file
 # descriptors between processes with `SCM_RIGHTS`; its non-Linux `get_fds_from`
 # is a stub that logs "Upgrade is not currently supported" and returns
 # `ECONNREFUSED` — which reads exactly like "the old process is not running"
-# and sends an operator hunting a problem that does not exist. Harmost refuses
+# and sends an operator hunting a problem that does not exist. Tanod refuses
 # `--upgrade` up front off Linux instead, and this script asserts the handover
 # where it works and the drain-based restart everywhere.
 #
@@ -21,7 +21,7 @@
 #             asserting something the platform cannot deliver, which is the
 #             kind of evidence this suite exists to remove.
 #
-# Also asserted on every platform: `harmost run --test` exits zero on a config
+# Also asserted on every platform: `tanod run --test` exits zero on a config
 # that can start and non-zero on one that cannot. That is the pre-flight the
 # documented procedure runs before it signals a live process, and a check that
 # cannot fail is not a check.
@@ -44,7 +44,7 @@ CONFIG="$BENCH_DIR/upgrade.yaml"
 
 bench_render_config "$BENCH_ROOT/bench/upgrade.yaml.tpl" "$CONFIG" \
   "LISTEN=$LISTEN_PORT" "ORIGIN=$ORIGIN_PORT" "ADMIN=$ADMIN_PORT" \
-  "PIDFILE=$BENCH_DIR/harmost.pid" "UPGRADESOCK=$BENCH_DIR/upgrade.sock"
+  "PIDFILE=$BENCH_DIR/tanod.pid" "UPGRADESOCK=$BENCH_DIR/upgrade.sock"
 
 bench_spawn origin "$(bench_bin slow-origin)" "$ORIGIN_PORT" 20
 bench_wait_port 127.0.0.1 "$ORIGIN_PORT" "slow-origin"
@@ -83,22 +83,22 @@ wait_for_ready() { # expected code
 
 # ------------------------------------------------------------- pre-flight
 
-echo "pre-flight: harmost run --test"
-"$(bench_bin harmost)" run --config "$CONFIG" --test >"$BENCH_DIR/logs/test-ok.log" 2>&1
+echo "pre-flight: tanod run --test"
+"$(bench_bin tanod)" run --config "$CONFIG" --test >"$BENCH_DIR/logs/test-ok.log" 2>&1
 TEST_OK=$?
 echo "  valid config           exit $TEST_OK"
-bench_assert_eq "$TEST_OK" 0 "harmost run --test on a valid config"
+bench_assert_eq "$TEST_OK" 0 "tanod run --test on a valid config"
 
 printf 'version: 1\norigin:\n  upstreams: []\n' > "$BENCH_DIR/broken.yaml"
-"$(bench_bin harmost)" run --config "$BENCH_DIR/broken.yaml" --test >"$BENCH_DIR/logs/test-bad.log" 2>&1
+"$(bench_bin tanod)" run --config "$BENCH_DIR/broken.yaml" --test >"$BENCH_DIR/logs/test-bad.log" 2>&1
 TEST_BAD=$?
 echo "  invalid config         exit $TEST_BAD"
-[ "$TEST_BAD" -ne 0 ] || bench_fail "harmost run --test exited 0 on a config that cannot start"
+[ "$TEST_BAD" -ne 0 ] || bench_fail "tanod run --test exited 0 on a config that cannot start"
 
 if [ "$MODE" = "drain" ]; then
   # The message is the deliverable here, not the exit code: a bare
   # ECONNREFUSED would be read as a missing peer.
-  "$(bench_bin harmost)" run --config "$CONFIG" --upgrade \
+  "$(bench_bin tanod)" run --config "$CONFIG" --upgrade \
     >"$BENCH_DIR/logs/test-upgrade.log" 2>&1
   echo "  --upgrade off Linux    exit $?"
   grep -q "not supported on this platform" "$BENCH_DIR/logs/test-upgrade.log" \
@@ -107,7 +107,7 @@ fi
 
 # --------------------------------------------------------- the old process
 
-bench_start_harmost old "$CONFIG" "$LISTEN_PORT" "$ADMIN_PORT"
+bench_start_tanod old "$CONFIG" "$LISTEN_PORT" "$ADMIN_PORT"
 OLD_PID=$(bench_pid old)
 echo
 echo "old process pid $OLD_PID on $LISTEN_PORT, admin on $ADMIN_PORT"
@@ -145,7 +145,7 @@ done
 bench_assert_eq "$AUTO_EXITED" 1 "the automatic-drain process exited after SIGTERM"
 
 # Start a fresh old process for the platform-specific restart scenario below.
-bench_start_harmost old "$CONFIG" "$LISTEN_PORT" "$ADMIN_PORT"
+bench_start_tanod old "$CONFIG" "$LISTEN_PORT" "$ADMIN_PORT"
 OLD_PID=$(bench_pid old)
 READY=$(wait_for_ready 200)
 bench_assert_eq "$READY" 200 "readiness after the automatic-drain regression check"
@@ -164,7 +164,7 @@ if [ "$MODE" = "handover" ]; then
 
   echo
   echo "starting the new process with --upgrade"
-  bench_spawn new "$(bench_bin harmost)" run --config "$CONFIG" --upgrade
+  bench_spawn new "$(bench_bin tanod)" run --config "$CONFIG" --upgrade
   NEW_PID=$(bench_pid new)
   sleep 1
   echo "  new process pid        $NEW_PID"
@@ -242,7 +242,7 @@ else
   bench_assert_le "$GAP" 12 "seconds from SIGTERM to exit"
   bench_assert_gt "$GAP" 2 "seconds from SIGTERM to exit (in-flight requests got no window)"
 
-  bench_start_harmost new "$CONFIG" "$LISTEN_PORT" "$ADMIN_PORT"
+  bench_start_tanod new "$CONFIG" "$LISTEN_PORT" "$ADMIN_PORT"
   NEW_PID=$(bench_pid new)
   echo "  new process pid        $NEW_PID"
   READY=$(wait_for_ready 200)

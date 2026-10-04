@@ -4,7 +4,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPOSE=(docker compose -p harmost-nextjs-replicated -f compose.nextjs.yaml -f compose.nextjs-replicated.yaml)
+COMPOSE=(docker compose -p tanod-nextjs-replicated -f compose.nextjs.yaml -f compose.nextjs-replicated.yaml)
 EDGE=http://127.0.0.1:18080
 RESULT_DIR=$(mktemp -d)
 
@@ -22,21 +22,21 @@ fail() {
 
 global_in_flight() {
   curl -fsS "$1/metrics" | awk '
-    /^harmost_origin_in_flight[{]/ && /limiter="global"/ { sum += $2 }
+    /^tanod_origin_in_flight[{]/ && /limiter="global"/ { sum += $2 }
     END { print sum + 0 }'
 }
 
 origin_requests() {
   curl -fsS "$1/metrics" | awk '
-    /^harmost_origin_requests_total[{]/ { sum += $2 }
+    /^tanod_origin_requests_total[{]/ { sum += $2 }
     END { print sum + 0 }'
 }
 
-harmost_status() {
+tanod_status() {
   sed -n 's/^[Xx]-[Hh]armost: //p' "$1" | tr -d '\r'
 }
 
-target/debug/harmost check --config bench/nextjs-replicated.yaml >/dev/null \
+target/debug/tanod check --config bench/nextjs-replicated.yaml >/dev/null \
   || fail "the statically partitioned configuration was rejected"
 "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
 "${COMPOSE[@]}" up --build --detach || fail "the replicated reference did not start"
@@ -57,16 +57,16 @@ for admin in http://127.0.0.1:19191 http://127.0.0.1:19291; do
     || fail "$admin does not report the declared group capacity"
 done
 
-# Consistent hashing by URI keeps a cache key on one Harmost process.
+# Consistent hashing by URI keeps a cache key on one Tanod process.
 AFFINITY_URL="$EDGE/products/affinity-$$"
 curl -fsS -D "$RESULT_DIR/affinity-first.headers" -o /dev/null "$AFFINITY_URL"
 curl -fsS -D "$RESULT_DIR/affinity-second.headers" -o /dev/null "$AFFINITY_URL"
-[ "$(harmost_status "$RESULT_DIR/affinity-first.headers")" = "MISS" ] \
+[ "$(tanod_status "$RESULT_DIR/affinity-first.headers")" = "MISS" ] \
   || fail "the affinity precondition did not start with a miss"
-[ "$(harmost_status "$RESULT_DIR/affinity-second.headers")" = "HIT" ] \
-  || fail "the same URI did not return to its local Harmost cache"
+[ "$(tanod_status "$RESULT_DIR/affinity-second.headers")" = "HIT" ] \
+  || fail "the same URI did not return to its local Tanod cache"
 
-# Put one path in both local caches, then use @harmost/next fan-out and prove
+# Put one path in both local caches, then use @tanod/next fan-out and prove
 # neither process can serve its old response.
 PURGE_PATH="/products/purge-replicas-$$"
 for port in 18181 18282; do
@@ -74,27 +74,27 @@ for port in 18181 18282; do
     -o /dev/null "http://127.0.0.1:$port$PURGE_PATH"
   curl -fsS -H 'Host: storefront.test' -D "$RESULT_DIR/hit-$port.headers" \
     -o /dev/null "http://127.0.0.1:$port$PURGE_PATH"
-  [ "$(harmost_status "$RESULT_DIR/hit-$port.headers")" = "HIT" ] \
-    || fail "Harmost on port $port did not fill its local cache"
+  [ "$(tanod_status "$RESULT_DIR/hit-$port.headers")" = "HIT" ] \
+    || fail "Tanod on port $port did not fill its local cache"
 done
 
 # The single-quoted program is JavaScript; its template expression belongs to Node.
 # shellcheck disable=SC2016
 PURGE_PATH="$PURGE_PATH" node --input-type=module -e '
-  import { createPurger } from "./packages/harmost-next/src/index.js";
+  import { createPurger } from "./packages/tanod-next/src/index.js";
   const purger = createPurger({
     endpoints: ["http://127.0.0.1:19191", "http://127.0.0.1:19291"],
     token: "nextjs-reference-purge-token-0001",
   });
   const result = await purger.purgePaths([process.env.PURGE_PATH]);
   if (result.replicas !== 2) throw new Error(`expected 2 purge results, got ${result.replicas}`);
-' || fail "replicated purge did not reach both Harmost admin listeners"
+' || fail "replicated purge did not reach both Tanod admin listeners"
 
 for port in 18181 18282; do
   curl -fsS -H 'Host: storefront.test' -D "$RESULT_DIR/purged-$port.headers" \
     -o /dev/null "http://127.0.0.1:$port$PURGE_PATH"
-  [ "$(harmost_status "$RESULT_DIR/purged-$port.headers")" = "MISS" ] \
-    || fail "Harmost on port $port retained a purged response"
+  [ "$(tanod_status "$RESULT_DIR/purged-$port.headers")" = "MISS" ] \
+    || fail "Tanod on port $port retained a purged response"
 done
 
 # Distinct paths bypass reuse. The sum of both local limiters must stay inside
@@ -120,18 +120,18 @@ wait "$LOAD_PID" || fail "the group-capacity burst failed"
 
 # Abrupt loss of one governor must reduce capacity instead of producing an
 # outage. After restart, URI hashing must use both replicas again.
-"${COMPOSE[@]}" kill -s SIGKILL harmost-1 >/dev/null
+"${COMPOSE[@]}" kill -s SIGKILL tanod-1 >/dev/null
 FAILURE_RUN="failure-$(date +%s)-$$"
 seq 1 16 | xargs -P 16 -I{} \
   curl -sS --retry 2 --retry-connrefused -o /dev/null -w '%{http_code}\n' \
     "$EDGE/products/$FAILURE_RUN-{}" > "$RESULT_DIR/failure-status"
 [ "$(grep -c '^200$' "$RESULT_DIR/failure-status" || true)" -eq 16 ] \
-  || fail "traffic failed while one Harmost replica was unavailable"
+  || fail "traffic failed while one Tanod replica was unavailable"
 
-"${COMPOSE[@]}" start harmost-1 >/dev/null
+"${COMPOSE[@]}" start tanod-1 >/dev/null
 for attempt in $(seq 1 60); do
   curl -fsS -o /dev/null http://127.0.0.1:19191/health/ready && break
-  [ "$attempt" = 60 ] && fail "the stopped Harmost replica did not recover"
+  [ "$attempt" = 60 ] && fail "the stopped Tanod replica did not recover"
   sleep 1
 done
 sleep 3
@@ -143,8 +143,8 @@ seq 1 24 | xargs -P 24 -I{} \
 FIRST_AFTER=$(origin_requests http://127.0.0.1:19190)
 SECOND_AFTER=$(origin_requests http://127.0.0.1:19290)
 [ "$FIRST_AFTER" -gt "$FIRST_BEFORE" ] \
-  || fail "the recovered Harmost replica received no origin work"
+  || fail "the recovered Tanod replica received no origin work"
 [ "$SECOND_AFTER" -gt "$SECOND_BEFORE" ] \
-  || fail "the surviving Harmost replica received no origin work after recovery"
+  || fail "the surviving Tanod replica received no origin work after recovery"
 
 echo "PASS: static group budget, URI affinity, purge fan-out, failure, and recovery"

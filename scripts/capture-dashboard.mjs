@@ -1,9 +1,9 @@
 import { chromium } from "../bench/browser/node_modules/playwright/index.mjs";
 
 const base = process.env.GRAFANA_URL ?? "http://127.0.0.1:13000";
-const dashboard = `${base}/d/harmost-overview/harmost?orgId=1&from=now-5m&to=now&refresh=5s&kiosk`;
-const overview = process.env.DASHBOARD_SCREENSHOT ?? "assets/harmost-dashboard.png";
-const full = process.env.DASHBOARD_FULL_SCREENSHOT ?? "assets/harmost-dashboard-full.png";
+const dashboard = `${base}/d/tanod-overview/tanod?orgId=1&from=now-5m&to=now&refresh=5s&kiosk`;
+const overview = process.env.DASHBOARD_SCREENSHOT ?? "assets/tanod-dashboard.png";
+const full = process.env.DASHBOARD_FULL_SCREENSHOT ?? "assets/tanod-dashboard-full.png";
 
 const browser = await chromium.launch({ headless: true });
 try {

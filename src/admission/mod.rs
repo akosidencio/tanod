@@ -1,6 +1,6 @@
 //! Bounding how much origin work is in flight.
 //!
-//! This is the part of Harmost that keeps working when nothing is cacheable and
+//! This is the part of Tanod that keeps working when nothing is cacheable and
 //! nothing can be collapsed, which is most of what a dynamic SSR app looks like.
 //!
 //! Order matters and is deliberate: reuse opportunities are exhausted *before*

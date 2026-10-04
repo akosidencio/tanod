@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Can a client tell Harmost who it is?
+# Can a client tell Tanod who it is?
 #
 # `X-Forwarded-For` and `X-Forwarded-Proto` are set by whoever spoke to the
 # proxy last. On a public listener that is the client, and believing them
@@ -8,9 +8,9 @@
 #   * **A cache partition the client controls.** The scheme is part of the
 #     cache key, so a client that can set `X-Forwarded-Proto` mints a fresh key
 #     — and therefore a fresh origin render — per request. That is the exact
-#     origin-work amplification Harmost exists to prevent, delivered by
-#     Harmost.
-#   * **A forged identity.** The address Harmost passes upstream is what the
+#     origin-work amplification Tanod exists to prevent, delivered by
+#     Tanod.
+#   * **A forged identity.** The address Tanod passes upstream is what the
 #     origin's own rate limits, audit logs and geo rules read.
 #
 # Every check below runs twice, once with the peer untrusted and once with it
@@ -33,7 +33,7 @@ start() { # name, from-list, client_ip source, scheme source
   bench_render_config "$BENCH_ROOT/bench/forwarded.yaml" "$BENCH_DIR/$1.yaml" \
     "LISTEN=$PORT" "ORIGIN=$ORIGIN_PORT" "TRUST=$2" \
     "CLIENT_IP_SOURCE=$3" "SCHEME_SOURCE=$4"
-  bench_start_harmost "$1" "$BENCH_DIR/$1.yaml" "$PORT"
+  bench_start_tanod "$1" "$BENCH_DIR/$1.yaml" "$PORT"
 }
 
 # What the origin says it received, for one JSON field.
@@ -57,7 +57,7 @@ GOT_PROTO=$(received "$UNTRUSTED" x_forwarded_proto \
   -H 'X-Forwarded-For: 9.9.9.9' -H 'X-Forwarded-Proto: https')
 
 [ "$GOT_FOR" = "127.0.0.1" ] || bench_fail \
-  "an untrusted client claimed X-Forwarded-For: 9.9.9.9 and the origin received '$GOT_FOR'; the address the origin sees must be the one Harmost observed, not the one the client chose"
+  "an untrusted client claimed X-Forwarded-For: 9.9.9.9 and the origin received '$GOT_FOR'; the address the origin sees must be the one Tanod observed, not the one the client chose"
 printf '  %-48s %s\n' "untrusted X-Forwarded-For is replaced" "origin saw $GOT_FOR"
 bench_result untrusted_xff "$GOT_FOR"
 
@@ -66,7 +66,7 @@ bench_result untrusted_xff "$GOT_FOR"
 printf '  %-48s %s\n' "untrusted X-Forwarded-Proto is replaced" "origin saw $GOT_PROTO"
 bench_result untrusted_xfp "$GOT_PROTO"
 
-# An RFC 7239 `Forwarded` header is a claim under a different name. Harmost
+# An RFC 7239 `Forwarded` header is a claim under a different name. Tanod
 # does not emit one, so anything arriving under that name is unvouched-for and
 # must not reach the origin.
 GOT_FWD=$(received "$UNTRUSTED" forwarded -H 'Forwarded: for=9.9.9.9;proto=https')
@@ -164,4 +164,4 @@ printf '  %-48s %s\n' "source: none reads nothing, even from a trusted peer" "$G
 echo
 bench_print_params
 echo
-bench_pass "forwarded metadata is a claim, and Harmost treats it as one: an untrusted client can move neither the origin's view of it nor the cache key, a trusted proxy is believed, and the hop walk resolves to the address a trusted proxy observed"
+bench_pass "forwarded metadata is a claim, and Tanod treats it as one: an untrusted client can move neither the origin's view of it nor the cache key, a trusted proxy is believed, and the hop walk resolves to the address a trusted proxy observed"

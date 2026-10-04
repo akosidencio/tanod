@@ -4,9 +4,9 @@
 //! Two things are separable and only one of them is optional.
 //!
 //! **Correlation** is unconditional. Every request gets a trace id and a span
-//! id, both appear in the access log, and the id Harmost concluded is what
+//! id, both appear in the access log, and the id Tanod concluded is what
 //! reaches the origin in `traceparent`. That alone is what turns "the origin
-//! logged a slow render at 12:04" into "*this* request, which Harmost shed a
+//! logged a slow render at 12:04" into "*this* request, which Tanod shed a
 //! sibling of, and here is its route and its cache status".
 //!
 //! **Export** is configuration. See [`super::otlp`].
@@ -16,13 +16,13 @@
 //! Anyone can send one, and believing it means anyone on the internet can
 //! write into your tracing backend under a trace id of their choosing, or
 //! attach their requests to someone else's trace. The default is to ignore it.
-//! Unlike `X-Forwarded-For`, trace context has no hop chain Harmost can inspect
+//! Unlike `X-Forwarded-For`, trace context has no hop chain Tanod can inspect
 //! to distinguish a header a trusted proxy created from one it merely passed
 //! through. `from_trusted_proxies` is therefore safe only when every trusted
 //! proxy strips or replaces client-supplied trace headers.
 //!
 //! Note what that does *not* break. When an inbound context is ignored,
-//! Harmost still traces the request — it simply starts a new trace rather than
+//! Tanod still traces the request — it simply starts a new trace rather than
 //! joining one. A dropped request is never the failure mode.
 
 use crate::config::schema::{Sample, SampleMode, TrustIncoming};
@@ -32,14 +32,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// how HTTP/2 delivers it and how `http::HeaderMap` indexes either way.
 pub const TRACEPARENT: &str = "traceparent";
 /// Vendor state travelling alongside it. Forwarded verbatim when believed,
-/// because its contents belong to systems Harmost knows nothing about.
+/// because its contents belong to systems Tanod knows nothing about.
 pub const TRACESTATE: &str = "tracestate";
 
-/// The longest `tracestate` Harmost will carry.
+/// The longest `tracestate` Tanod will carry.
 ///
 /// The specification's own limit is 512 characters, and the header is
 /// forwarded to the origin — so an unbounded one is a request-smuggling-sized
-/// header that Harmost would be amplifying rather than merely receiving.
+/// header that Tanod would be amplifying rather than merely receiving.
 const MAX_TRACESTATE: usize = 512;
 
 /// A 16-byte trace id. Never all zero: the specification reserves that as
@@ -156,14 +156,14 @@ fn mix_fallback(out: &mut [u8]) {
     }
 }
 
-/// The trace context for one request, as Harmost concluded it.
+/// The trace context for one request, as Tanod concluded it.
 #[derive(Debug, Clone)]
 pub struct RequestTrace {
     pub trace_id: TraceId,
     /// The span this request's server span belongs under, when an inbound
     /// context was believed.
     pub parent_span_id: Option<SpanId>,
-    /// Harmost's own server span for this request.
+    /// Tanod's own server span for this request.
     pub span_id: SpanId,
     /// A second span id, minted for the origin fetch and sent upstream as the
     /// parent of whatever the origin records. `None` until the request
@@ -263,7 +263,7 @@ pub struct Parsed {
 
 /// Parse a `traceparent` strictly: `00-<32 hex>-<16 hex>-<2 hex>`.
 ///
-/// Strict on purpose. A lenient parser here would let a caller hand Harmost a
+/// Strict on purpose. A lenient parser here would let a caller hand Tanod a
 /// malformed id that it then forwards to the origin and writes into a tracing
 /// backend, and "we accepted it, so it must be fine" is how a bad id spreads
 /// through three systems. Anything that does not parse is treated as absent,
@@ -432,7 +432,7 @@ mod tests {
         assert!(t.continued);
         assert_eq!(t.trace_id.to_hex(), "4bf92f3577b34da6a3ce929d0e0e4736");
         assert_eq!(t.parent_span_id.unwrap().to_hex(), "00f067aa0ba902b7");
-        // The server span is Harmost's own, never the caller's.
+        // The server span is Tanod's own, never the caller's.
         assert_ne!(t.span_id.to_hex(), "00f067aa0ba902b7");
     }
 

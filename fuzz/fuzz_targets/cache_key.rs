@@ -11,8 +11,8 @@
 //! client could put on the wire.
 
 use arbitrary::Arbitrary;
-use harmost::cache::KeyBuilder;
-use harmost::classifier::RequestMetadata;
+use tanod::cache::KeyBuilder;
+use tanod::classifier::RequestMetadata;
 use http::{HeaderMap, HeaderName, HeaderValue, Method};
 use libfuzzer_sys::fuzz_target;
 
@@ -33,7 +33,7 @@ struct Input<'a> {
     right: Request<'a>,
 }
 
-fn build(req: &Request<'_>) -> Option<harmost::cache::CacheKey> {
+fn build(req: &Request<'_>) -> Option<tanod::cache::CacheKey> {
     let method = Method::from_bytes(req.method.as_bytes()).ok()?;
     let mut headers = HeaderMap::new();
     let mut variant = Vec::new();

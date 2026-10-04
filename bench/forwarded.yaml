@@ -1,4 +1,4 @@
-# Trusted proxies: who is allowed to tell Harmost about the client.
+# Trusted proxies: who is allowed to tell Tanod about the client.
 #
 # The `from:` list is substituted per run: empty for the untrusted case, one
 # loopback block for the trusted one. Everything else is held constant, so the

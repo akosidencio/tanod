@@ -1,0 +1,183 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 650" role="img" aria-labelledby="title description">
+  <title id="title">How Tanod protects a server-rendered origin</title>
+  <desc id="description">
+    Animated request flow. Tanod classifies each request, reuses a safe cached or in-flight response first,
+    and sends only genuine misses through bounded admission control. Accepted work reaches the origin;
+    excess work receives stale content or is shed. Origin responses pass a safety check before caching.
+  </desc>
+
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#08111f"/>
+      <stop offset="1" stop-color="#111d35"/>
+    </linearGradient>
+    <linearGradient id="tanodPanel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#12233f"/>
+      <stop offset="1" stop-color="#0d192e"/>
+    </linearGradient>
+    <linearGradient id="originPanel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#402647"/>
+      <stop offset="1" stop-color="#261a36"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="170%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#020617" flood-opacity="0.5"/>
+    </filter>
+    <filter id="glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <marker id="arrowCyan" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#5ee7f0"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#59e391"/>
+    </marker>
+    <marker id="arrowAmber" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#f6bd60"/>
+    </marker>
+    <marker id="arrowPink" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#ff7aa2"/>
+    </marker>
+  </defs>
+
+  <style>
+    text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .eyebrow { fill: #7f95b5; font-size: 12px; font-weight: 700; letter-spacing: 2px; }
+    .heading { fill: #f8fbff; font-size: 25px; font-weight: 750; }
+    .subheading { fill: #9fb0c9; font-size: 14px; }
+    .box-title { fill: #f8fbff; font-size: 16px; font-weight: 700; }
+    .box-copy { fill: #aebed5; font-size: 12px; }
+    .label { fill: #8fa3c0; font-size: 11px; font-weight: 700; letter-spacing: 1px; }
+    .flow { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; opacity: 0.82; }
+    .flow-cyan { stroke: #5ee7f0; marker-end: url(#arrowCyan); }
+    .flow-green { stroke: #59e391; marker-end: url(#arrowGreen); }
+    .flow-amber { stroke: #f6bd60; marker-end: url(#arrowAmber); }
+    .flow-pink { stroke: #ff7aa2; marker-end: url(#arrowPink); }
+    .moving { filter: url(#glow); }
+    .pulse { animation: pulse 2.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+    .pulse-delay { animation-delay: 0.8s; }
+    @keyframes pulse { 0%, 100% { opacity: 0.65; transform: scale(0.96); } 50% { opacity: 1; transform: scale(1.03); } }
+    @media (prefers-reduced-motion: reduce) {
+      .moving { display: none; }
+      .pulse { animation: none; }
+    }
+  </style>
+
+  <rect width="1200" height="650" rx="24" fill="url(#background)"/>
+  <path d="M0 115H1200" stroke="#243552" stroke-width="1"/>
+
+  <text x="42" y="45" class="eyebrow">REQUEST LIFECYCLE</text>
+  <text x="42" y="78" class="heading">Reuse first. Bound real origin work.</text>
+  <text x="1158" y="72" class="subheading" text-anchor="end">Tanod · Pingora reverse proxy</text>
+
+  <rect x="205" y="135" width="690" height="420" rx="24" fill="url(#tanodPanel)" stroke="#294466" stroke-width="1.5"/>
+  <text x="235" y="168" class="eyebrow" fill="#5ee7f0">TANOD</text>
+
+  <g filter="url(#shadow)">
+    <rect x="28" y="260" width="145" height="90" rx="16" fill="#15243b" stroke="#3d5578" stroke-width="1.5"/>
+    <circle cx="100" cy="286" r="10" fill="none" stroke="#9fb0c9" stroke-width="2"/>
+    <path d="M82 326c3-13 12-20 18-20s15 7 18 20" fill="none" stroke="#9fb0c9" stroke-width="2" stroke-linecap="round"/>
+    <text x="100" y="342" class="box-title" text-anchor="middle">Clients</text>
+  </g>
+
+  <g class="pulse" filter="url(#shadow)">
+    <rect x="235" y="260" width="165" height="90" rx="16" fill="#172b48" stroke="#4d789d" stroke-width="1.5"/>
+    <text x="317.5" y="294" class="label" text-anchor="middle">1 · INSPECT</text>
+    <text x="317.5" y="321" class="box-title" text-anchor="middle">Classify + policy</text>
+    <text x="317.5" y="340" class="box-copy" text-anchor="middle">route · variant · privacy</text>
+  </g>
+
+  <g class="pulse pulse-delay" filter="url(#shadow)">
+    <rect x="450" y="260" width="200" height="90" rx="16" fill="#153449" stroke="#43b9c6" stroke-width="1.5"/>
+    <text x="550" y="294" class="label" text-anchor="middle">2 · REUSE FIRST</text>
+    <text x="550" y="321" class="box-title" text-anchor="middle">Cache + coalescing</text>
+    <text x="550" y="340" class="box-copy" text-anchor="middle">hit or in-flight follower</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="700" y="260" width="175" height="90" rx="16" fill="#2d2d38" stroke="#d8a74f" stroke-width="1.5"/>
+    <text x="787.5" y="294" class="label" text-anchor="middle">3 · GENUINE MISS</text>
+    <text x="787.5" y="321" class="box-title" text-anchor="middle">Admission control</text>
+    <text x="787.5" y="340" class="box-copy" text-anchor="middle">route + global limits</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="940" y="260" width="220" height="90" rx="16" fill="url(#originPanel)" stroke="#b76f9c" stroke-width="1.5"/>
+    <text x="1050" y="294" class="label" text-anchor="middle">4 · BOUNDED WORK</text>
+    <text x="1050" y="321" class="box-title" text-anchor="middle">SSR origin</text>
+    <text x="1050" y="340" class="box-copy" text-anchor="middle">Next.js or another renderer</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="450" y="188" width="200" height="48" rx="14" fill="#14362e" stroke="#42c87a" stroke-width="1.5"/>
+    <text x="550" y="217" class="box-title" text-anchor="middle" fill="#74eca4">Immediate response</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="700" y="430" width="175" height="72" rx="16" fill="#3a2c1e" stroke="#d8a74f" stroke-width="1.5"/>
+    <text x="787.5" y="459" class="box-title" text-anchor="middle">Stale or shed</text>
+    <text x="787.5" y="481" class="box-copy" text-anchor="middle">bounded queue + deadline</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="940" y="430" width="220" height="72" rx="16" fill="#322438" stroke="#d276a5" stroke-width="1.5"/>
+    <text x="1050" y="459" class="box-title" text-anchor="middle">Response safety gate</text>
+    <text x="1050" y="481" class="box-copy" text-anchor="middle">private responses are never stored</text>
+  </g>
+
+  <path id="requestPath" class="flow flow-cyan" d="M173 305H235"/>
+  <path id="classifyPath" class="flow flow-cyan" d="M400 305H450"/>
+  <path id="hitPath" class="flow flow-green" d="M550 260V236"/>
+  <path id="hitReturnPath" class="flow flow-green" d="M450 212H100V260"/>
+  <path id="missPath" class="flow flow-amber" d="M650 305H700"/>
+  <path id="admitPath" class="flow flow-amber" d="M875 305H940"/>
+  <path id="overflowPath" class="flow flow-pink" d="M787 350V430"/>
+  <path id="overflowReturnPath" class="flow flow-pink" d="M700 466H173"/>
+  <path id="originResponsePath" class="flow flow-green" d="M1050 350V430"/>
+  <path id="storePath" class="flow flow-green" d="M940 466H900V530H550V350"/>
+  <path id="safeReturnPath" class="flow flow-cyan" d="M1050 502V575H100V350"/>
+
+  <text x="670" y="291" class="label" text-anchor="middle" fill="#f6bd60">MISS</text>
+  <text x="570" y="250" class="label" fill="#59e391">HIT</text>
+  <text x="805" y="395" class="label" fill="#ff7aa2">FULL / TIMEOUT</text>
+  <text x="745" y="523" class="label" text-anchor="middle" fill="#59e391">STORE ONLY WHEN SHAREABLE</text>
+
+  <circle class="moving" r="5" fill="#5ee7f0" opacity="0">
+    <animateMotion dur="1.2s" repeatCount="indefinite" path="M173 305H450"/>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.08;0.92;1" dur="1.2s" repeatCount="indefinite"/>
+  </circle>
+  <circle class="moving" r="5" fill="#59e391" opacity="0">
+    <animateMotion dur="1.6s" begin="0.35s" repeatCount="indefinite" path="M550 260V212H100V260"/>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.08;0.92;1" dur="1.6s" begin="0.35s" repeatCount="indefinite"/>
+  </circle>
+  <circle class="moving" r="5" fill="#f6bd60" opacity="0">
+    <animateMotion dur="1.5s" begin="0.7s" repeatCount="indefinite" path="M650 305H940"/>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.08;0.92;1" dur="1.5s" begin="0.7s" repeatCount="indefinite"/>
+  </circle>
+  <circle class="moving" r="5" fill="#ff7aa2" opacity="0">
+    <animateMotion dur="2s" begin="1.1s" repeatCount="indefinite" path="M787 350V466H173"/>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.08;0.92;1" dur="2s" begin="1.1s" repeatCount="indefinite"/>
+  </circle>
+  <circle class="moving" r="5" fill="#59e391" opacity="0">
+    <animateMotion dur="2.2s" begin="1s" repeatCount="indefinite" path="M1050 350V466H900V530H550V350"/>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.08;0.92;1" dur="2.2s" begin="1s" repeatCount="indefinite"/>
+  </circle>
+  <circle class="moving" r="5" fill="#5ee7f0" opacity="0">
+    <animateMotion dur="2.1s" begin="1.45s" repeatCount="indefinite" path="M1050 502V575H100V350"/>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.08;0.92;1" dur="2.1s" begin="1.45s" repeatCount="indefinite"/>
+  </circle>
+
+  <g transform="translate(235 600)">
+    <circle cx="0" cy="0" r="4" fill="#59e391"/>
+    <text x="12" y="4" class="box-copy">reused response</text>
+    <circle cx="160" cy="0" r="4" fill="#f6bd60"/>
+    <text x="172" y="4" class="box-copy">admitted origin work</text>
+    <circle cx="365" cy="0" r="4" fill="#ff7aa2"/>
+    <text x="377" y="4" class="box-copy">bounded overload</text>
+    <circle cx="545" cy="0" r="4" fill="#5ee7f0"/>
+    <text x="557" y="4" class="box-copy">response path</text>
+  </g>
+</svg>

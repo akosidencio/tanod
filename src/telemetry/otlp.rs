@@ -49,12 +49,12 @@ use super::metrics;
 use super::trace::{SpanId, TraceId};
 use crate::config::schema::Otlp;
 
-/// OTLP `SpanKind`. Only the two Harmost produces.
+/// OTLP `SpanKind`. Only the two Tanod produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpanKind {
-    /// The request as Harmost served it.
+    /// The request as Tanod served it.
     Server,
-    /// The fetch Harmost made to the origin, nested under the server span.
+    /// The fetch Tanod made to the origin, nested under the server span.
     Client,
 }
 
@@ -118,7 +118,7 @@ pub struct SpanRecord {
     pub start_unix_nano: u64,
     pub end_unix_nano: u64,
     /// Sets OTLP status `ERROR`. A shed request is an error from the caller's
-    /// point of view even though Harmost did exactly what it was told to.
+    /// point of view even though Tanod did exactly what it was told to.
     pub error: bool,
     pub attributes: Vec<Attr>,
 }
@@ -197,8 +197,8 @@ pub fn parse_endpoint(raw: &str) -> Result<Endpoint, String> {
         let _ = rest;
         return Err(
             "OTLP endpoints must be `http://`. This exporter is deliberately plaintext-only: \
-             run an OpenTelemetry Collector alongside Harmost and let it speak TLS onward, \
-             rather than have Harmost claim a transport it does not implement"
+             run an OpenTelemetry Collector alongside Tanod and let it speak TLS onward, \
+             rather than have Tanod claim a transport it does not implement"
                 .to_string(),
         );
     }
@@ -364,7 +364,7 @@ impl OtlpExporter {
                 .map_err(|e| format!("connect: {e}"))?;
             let head = format!(
                 "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\n\
-                 Content-Length: {}\r\nUser-Agent: harmost/{}\r\nConnection: close\r\n\r\n",
+                 Content-Length: {}\r\nUser-Agent: tanod/{}\r\nConnection: close\r\n\r\n",
                 self.endpoint.path,
                 self.endpoint.authority,
                 body.len(),
@@ -484,7 +484,7 @@ pub fn encode(resource: &[(String, String)], spans: &[SpanRecord]) -> String {
         quoted(&mut s, value);
         s.push_str("}}");
     }
-    s.push_str("]},\"scopeSpans\":[{\"scope\":{\"name\":\"harmost\",\"version\":\"");
+    s.push_str("]},\"scopeSpans\":[{\"scope\":{\"name\":\"tanod\",\"version\":\"");
     escape_into(&mut s, env!("CARGO_PKG_VERSION"));
     s.push_str("\"},\"spans\":[");
     for (i, span) in spans.iter().enumerate() {
@@ -568,7 +568,7 @@ mod tests {
             attributes: vec![
                 Attr::str("http.request.method", "GET"),
                 Attr::int("http.response.status_code", 200),
-                Attr::bool("harmost.shed", false),
+                Attr::bool("tanod.shed", false),
             ],
         }
     }
@@ -648,7 +648,7 @@ mod tests {
     #[test]
     fn the_encoded_document_has_the_otlp_shape() {
         let body = encode(
-            &[("service.name".to_string(), "harmost".to_string())],
+            &[("service.name".to_string(), "tanod".to_string())],
             &[span()],
         );
         assert!(body.starts_with("{\"resourceSpans\":[{"));
@@ -829,11 +829,11 @@ mod tests {
 
         let (_sink, exporter) = build(
             &otlp(&format!("http://127.0.0.1:{port}/v1/traces")),
-            vec![("service.name".to_string(), "harmost".to_string())],
+            vec![("service.name".to_string(), "tanod".to_string())],
         )
         .unwrap();
         let body = encode(
-            &[("service.name".to_string(), "harmost".to_string())],
+            &[("service.name".to_string(), "tanod".to_string())],
             &[span()],
         );
         exporter.post(&body).await.unwrap();

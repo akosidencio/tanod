@@ -2,7 +2,7 @@
 //!
 //! Every check here corresponds to a way the config can be *syntactically*
 //! valid while describing something that leaks data or defeats the point of
-//! running Harmost at all. Failing at boot is the cheapest place to catch them.
+//! running Tanod at all. Failing at boot is the cheapest place to catch them.
 
 use super::schema::*;
 use std::collections::HashSet;
@@ -25,7 +25,7 @@ pub fn validate(cfg: &Config) -> Result<()> {
         // would be applying a policy nobody wrote. Both numbers are in the
         // message because the useful next question is "which binary is this".
         return Err(err(format!(
-            "config schema version {} is not supported; this build of harmost understands \
+            "config schema version {} is not supported; this build of tanod understands \
              version {}. See docs/CONFIG-SCHEMA.md for the compatibility rules and the \
              migration notes",
             cfg.version,
@@ -199,7 +199,7 @@ fn validate_server_tls(cfg: &Config) -> Result<()> {
         return Err(err(
             "server.tls is set but this binary was built without the `tls` feature; rebuild with \
              `cargo build --features tls`, or remove server.tls and terminate TLS in front of \
-             Harmost",
+             Tanod",
         ));
     }
     validate_listen(&tls.listen, "server.tls.listen")?;
@@ -213,7 +213,7 @@ fn validate_server_tls(cfg: &Config) -> Result<()> {
     if tls.cert.is_empty() || tls.key.is_empty() {
         return Err(err("server.tls.cert and server.tls.key must both be set"));
     }
-    // Checked here rather than at bind time so that `harmost check` catches a
+    // Checked here rather than at bind time so that `tanod check` catches a
     // missing certificate before a deploy rather than after one.
     for (path, label) in [(&tls.cert, "cert"), (&tls.key, "key")] {
         if !std::path::Path::new(path).exists() {
@@ -243,7 +243,7 @@ fn validate_server_tls_material(cert_path: &str, key_path: &str) -> Result<()> {
     // Mirror Pingora's rustls listener construction here. Pingora 0.8 builds
     // this later through an infallible API that panics on malformed or
     // incompatible material; validation turns that startup panic into a
-    // normal `harmost check` error.
+    // normal `tanod check` error.
     pingora_core::tls::ServerConfig::builder_with_protocol_versions(&[
         &pingora_core::tls::version::TLS12,
         &pingora_core::tls::version::TLS13,
@@ -453,7 +453,7 @@ fn validate_tracing(cfg: &Config) -> Result<()> {
     let t = &cfg.telemetry.tracing;
     if t.service_name.as_ref().is_some_and(|n| n.trim().is_empty()) {
         return Err(err(
-            "telemetry.tracing.service_name is empty; omit the key to take `harmost`",
+            "telemetry.tracing.service_name is empty; omit the key to take `tanod`",
         ));
     }
     if t.sample.one_in == 0 {
@@ -518,7 +518,7 @@ fn validate_upstream(address: &str) -> Result<()> {
 }
 
 /// A waiter that gives up before the work it waits on can finish converts one
-/// managed queue into a real stampede — the precise failure Harmost exists to
+/// managed queue into a real stampede — the precise failure Tanod exists to
 /// prevent. The wait must cover the origin timeout.
 fn check_coalesce_wait(cfg: &Config) -> Result<()> {
     if let Some(wait) = cfg.coalesce.wait_timeout
@@ -1488,7 +1488,7 @@ server:
     #[cfg(feature = "tls")]
     #[test]
     fn rejects_existing_but_invalid_server_tls_files() {
-        let base = std::env::temp_dir().join(format!("harmost-invalid-tls-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("tanod-invalid-tls-{}", std::process::id()));
         let cert = base.with_extension("cert.pem");
         let key = base.with_extension("key.pem");
         std::fs::write(&cert, b"this is not a certificate").unwrap();
@@ -1521,7 +1521,7 @@ origin:
   upstreams: [\"next-1:3000\"]
   tls:
     sni: origin.internal
-    ca: /etc/harmost/ca.pem
+    ca: /etc/tanod/ca.pem
 ",
         );
         let e = validate(&cfg).unwrap_err().to_string();

@@ -5,7 +5,7 @@
 # breaks the environment underneath a running proxy and asserts what must
 # remain true regardless:
 #
-#   * **Harmost survives.** Not "mostly succeeds" — survives. A governor that
+#   * **Tanod survives.** Not "mostly succeeds" — survives. A governor that
 #     dies when its origin does has made the outage worse than no governor.
 #   * **Nothing is answered wrongly.** A failing origin may produce a 502 or a
 #     stale hit; it must never produce another user's response, and a
@@ -43,7 +43,7 @@ CONFIG="$BENCH_DIR/chaos.yaml"
 bench_render_config "$BENCH_ROOT/bench/chaos.yaml.tpl" "$CONFIG" \
   "LISTEN=$LISTEN_PORT" "ORIGINA=$ORIGIN_A" "ORIGINB=$ORIGIN_B" \
   "ADMIN=$ADMIN_PORT" "METRICS=$METRICS_PORT" \
-  "PIDFILE=$BENCH_DIR/harmost.pid" "UPGRADESOCK=$BENCH_DIR/upgrade.sock"
+  "PIDFILE=$BENCH_DIR/tanod.pid" "UPGRADESOCK=$BENCH_DIR/upgrade.sock"
 
 start_backend() { # name, port
   bench_spawn "$1" "$(bench_bin slow-origin)" "$2" 30
@@ -51,13 +51,13 @@ start_backend() { # name, port
 }
 start_backend origin-a "$ORIGIN_A"
 start_backend origin-b "$ORIGIN_B"
-bench_start_harmost harmost "$CONFIG" "$LISTEN_PORT" "$ADMIN_PORT"
-PID=$(bench_pid harmost)
+bench_start_tanod tanod "$CONFIG" "$LISTEN_PORT" "$ADMIN_PORT"
+PID=$(bench_pid tanod)
 BASE="http://127.0.0.1:$LISTEN_PORT"
 
 # Background traffic for the whole run. Recorded, never asserted as a whole:
 # during a total origin outage a 502 is the *correct* answer, so a blanket
-# "everything must be 200" would be asserting that Harmost invents responses.
+# "everything must be 200" would be asserting that Tanod invents responses.
 RESULTS="$BENCH_DIR/results"
 : > "$RESULTS"
 CHAOS_DONE="$BENCH_DIR/done"
@@ -116,12 +116,12 @@ for round in $(seq 1 "$ROUNDS"); do
   echo "  killing the second"
   bench_stop origin-b
   sleep 2
-  # A fully unhealthy pool must still be *served* — Harmost does not refuse to
+  # A fully unhealthy pool must still be *served* — Tanod does not refuse to
   # pick, because refusing turns a degraded origin into a guaranteed outage
   # and stale-if-error exists for exactly this window.
   DOWN_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$BASE/cold/down-$round")
   echo "    request while down   $DOWN_CODE"
-  bench_alive "$PID" || bench_fail "harmost died when every backend went away"
+  bench_alive "$PID" || bench_fail "tanod died when every backend went away"
   case "$DOWN_CODE" in
     502|503|504) ;;
     200) ;;   # a stale hit, which is the point of stale-if-error
@@ -131,13 +131,13 @@ for round in $(seq 1 "$ROUNDS"); do
   echo "  reloading config while the origin is down"
   # A reload during an incident is the reload that actually happens, and it is
   # the worst moment for one to be half-applied.
-  before=$(wc -l < "$(bench_log harmost)")
+  before=$(wc -l < "$(bench_log tanod)")
   kill -HUP "$PID"
   for attempt in $(seq 1 100); do
-    tail -n "+$((before + 1))" "$(bench_log harmost)" | grep -q "config reloaded" && break
+    tail -n "+$((before + 1))" "$(bench_log tanod)" | grep -q "config reloaded" && break
     sleep 0.1
   done
-  tail -n "+$((before + 1))" "$(bench_log harmost)" | grep -q "config reloaded" \
+  tail -n "+$((before + 1))" "$(bench_log tanod)" | grep -q "config reloaded" \
     || bench_fail "SIGHUP during an origin outage did not reload"
 
   echo "  bringing both backends back"
@@ -165,8 +165,8 @@ wait "$TRAFFIC" "$ADMIN_WATCH" 2>/dev/null
 
 echo
 echo "after the chaos"
-bench_alive "$PID" || bench_fail "harmost did not survive"
-bench_assert_no_panics harmost
+bench_alive "$PID" || bench_fail "tanod did not survive"
+bench_assert_no_panics tanod
 
 TOTAL=$(wc -l < "$RESULTS" | tr -d ' ')
 OK=$(grep -c '^200$' "$RESULTS" || true)
@@ -201,7 +201,7 @@ bench_assert_eq "$SESSION_UNIQUE" "$SESSION_COUNT" \
 # a path that only runs when a backend dies mid-render — invisible during the
 # chaos, fatal afterwards.
 sleep 1
-IN_FLIGHT=$(bench_metric "$METRICS_PORT" 'harmost_origin_in_flight{limiter="global"}')
+IN_FLIGHT=$(bench_metric "$METRICS_PORT" 'tanod_origin_in_flight{limiter="global"}')
 READY=$(admin_code /health/ready)
 FINAL=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$BASE/cold/final")
 echo "  in-flight permits      ${IN_FLIGHT:-?}"

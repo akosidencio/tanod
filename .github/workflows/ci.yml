@@ -29,7 +29,7 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
-  # Linux is the only platform, not merely the reference one: Harmost is
+  # Linux is the only platform, not merely the reference one: Tanod is
   # deployed on Linux, the published image is `linux/amd64`, and the release
   # binary targets `x86_64-unknown-linux-gnu`. Every job here runs the full
   # gate, including the end-to-end benchmarks and the containerised Next.js
@@ -115,26 +115,26 @@ jobs:
       - name: Audit
         run: cargo audit -D warnings
 
-  # @harmost/next, on both runtimes it claims to support.
+  # @tanod/next, on both runtimes it claims to support.
   #
   # The Rust binary is built first on purpose: the package's headline claim is
-  # that what it generates is a configuration Harmost accepts, and the test
+  # that what it generates is a configuration Tanod accepts, and the test
   # that proves it skips itself when the binary is absent. Skipping quietly in
   # CI would leave the one assertion that matters unenforced.
-  harmost-next:
-    name: "@harmost/next (node + bun)"
+  tanod-next:
+    name: "@tanod/next (node + bun)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: packages/harmost-next
+        working-directory: packages/tanod-next
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Build harmost, so the generated config can be checked for real
+      - name: Build tanod, so the generated config can be checked for real
         run: cargo build
         working-directory: .
       - uses: actions/setup-node@v4
@@ -149,14 +149,14 @@ jobs:
         env:
           # A `cargo build` that quietly produced nothing would otherwise let
           # the binary-dependent tests skip and CI go green without them.
-          HARMOST_REQUIRE_BINARY: "1"
+          TANOD_REQUIRE_BINARY: "1"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
       - name: Test on Bun
         run: npm run test:bun
         env:
-          HARMOST_REQUIRE_BINARY: "1"
+          TANOD_REQUIRE_BINARY: "1"
 
   # The end-to-end evidence behind the README's claims. Every script asserts its
   # own result and exits non-zero when it fails, so this is a gate rather than a
@@ -242,7 +242,7 @@ jobs:
           if-no-files-found: warn
 
   # The real-framework proof. Kept separate because it builds three Next.js
-  # images and a Harmost image, and because a failure here means something
+  # images and a Tanod image, and because a failure here means something
   # different from a unit test failure: the policy is wrong about Next.js, not
   # wrong about itself.
   nextjs:

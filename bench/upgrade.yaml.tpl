@@ -1,7 +1,7 @@
 # Benchmark config for bench/upgrade.sh — the zero-downtime handover.
 #
 # `upgrade_socket` is the only thing the two processes share, so it is
-# allocated per run like the ports. Two Harmosts on one host with the same
+# allocated per run like the ports. Two Tanods on one host with the same
 # default path would hand each other their listeners.
 version: 1
 server:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A real Next.js integration proof: one Harmost process, three standalone
+# A real Next.js integration proof: one Tanod process, three standalone
 # origins, and machine-checked public/private/streaming behaviour across both
 # the App Router and the Pages Router.
 #
@@ -10,7 +10,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPOSE=(docker compose -p harmost-nextjs-fixture -f compose.nextjs.yaml)
+COMPOSE=(docker compose -p tanod-nextjs-fixture -f compose.nextjs.yaml)
 PROXY_URL=${PROXY_URL:-http://127.0.0.1:18080}
 METRICS_URL=${METRICS_URL:-http://127.0.0.1:19090}
 CONCURRENCY=${CONCURRENCY:-24}
@@ -28,15 +28,15 @@ trap cleanup EXIT
 
 fail() {
   echo "FAIL: $*" >&2
-  echo "Harmost logs:" >&2
-  "${COMPOSE[@]}" logs --no-color --tail=80 harmost >&2 || true
+  echo "Tanod logs:" >&2
+  "${COMPOSE[@]}" logs --no-color --tail=80 tanod >&2 || true
   exit 1
 }
 
 metric_sum() {
   local route=$1
   curl -fsS "$METRICS_URL/metrics" | awk -v route="$route" '
-    /^harmost_origin_requests_total[{]/ && index($1, "route=\"" route "\"") {
+    /^tanod_origin_requests_total[{]/ && index($1, "route=\"" route "\"") {
       sum += $2
     }
     END { print sum + 0 }
@@ -54,7 +54,7 @@ wait_until_ready() {
   return 1
 }
 
-echo "Building and starting one Harmost instance with three Next.js origins..."
+echo "Building and starting one Tanod instance with three Next.js origins..."
 down_stack
 "${COMPOSE[@]}" up --build --detach || fail "the fixture stack did not start"
 wait_until_ready || fail "services did not become ready"
@@ -288,20 +288,20 @@ done
 AFTER=$(metric_sum next-image)
 ORIGIN_REQUESTS=$((AFTER - BEFORE))
 
-harmost_status() { sed -n 's/^[Xx]-[Hh]armost: //p' "$1" | tr -d '\r'; }
+tanod_status() { sed -n 's/^[Xx]-[Hh]armost: //p' "$1" | tr -d '\r'; }
 img_type() { sed -n 's/^[Cc]ontent-[Tt]ype: //p' "$1" | tr -d '\r'; }
 
-# The origin negotiated Vary: Accept, so Harmost must have honoured it.
+# The origin negotiated Vary: Accept, so Tanod must have honoured it.
 grep -qi '^vary:.*accept' "$RESULT_DIR/img-webp-1.headers" \
   || fail "the image response carried no Vary: Accept; this assertion is no longer testing anything"
 
 # Four requests, two distinct formats, so exactly two renders.
 [ "$ORIGIN_REQUESTS" -eq 2 ] \
   || fail "four image requests in two formats caused $ORIGIN_REQUESTS origin requests instead of 2"
-[ "$(harmost_status "$RESULT_DIR/img-webp-2.headers")" = "HIT" ] \
-  || fail "the second WebP image request was $(harmost_status "$RESULT_DIR/img-webp-2.headers"), not HIT — check that cache.vary lists Accept"
-[ "$(harmost_status "$RESULT_DIR/img-png-2.headers")" = "HIT" ] \
-  || fail "the second PNG image request was $(harmost_status "$RESULT_DIR/img-png-2.headers"), not HIT"
+[ "$(tanod_status "$RESULT_DIR/img-webp-2.headers")" = "HIT" ] \
+  || fail "the second WebP image request was $(tanod_status "$RESULT_DIR/img-webp-2.headers"), not HIT — check that cache.vary lists Accept"
+[ "$(tanod_status "$RESULT_DIR/img-png-2.headers")" = "HIT" ] \
+  || fail "the second PNG image request was $(tanod_status "$RESULT_DIR/img-png-2.headers"), not HIT"
 
 # The safety half: a client that cannot read WebP must never be handed the
 # cached WebP entry.
@@ -312,13 +312,13 @@ PNG_TYPE=$(img_type "$RESULT_DIR/img-png-2.headers")
 
 # Nothing was refused storage for a Vary the key could not honour.
 UNSUPPORTED=$(curl -fsS "$METRICS_URL/metrics" | awk '
-  /^harmost_cache_bypass_reason_total[{]/ && /reason="unsupported_vary"/ && /route="next-image"/ { sum += $2 }
+  /^tanod_cache_bypass_reason_total[{]/ && /reason="unsupported_vary"/ && /route="next-image"/ { sum += $2 }
   END { print sum + 0 }')
 [ "$UNSUPPORTED" -eq 0 ] || fail "$UNSUPPORTED image responses were refused storage as unsupported_vary"
 
 # And the low-priority tier ceiling is 50% of the global 8.
 TIER_LOW=$(curl -fsS "$METRICS_URL/metrics" \
-  | sed -n 's/^harmost_concurrency_limit{limiter="tier:low"} \([0-9]*\)$/\1/p' | head -1)
+  | sed -n 's/^tanod_concurrency_limit{limiter="tier:low"} \([0-9]*\)$/\1/p' | head -1)
 [ "${TIER_LOW:-0}" -eq 4 ] \
   || fail "the low-priority tier ceiling is ${TIER_LOW:-missing}, expected 4 (50% of 8)"
 echo "PASS: 4 requests, 2 renders, WebP and PNG kept apart, low tier capped at 4"

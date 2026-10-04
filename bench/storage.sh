@@ -5,8 +5,8 @@
 # Three numbers, all medians over a keepalive connection so that per-request
 # TCP setup is not counted as cache latency:
 #
-#   miss   client -> Harmost -> origin render -> client
-#   hit    client -> Harmost -> in-process lookup -> client
+#   miss   client -> Tanod -> origin render -> client
+#   hit    client -> Tanod -> in-process lookup -> client
 #
 # The hit figure is the one that decides the evaluation. It already contains
 # one loopback round trip, so it bounds what a *second* round trip to an
@@ -34,7 +34,7 @@ bench_render_config "$BENCH_ROOT/bench/storage.yaml" "$CONFIG" \
 
 bench_spawn origin "$(bench_bin slow-origin)" "$ORIGIN_PORT" "$RENDER_MS"
 bench_wait_port 127.0.0.1 "$ORIGIN_PORT" "slow-origin"
-bench_start_harmost harmost "$CONFIG" "$LISTEN_PORT" "$METRICS_PORT"
+bench_start_tanod tanod "$CONFIG" "$LISTEN_PORT" "$METRICS_PORT"
 
 # One curl invocation, many URLs: the connection is reused after the first, so
 # only the first sample pays for the TCP handshake and it is dropped. `-o` has
@@ -103,7 +103,7 @@ bench_lt_float "$MED_HIT" "$(awk -v m="$MED_MISS" 'BEGIN{print m/3}')" \
 # network round trip is not a rounding error on it.
 bench_lt_float "$MED_HIT" 0.05 \
   || bench_fail "median hit ${MED_HIT}s is far slower than the evaluation assumes"
-bench_assert_no_panics harmost
+bench_assert_no_panics tanod
 bench_lt_float "$MED_SMALL" 0.01 \
   || bench_fail "a small-body hit took ${MED_SMALL}s; the evaluation assumes a round trip plus a map lookup, not this"
 bench_pass "median cache hit ${MED_HIT}s against a ${MED_MISS}s miss (${RATIO}x); a small-body hit is ${MED_SMALL}s, which is one loopback round trip plus a map lookup — the cost an external store would add again on every hit"

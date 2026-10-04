@@ -1,11 +1,11 @@
-# Prometheus alerting rules for Harmost.
+# Prometheus alerting rules for Tanod.
 #
 # Two things shape this file.
 #
-# First, Harmost is the component that is supposed to stay up while the origin
-# struggles. So the alerts are mostly about the *origin's* health as Harmost
-# observes it, and only secondarily about Harmost itself — a page saying
-# "Harmost is shedding" is really saying "your origin cannot keep up", and the
+# First, Tanod is the component that is supposed to stay up while the origin
+# struggles. So the alerts are mostly about the *origin's* health as Tanod
+# observes it, and only secondarily about Tanod itself — a page saying
+# "Tanod is shedding" is really saying "your origin cannot keep up", and the
 # annotation says so rather than leaving the reader to work it out at 3am.
 #
 # Second, every threshold here is a starting point, not a recommendation. The
@@ -14,20 +14,20 @@
 # obvious knobs rather than tuned numbers pretending to be universal.
 #
 # `job` and `instance` come from your scrape config. Every other label used
-# below is config-derived on Harmost's side — route ids, upstream addresses,
+# below is config-derived on Tanod's side — route ids, upstream addresses,
 # limiter names — and never client-controlled, so none of these rules can be
 # made expensive by traffic.
 
 groups:
-  - name: harmost-availability
+  - name: tanod-availability
     rules:
-      - alert: HarmostDown
-        expr: up{job="harmost"} == 0
+      - alert: TanodDown
+        expr: up{job="tanod"} == 0
         for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "Harmost instance {{ $labels.instance }} is not being scraped"
+          summary: "Tanod instance {{ $labels.instance }} is not being scraped"
           description: >-
             The metrics endpoint has been unreachable for two minutes. Check
             whether the process is alive at all: /health/live on the admin
@@ -37,8 +37,8 @@ groups:
       # A drain is normal during a deploy and abnormal an hour later. An
       # instance stuck here is serving correctly and reporting itself
       # not-ready, so a load balancer has withdrawn it and nothing is watching.
-      - alert: HarmostDrainingTooLong
-        expr: harmost_draining == 1
+      - alert: TanodDrainingTooLong
+        expr: tanod_draining == 1
         for: 15m
         labels:
           severity: warning
@@ -50,29 +50,29 @@ groups:
             means a deploy stalled, or a SIGUSR1 was sent and never followed
             by a SIGTERM. /status reports why it entered the state.
 
-      - alert: HarmostNoHealthyUpstream
-        expr: max by (job, instance) (harmost_upstream_healthy) == 0
+      - alert: TanodNoHealthyUpstream
+        expr: max by (job, instance) (tanod_upstream_healthy) == 0
         for: 1m
         labels:
           severity: critical
         annotations:
           summary: "No healthy origin behind {{ $labels.instance }}"
           description: >-
-            Every backend is failing its health check. Harmost keeps serving
+            Every backend is failing its health check. Tanod keeps serving
             anyway — refusing to pick would turn a degraded origin into a
             guaranteed outage — so what users see now depends on
             stale_if_error and on whatever the origin still manages. This is
-            an origin problem, not a Harmost problem.
+            an origin problem, not a Tanod problem.
 
-  - name: harmost-origin-load
+  - name: tanod-origin-load
     rules:
-      # The signal that Harmost is doing its job *and* that users are seeing
+      # The signal that Tanod is doing its job *and* that users are seeing
       # 503s for it. Both halves belong in the annotation.
-      - alert: HarmostSheddingLoad
+      - alert: TanodSheddingLoad
         expr: |
-          sum by (job, instance, route) (rate(harmost_admission_total{decision=~"shed_.*"}[5m]))
+          sum by (job, instance, route) (rate(tanod_admission_total{decision=~"shed_.*"}[5m]))
             /
-          clamp_min(sum by (job, instance, route) (rate(harmost_admission_total[5m])), 0.001)
+          clamp_min(sum by (job, instance, route) (rate(tanod_admission_total[5m])), 0.001)
             > 0.05
         for: 10m
         labels:
@@ -82,15 +82,15 @@ groups:
           description: >-
             The origin concurrency ceiling is being hit and requests are being
             refused to protect it. This is the mechanism working, and it is
-            also users receiving 503. Look at harmost_origin_latency_seconds
+            also users receiving 503. Look at tanod_origin_latency_seconds
             before raising the ceiling: a higher ceiling against a slower
             origin makes the origin slower still.
 
-      - alert: HarmostOriginSaturated
+      - alert: TanodOriginSaturated
         expr: |
-          sum by (job, instance, limiter) (harmost_origin_in_flight)
+          sum by (job, instance, limiter) (tanod_origin_in_flight)
             >=
-          sum by (job, instance, limiter) (harmost_concurrency_limit)
+          sum by (job, instance, limiter) (tanod_concurrency_limit)
         for: 10m
         labels:
           severity: warning
@@ -103,8 +103,8 @@ groups:
             system running exactly at capacity, and a full ceiling with a
             growing queue is one that is about to start shedding.
 
-      - alert: HarmostQueueDepthGrowing
-        expr: sum by (job, instance, limiter) (harmost_queue_depth) > 0
+      - alert: TanodQueueDepthGrowing
+        expr: sum by (job, instance, limiter) (tanod_queue_depth) > 0
         for: 15m
         labels:
           severity: warning
@@ -115,11 +115,11 @@ groups:
             rather than capacity being smoothed. Either the ceiling is too low
             for sustained traffic, or the origin's per-request time has grown.
 
-      - alert: HarmostOriginLatencyHigh
+      - alert: TanodOriginLatencyHigh
         expr: |
           histogram_quantile(
             0.95,
-            sum by (job, instance, route, le) (rate(harmost_origin_latency_seconds_bucket[5m]))
+            sum by (job, instance, route, le) (rate(tanod_origin_latency_seconds_bucket[5m]))
           ) > 5
         for: 10m
         labels:
@@ -127,28 +127,28 @@ groups:
         annotations:
           summary: "p95 origin render on {{ $labels.route }} is above 5s"
           description: >-
-            Measured from Harmost's side, so it includes the origin's own
+            Measured from Tanod's side, so it includes the origin's own
             queueing. With a response spool this is genuinely the render time;
             without one a slow client can inflate it, and the access log's
             permit_released field distinguishes the two.
 
-  - name: harmost-resources
+  - name: tanod-resources
     rules:
       # A cache pinned at its budget is only a problem when the hit ratio is
       # also poor: that combination means eviction is destroying entries
       # before they are reused, which is worse than not caching at all.
-      - alert: HarmostCacheThrashing
+      - alert: TanodCacheThrashing
         expr: |
           (
-            sum by (job, instance) (harmost_cache_bytes)
+            sum by (job, instance) (tanod_cache_bytes)
               /
-            clamp_min(sum by (job, instance) (harmost_cache_max_bytes), 1)
+            clamp_min(sum by (job, instance) (tanod_cache_max_bytes), 1)
           ) > 0.95
           and
           (
-            sum by (job, instance) (rate(harmost_cache_total{status="hit"}[10m]))
+            sum by (job, instance) (rate(tanod_cache_total{status="hit"}[10m]))
               /
-            clamp_min(sum by (job, instance) (rate(harmost_reuse_eligible_requests_total[10m])), 0.001)
+            clamp_min(sum by (job, instance) (rate(tanod_reuse_eligible_requests_total[10m])), 0.001)
           ) < 0.2
         for: 20m
         labels:
@@ -161,8 +161,8 @@ groups:
             shorten the TTL and narrow the cache key so fewer, hotter entries
             are kept.
 
-      - alert: HarmostSpoolBudgetExhausted
-        expr: sum by (job, instance) (rate(harmost_spool_total{reason="budget_exhausted"}[10m])) > 0
+      - alert: TanodSpoolBudgetExhausted
+        expr: sum by (job, instance) (rate(tanod_spool_total{reason="budget_exhausted"}[10m])) > 0
         for: 10m
         labels:
           severity: info
@@ -176,8 +176,8 @@ groups:
 
       # Costs traces, never requests. Included because it is easy to miss and
       # the fix is one number.
-      - alert: HarmostDroppingSpans
-        expr: sum by (job, instance) (rate(harmost_spans_total{outcome="dropped"}[10m])) > 0
+      - alert: TanodDroppingSpans
+        expr: sum by (job, instance) (rate(tanod_spans_total{outcome="dropped"}[10m])) > 0
         for: 15m
         labels:
           severity: info
@@ -190,11 +190,11 @@ groups:
             incident you wanted the traces for. Raise
             telemetry.tracing.otlp.max_queue, or sample less.
 
-      - alert: HarmostSpanExportFailing
+      - alert: TanodSpanExportFailing
         expr: |
-          sum by (job, instance) (rate(harmost_spans_total{outcome="export_failed"}[10m]))
+          sum by (job, instance) (rate(tanod_spans_total{outcome="export_failed"}[10m]))
             /
-          clamp_min(sum by (job, instance) (rate(harmost_spans_total{outcome=~"exported|export_failed"}[10m])), 0.001)
+          clamp_min(sum by (job, instance) (rate(tanod_spans_total{outcome=~"exported|export_failed"}[10m])), 0.001)
             > 0.5
         for: 15m
         labels:
@@ -208,13 +208,13 @@ groups:
   # Only fires when origin.breaker or origin.retry is enabled; with both off
   # the series exist and stay flat, so these rules are inert rather than
   # broken.
-  - name: harmost-origin-resilience
+  - name: tanod-origin-resilience
     rules:
       # The case passive observation exists for, and the one an active health
       # check cannot express: the backend answers its probe and fails real
       # requests.
-      - alert: HarmostUpstreamEjectedWhileHealthy
-        expr: harmost_upstream_ejected == 1 and on (job, instance, upstream) harmost_upstream_healthy == 1
+      - alert: TanodUpstreamEjectedWhileHealthy
+        expr: tanod_upstream_ejected == 1 and on (job, instance, upstream) tanod_upstream_healthy == 1
         for: 2m
         labels:
           severity: warning
@@ -224,23 +224,23 @@ groups:
             Its circuit breaker is open while its health probe still passes.
             That is not a contradiction — it is an origin answering a static
             health path in a millisecond while its renders throw. Read that
-            backend's own logs; harmost_upstream_failures_total says whether
+            backend's own logs; tanod_upstream_failures_total says whether
             the failures are connect-level or status-level.
 
       # Every breaker open means the ejection cap has taken over and breaker
       # state is being ignored entirely, which is the correct behaviour and a
       # much bigger problem than one bad backend.
-      - alert: HarmostAllUpstreamsEjected
+      - alert: TanodAllUpstreamsEjected
         expr: >-
-          sum by (job, instance) (harmost_upstream_ejected)
-            == count by (job, instance) (harmost_upstream_ejected)
+          sum by (job, instance) (tanod_upstream_ejected)
+            == count by (job, instance) (tanod_upstream_ejected)
         for: 1m
         labels:
           severity: critical
         annotations:
           summary: "Every backend behind {{ $labels.instance }} is ejected"
           description: >-
-            Past origin.breaker.max_ejected_percent Harmost ignores breaker
+            Past origin.breaker.max_ejected_percent Tanod ignores breaker
             state and routes on health alone, because if everything is broken
             then "broken" has stopped being a reason to prefer one backend
             over another. This is an origin-wide failure — a shared database,
@@ -248,8 +248,8 @@ groups:
 
       # A backend that recovers enough to pass and then fails again is usually
       # worse than one that stays down: each cycle sends live traffic at it.
-      - alert: HarmostUpstreamFlapping
-        expr: increase(harmost_upstream_breaker_trips_total[30m]) > 3
+      - alert: TanodUpstreamFlapping
+        expr: increase(tanod_upstream_breaker_trips_total[30m]) > 3
         for: 5m
         labels:
           severity: warning
@@ -263,9 +263,9 @@ groups:
 
       # Retries are failing to be affordable, which means requests are failing
       # faster than the budget will absorb. Raising the budget makes it worse.
-      - alert: HarmostRetryBudgetExhausted
+      - alert: TanodRetryBudgetExhausted
         expr: >-
-          sum by (job, instance) (rate(harmost_origin_retries_total{outcome="budget_exhausted"}[5m])) > 1
+          sum by (job, instance) (rate(tanod_origin_retries_total{outcome="budget_exhausted"}[5m])) > 1
         for: 5m
         labels:
           severity: warning
@@ -277,18 +277,18 @@ groups:
             amplifying an origin failure rather than absorbing a blip. Fix the
             origin; do not raise the budget.
 
-  - name: harmost-configuration
+  - name: tanod-configuration
     rules:
       # Replicas of one deployment should agree on their effective
       # configuration. Generation is only a per-process reload counter, so
       # fleet comparison uses the stable fingerprint instead.
-      - alert: HarmostConfigDiverged
-        expr: count by (job) (count_values by (job) ("fingerprint", harmost_config_fingerprint)) > 1
+      - alert: TanodConfigDiverged
+        expr: count by (job) (count_values by (job) ("fingerprint", tanod_config_fingerprint)) > 1
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "Harmost replicas in {{ $labels.job }} are running different configurations"
+          summary: "Tanod replicas in {{ $labels.job }} are running different configurations"
           description: >-
             The stable effective-config fingerprints differ. An invalid config
             is refused and the running one kept, so a reload that failed on

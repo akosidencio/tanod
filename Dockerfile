@@ -18,26 +18,26 @@ ARG FEATURES=""
 
 WORKDIR /src
 COPY . .
-RUN --mount=type=cache,id=harmost-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=harmost-target,target=/src/target \
-    cargo build --release --locked --bin harmost \
+RUN --mount=type=cache,id=tanod-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=tanod-target,target=/src/target \
+    cargo build --release --locked --bin tanod \
       ${FEATURES:+--features "$FEATURES"} \
-    && cp /src/target/release/harmost /tmp/harmost
+    && cp /src/target/release/tanod /tmp/tanod
 
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libssl3 \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --no-create-home harmost \
-    && install -d -o harmost -g harmost -m 0750 /run/harmost /etc/harmost
+    && useradd --system --uid 10001 --no-create-home tanod \
+    && install -d -o tanod -g tanod -m 0750 /run/tanod /etc/tanod
 
-COPY --from=builder /tmp/harmost /usr/local/bin/harmost
+COPY --from=builder /tmp/tanod /usr/local/bin/tanod
 
-USER harmost
+USER tanod
 # 8080 traffic, 8443 TLS (only in an image built with FEATURES=tls),
 # 9090 Prometheus, 9091 the admin endpoints. The last two are operator
 # surfaces: publish them to a private network, never to the internet.
 EXPOSE 8080 8443 9090 9091
-ENTRYPOINT ["/usr/local/bin/harmost"]
-CMD ["run", "--config", "/etc/harmost/harmost.yaml"]
+ENTRYPOINT ["/usr/local/bin/tanod"]
+CMD ["run", "--config", "/etc/tanod/tanod.yaml"]

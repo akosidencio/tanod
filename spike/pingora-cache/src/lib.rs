@@ -1,4 +1,4 @@
-//! Spike: can Harmost sit on `pingora-cache` instead of building its own store
+//! Spike: can Tanod sit on `pingora-cache` instead of building its own store
 //! and coalescer?
 //!
 //! Three questions, each answered by a test below:

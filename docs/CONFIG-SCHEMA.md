@@ -1,6 +1,6 @@
 # Configuration schema versioning
 
-Harmost is pre-1.0 and the configuration format will change. This document
+Tanod is pre-1.0 and the configuration format will change. This document
 says what "will change" is allowed to mean, so that a file written today has a
 defined relationship with a binary released later.
 
@@ -14,8 +14,8 @@ A file naming a version this binary does not understand is **refused at
 startup**, naming both numbers:
 
 ```
-error: invalid configuration in /etc/harmost/harmost.yaml
-  caused by: config schema version 2 is not supported; this build of harmost
+error: invalid configuration in /etc/tanod/tanod.yaml
+  caused by: config schema version 2 is not supported; this build of tanod
   understands version 1. See docs/CONFIG-SCHEMA.md for the compatibility rules
   and the migration notes
 ```
@@ -24,7 +24,7 @@ Refused, never coerced. A binary that guessed at a version it did not know
 would be applying a policy nobody wrote — and in this configuration file, the
 policy decides whether a response is shared between users.
 
-`harmost version` prints the schema version a binary speaks, and `/status`
+`tanod version` prints the schema version a binary speaks, and `/status`
 reports it as `config.schema_version`.
 
 ---
@@ -39,7 +39,7 @@ reports it as `config.schema_version`.
 - **New enum variants** on a key that already exists, where the existing
   variants keep their meaning.
 - **Wider accepted ranges**, where the previously accepted values are unchanged.
-- **A key becoming implemented.** Harmost rejects options it accepts but does
+- **A key becoming implemented.** Tanod rejects options it accepts but does
   not honour, so a key moving from "rejected as unimplemented" to "works" only
   ever turns a failing config into a working one.
 
@@ -59,7 +59,7 @@ Two rules, and they are the whole reason this file is short:
    typo is a silent policy change otherwise, and in this file a silent policy
    change means an unprotected origin or a cache serving something it should
    not.
-2. **An accepted-but-unimplemented key is an error.** If Harmost cannot honour
+2. **An accepted-but-unimplemented key is an error.** If Tanod cannot honour
    a setting, it refuses to start rather than ignoring it. A config that claims
    a protection it is not running is worse than one that does not compile.
 
@@ -98,7 +98,7 @@ needs to change:
 | `origin.resolve_interval` | multi-instance origins behind one name | `10s`; `0` resolves once at startup |
 | `route.priority`, `route.weight` | weighted admission | `normal`, `1` |
 | `cache.eviction` | measured eviction policy | `clock` — **a behaviour change**, see below |
-| `cache.tag_header` | cache tags | `x-harmost-cache-tags` |
+| `cache.tag_header` | cache tags | `x-tanod-cache-tags` |
 | `cache.purge.token` | the purge API | absent — **endpoint disabled** |
 
 Two of those are worth acting on rather than merely noting:
@@ -107,16 +107,16 @@ Two of those are worth acting on rather than merely noting:
   and telemetry while bypassing admission, caching, coalescing, and spooling.
   Use it only as the first rollout stage.
 
-- **`capacity` declares a static replica partition.** Harmost verifies that
+- **`capacity` declares a static replica partition.** Tanod verifies that
   `origin.concurrency.max × capacity.replicas` does not exceed
   `capacity.global_max`. The orchestrator must enforce the replica count.
 
 - **`server.graceful.pid_file` and `upgrade_socket` default to `/tmp`.** Two
-  Harmost processes on one host with the defaults will hand each other their
+  Tanod processes on one host with the defaults will hand each other their
   listening sockets. Set them per instance, under `/run` on a systemd host.
 - **Without `telemetry.admin` there is no readiness endpoint**, so a load
   balancer cannot tell when an instance is draining and a rolling restart
-  drops requests. `harmost check` says so.
+  drops requests. `tanod check` says so.
 - **`telemetry.admin.require_healthy_upstream: true` requires `health:`.** A
   configured backend is unknown until it completes the configured
   `healthy_after` success streak; readiness does not optimistically report it
@@ -144,7 +144,7 @@ Two of those are worth acting on rather than merely noting:
 
 ### Keys that are refused because they would do nothing
 
-Distinct from the table below, which lists keys Harmost cannot honour. These
+Distinct from the table below, which lists keys Tanod cannot honour. These
 *could* be honoured and would have no effect, which is the failure mode this
 project treats as worse than a crash: someone ships believing a protection is
 running.
@@ -181,7 +181,7 @@ outcome.
 ## Checking a file
 
 ```bash
-harmost check --config /etc/harmost/harmost.yaml
+tanod check --config /etc/tanod/tanod.yaml
 ```
 
 Exits non-zero on anything that would prevent a start, and prints the things
@@ -190,6 +190,6 @@ directives, an origin TLS connection that is encrypted but not authenticated,
 an admin listener on an unspecified address, and the total time a `SIGTERM`
 will take.
 
-`harmost run --config … --test` goes further: it binds every listener and exits
+`tanod run --config … --test` goes further: it binds every listener and exits
 zero only if the process could actually have started. That is the pre-flight
 for a zero-downtime upgrade — see [OPERATIONS.md](./OPERATIONS.md).

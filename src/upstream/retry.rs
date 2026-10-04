@@ -6,7 +6,7 @@
 //! not a tuning mistake:
 //!
 //! * **Only safe methods.** `GET`, `HEAD`, `OPTIONS`, `TRACE`. `PUT` and
-//!   `DELETE` are idempotent on paper, but Harmost does not buffer request
+//!   `DELETE` are idempotent on paper, but Tanod does not buffer request
 //!   bodies and so cannot replay one; and an origin that treats `POST` as
 //!   idempotent is not a bet a proxy gets to make on its behalf.
 //! * **Only before the origin has answered.** A connect failure, or an error
@@ -56,7 +56,7 @@ impl RetryDecision {
     }
 }
 
-/// Is this request one Harmost may send to the origin a second time?
+/// Is this request one Tanod may send to the origin a second time?
 ///
 /// Both halves matter. The method must be safe, because that is the only
 /// promise HTTP makes about sending a request twice. The class must not be one
@@ -109,7 +109,7 @@ impl RetryBudget {
     }
 
     /// Count one origin request. This is the budget's denominator, so it is
-    /// called for every attempt Harmost makes — including retries, which are
+    /// called for every attempt Tanod makes — including retries, which are
     /// themselves origin load.
     pub fn record_attempt(&self, now_ms: u64) {
         if self.enabled {

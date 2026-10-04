@@ -1,11 +1,11 @@
 # Next.js production reference
 
-This reference runs an edge proxy in front of one Harmost governor and three
+This reference runs an edge proxy in front of one Tanod governor and three
 identical standalone Next.js origins. The origins share Next.js cache and tag
 state through a mounted cache directory. Only the edge listener is public; the
-Harmost admin and metrics listeners and direct origin ports bind to loopback.
+Tanod admin and metrics listeners and direct origin ports bind to loopback.
 
-A second topology runs two Harmost replicas behind URI-stable ingress. Each
+A second topology runs two Tanod replicas behind URI-stable ingress. Each
 replica keeps local cache and admission state while a static partition keeps
 their combined origin-work allocation inside one declared budget.
 
@@ -33,57 +33,57 @@ with durable shared storage before running the origins on different hosts.
 ## Approve routes
 
 Public dynamic routes live in
-[`fixtures/next-storefront/harmost.next.yaml`](../fixtures/next-storefront/harmost.next.yaml).
+[`fixtures/next-storefront/tanod.next.yaml`](../fixtures/next-storefront/tanod.next.yaml).
 Anything absent stays private.
 
 ```bash
-node packages/harmost-next/src/cli.js inspect \
+node packages/tanod-next/src/cli.js inspect \
   --dist-dir fixtures/next-storefront/.next \
-  --policy fixtures/next-storefront/harmost.next.yaml
+  --policy fixtures/next-storefront/tanod.next.yaml
 
-node packages/harmost-next/src/cli.js generate \
+node packages/tanod-next/src/cli.js generate \
   --dist-dir fixtures/next-storefront/.next \
-  --policy fixtures/next-storefront/harmost.next.yaml \
+  --policy fixtures/next-storefront/tanod.next.yaml \
   --upstream next-1:3000 \
   --upstream next-2:3000 \
   --upstream next-3:3000 \
   --concurrency 8 \
-  --out /tmp/harmost.yaml \
+  --out /tmp/tanod.yaml \
   --check
 ```
 
-Generation writes `harmost.deployment.json` beside the configuration. Commit
+Generation writes `tanod.deployment.json` beside the configuration. Commit
 the assertion file; treat generated configuration and identity files as build
 artifacts.
 
-For several Harmost replicas, declare the group budget instead of copying a
+For several Tanod replicas, declare the group budget instead of copying a
 local ceiling to every process:
 
 ```bash
-node packages/harmost-next/src/cli.js generate \
+node packages/tanod-next/src/cli.js generate \
   --dist-dir fixtures/next-storefront/.next \
-  --policy fixtures/next-storefront/harmost.next.yaml \
+  --policy fixtures/next-storefront/tanod.next.yaml \
   --upstream next-1:3000 --upstream next-2:3000 --upstream next-3:3000 \
   --global-concurrency 8 --replicas 2 \
-  --out /tmp/harmost-replicated.yaml --check
+  --out /tmp/tanod-replicated.yaml --check
 ```
 
-This allocates four units to each process. Harmost rejects a configuration
+This allocates four units to each process. Tanod rejects a configuration
 whose declared replica sum exceeds `capacity.global_max`; the orchestrator
 must keep its active replica count at or below `capacity.replicas`.
 
 ## Roll out in stages
 
-Generate each stage with `--rollout <stage>`, validate it, then reload Harmost.
+Generate each stage with `--rollout <stage>`, validate it, then reload Tanod.
 Move to the next stage only when the dashboard matches the expected behavior.
 
 | Stage | Behavior | Expected signal | Rollback |
 | --- | --- | --- | --- |
-| `observe` | Classification and telemetry only | Origin traffic unchanged; admission decision is `observe` | Route ingress around Harmost |
+| `observe` | Classification and telemetry only | Origin traffic unchanged; admission decision is `observe` | Route ingress around Tanod |
 | `protect` | Fixed admission and bounded queues | In-flight work stays below the ceiling; no cache hits | Reload `observe` configuration |
 | `coalesce` | Public requests may share one in-flight render | Origin requests fall during identical bursts; cache stays empty | Reload `protect` configuration |
 | `cache` | Short caching for approved routes | Hits rise and origin work falls; invalidation remains scoped | Reload `coalesce` configuration |
-| replicate | Add statically partitioned Harmost replicas | Group capacity remains within its declared budget | Return ingress to one Harmost replica |
+| replicate | Add statically partitioned Tanod replicas | Group capacity remains within its declared budget | Return ingress to one Tanod replica |
 
 Every generated stage keeps the same route privacy decisions. The `observe`
 mode disables admission, cache, coalescing, and spooling in the proxy itself,
@@ -94,9 +94,9 @@ so route-level settings cannot accidentally turn protection on.
 Explain a request locally without contacting an origin:
 
 ```bash
-node packages/harmost-next/src/cli.js explain \
+node packages/tanod-next/src/cli.js explain \
   --dist-dir fixtures/next-storefront/.next \
-  --policy fixtures/next-storefront/harmost.next.yaml \
+  --policy fixtures/next-storefront/tanod.next.yaml \
   --url 'https://shop.example/products/one?ref=email' \
   --header 'Cookie: session=redacted'
 ```
@@ -112,7 +112,7 @@ prints the target, routes, and concurrency steps before sending requests and
 never edits the configuration.
 
 ```bash
-node packages/harmost-next/src/cli.js calibrate \
+node packages/tanod-next/src/cli.js calibrate \
   --target http://127.0.0.1:18080 \
   --route /products/calibration \
   --steps 1,2,4,8 \
@@ -127,13 +127,13 @@ raising the fixed ceiling.
 
 The replicated edge hashes the URI consistently, preserving local cache and
 coalescing value without making correctness depend on affinity. Configure
-`@harmost/next` with every admin listener through `endpoints` or
-`HARMOST_PURGE_URLS`; a fan-out purge fails if any local cache cannot be
+`@tanod/next` with every admin listener through `endpoints` or
+`TANOD_PURGE_URLS`; a fan-out purge fails if any local cache cannot be
 invalidated.
 
 The reference keeps static partitioning authoritative. Capacity leases and
 adaptive limits add coordination and failure modes without evidence that the
-fixed allocation is insufficient. Distributed Harmost caching and coalescing
+fixed allocation is insufficient. Distributed Tanod caching and coalescing
 remain deferred for the same reason.
 
 ## Verify
@@ -141,7 +141,7 @@ remain deferred for the same reason.
 The HTTP and browser suites cover public/private isolation, RSC variants,
 Server Actions, Draft Mode, streaming, image negotiation, and coalescing. The
 reference suite additionally checks build identity across origins, shared
-Next.js cache invalidation, forwarded public URL, scoped Harmost purging,
+Next.js cache invalidation, forwarded public URL, scoped Tanod purging,
 metrics, and progressive streaming.
 
 ```bash

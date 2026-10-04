@@ -1,6 +1,6 @@
 # Roadmap
 
-Harmost protects expensive SSR and dynamic origin workloads. It remains a
+Tanod protects expensive SSR and dynamic origin workloads. It remains a
 working prototype without sustained production validation.
 
 ## 6. Complete replica validation
@@ -18,13 +18,47 @@ working prototype without sustained production validation.
 - After phases 5–6, extract a versioned adapter contract and shared conformance tests.
 - Choose the next framework based on demonstrated self-hosting demand.
 
+## 9. Improve what a shed visitor sees
+
+From the Reko storefront load tests (2026-09-26/27): a shed is a `503` with an
+empty body, so a document request lands on the browser's own error screen.
+
+- Add a configurable overload body for document requests: a small page that
+  says the site is busy and reloads itself after `retry_after`. Flights, API
+  routes and other non-document requests keep the bare `503`.
+- Serve a stale cached copy instead of shedding, per route, when one exists
+  (for example `stale_on_shed: 5m` beside `stale_if_error`). Today stale is
+  served only for origin failures; a shed is deliberately excluded
+  (`should_serve_stale`), so an overloaded public page fails even when a
+  minutes-old copy is in the cache.
+
+## 10. Show what visitors experience
+
+The dashboard can show what Tanod does to the origin, but not what visitors
+got. From the same load tests:
+
+- Count responses by route and status class (`2xx`/`3xx`/`4xx`/`5xx`) as sent
+  to the client, including Tanod's own sheds.
+- Measure total time per request as the client sees it, split into queue wait
+  and origin time; today only origin render latency is recorded.
+- Estimate active visitors: distinct client addresses over the last 1 and 5
+  minutes (an approximate sketch; no addresses leave the process), plus open
+  downstream connections.
+- Export a build-info series (`version`, `deployment_id`) so every environment
+  shows what it runs.
+- Reconcile `tanod_reuse_eligible_requests_total` with `tanod_cache_total`.
+  Hits (and stale serves) can outnumber eligible requests, which drives the
+  `origin_work_avoided` ratio outside 0–100%. The dashboard now uses
+  `tanod_cache_total` alone; the recording rule and any alert on it should
+  follow once the counters agree.
+
 ## Current boundaries
 
 - Cache and coalescing remain local to each process; replica limits are statically partitioned and purges must reach every admin endpoint.
 - Path purges match exact paths; dynamic route-pattern invalidation is not implemented.
 - Slow readers can hold origin capacity unless response spooling is enabled, which sacrifices progressive rendering.
 - Disk and external cache storage were [evaluated and declined](./CACHE-STORAGE-EVALUATION.md).
-- Harmost does not replace an edge server, CDN, authentication, or client rate limiting.
+- Tanod does not replace an edge server, CDN, authentication, or client rate limiting.
 
 See the [changelog](../CHANGELOG.md) for release history, the
 [Next.js production reference](./NEXTJS-PRODUCTION-REFERENCE.md), and

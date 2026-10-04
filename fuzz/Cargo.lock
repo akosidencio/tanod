@@ -857,7 +857,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "harmost"
+name = "tanod"
 version = "0.1.1"
 dependencies = [
  "arc-swap",
@@ -881,11 +881,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "harmost-fuzz"
+name = "tanod-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
- "harmost",
+ "tanod",
  "http",
  "libfuzzer-sys",
  "serde-saphyr",

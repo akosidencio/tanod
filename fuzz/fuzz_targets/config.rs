@@ -6,7 +6,7 @@
 //! file must produce an error naming what was wrong, never a panic and never
 //! an accepted config that validation was supposed to refuse.
 
-use harmost::config::{Config, validation};
+use tanod::config::{Config, validation};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &str| {

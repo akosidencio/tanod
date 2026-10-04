@@ -1,4 +1,4 @@
-# TLS termination in Harmost.
+# TLS termination in Tanod.
 #
 # Both listeners run at once: `server.listen` stays cleartext and
 # `server.tls.listen` terminates TLS, so one process can serve a migration and

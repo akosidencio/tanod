@@ -1,0 +1,52 @@
+{
+  "name": "@tanod/next",
+  "version": "0.1.0",
+  "description": "Generate Tanod route configuration from a Next.js build, and route revalidateTag()/revalidatePath() to Tanod's purge API",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=18.17",
+    "bun": ">=1.1"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./config": {
+      "types": "./src/config.d.ts",
+      "default": "./src/config.js"
+    }
+  },
+  "bin": {
+    "tanod-next": "./src/cli.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:bun": "bun test test/",
+    "test:all": "npm run test && npm run test:bun",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "next": ">=14"
+  },
+  "peerDependenciesMeta": {
+    "next": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "tanod",
+    "nextjs",
+    "cache",
+    "reverse-proxy"
+  ],
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.6"
+  }
+}

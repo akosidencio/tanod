@@ -2,7 +2,7 @@
 # The headline demonstration: unique URLs, nothing cacheable, nothing to
 # coalesce. Only admission control is doing any work.
 #
-# Fires the same load twice — straight at the origin, then through harmost —
+# Fires the same load twice — straight at the origin, then through tanod —
 # and reads the peak concurrency the origin itself observed. The origin is the
 # witness, so the result does not depend on trusting the proxy's own metrics.
 BENCH_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -37,7 +37,7 @@ run_case() { # label, base url, result key, through_proxy
   bench_spawn origin "$(bench_bin slow-origin)" "$ORIGIN_PORT" "$RENDER_MS"
   bench_wait_port 127.0.0.1 "$ORIGIN_PORT" "slow-origin"
   if [ "$4" = yes ]; then
-    bench_start_harmost harmost "$CONFIG" "$LISTEN_PORT"
+    bench_start_tanod tanod "$CONFIG" "$LISTEN_PORT"
   fi
 
   local start peak elapsed
@@ -47,7 +47,7 @@ run_case() { # label, base url, result key, through_proxy
   peak=$(bench_origin_stat "$ORIGIN_PORT" peak)
   bench_assert_int "$peak" "$1: origin peak"
 
-  [ "$4" = yes ] && bench_stop harmost
+  [ "$4" = yes ] && bench_stop tanod
   bench_stop origin
   printf '  %-22s peak=%-6s wall=%ss\n' "$1" "$peak" "$elapsed"
   bench_result "$3" "$peak"
@@ -58,13 +58,13 @@ echo "$CONCURRENCY concurrent requests, $CONCURRENCY unique URLs, ${RENDER_MS}ms
 echo "nothing cacheable, nothing coalescible — admission control only"
 echo
 run_case "direct to origin" "http://127.0.0.1:$ORIGIN_PORT" direct   no
-run_case "through harmost"  "http://127.0.0.1:$LISTEN_PORT" governed yes
+run_case "through tanod"  "http://127.0.0.1:$LISTEN_PORT" governed yes
 echo
 DIRECT=$(bench_get BENCH_RESULT_direct)
 GOVERNED=$(bench_get BENCH_RESULT_governed)
 echo "  configured ceiling     $CEILING"
 echo "  origin peak, direct    $DIRECT"
-echo "  origin peak, harmost   $GOVERNED"
+echo "  origin peak, tanod   $GOVERNED"
 echo
 bench_print_params
 echo
@@ -74,4 +74,4 @@ echo
 # unprotected run has to demonstrate that it could.
 bench_assert_gt "$DIRECT" "$CEILING" "unprotected origin peak (load never exceeded the ceiling, so the test proved nothing)"
 bench_assert_le "$GOVERNED" "$CEILING" "governed origin peak"
-bench_pass "unprotected, the origin was driven to $DIRECT concurrent renders; through harmost, $GOVERNED"
+bench_pass "unprotected, the origin was driven to $DIRECT concurrent renders; through tanod, $GOVERNED"

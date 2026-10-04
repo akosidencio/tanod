@@ -10,7 +10,7 @@
 //! serve, so the balancer withdraws it on its own schedule, and only then does
 //! the shutdown begin.
 //!
-//! Harmost enters this state from two places:
+//! Tanod enters this state from two places:
 //!
 //! * `SIGTERM` — [`DrainShutdownSignalWatch`] enters drain state and waits for
 //!   the configured window *before* it returns the signal to Pingora. Pingora
@@ -111,7 +111,7 @@ impl DrainWatcher {
 impl BackgroundService for DrainWatcher {
     async fn start(&self, mut shutdown: ShutdownWatch) {
         // `SIGUSR1` is unclaimed: Pingora takes SIGQUIT, SIGTERM and SIGINT,
-        // and Harmost's reloader takes SIGHUP.
+        // and Tanod's reloader takes SIGHUP.
         let mut usr1 = match signal(SignalKind::user_defined1()) {
             Ok(s) => Some(s),
             Err(error) => {
@@ -153,7 +153,7 @@ impl BackgroundService for DrainWatcher {
 /// Pingora broadcasts shutdown to its traffic, metrics and admin listeners at
 /// once. Their accept loops stop on that broadcast, before Pingora sleeps its
 /// own grace period. Intercepting `SIGTERM` here is therefore the only point at
-/// which Harmost can remain reachable while advertising itself not-ready.
+/// which Tanod can remain reachable while advertising itself not-ready.
 pub struct DrainShutdownSignalWatch {
     inner: UnixShutdownSignalWatch,
     state: Arc<DrainState>,

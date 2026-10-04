@@ -1,6 +1,6 @@
 # Operator artifacts
 
-These artifacts monitor Harmost as an overload governor for expensive SSR and
+These artifacts monitor Tanod as an overload governor for expensive SSR and
 dynamic origin workloads. They do not treat cache-hit rate or lower latency as
 the product goal; the primary signals are bounded origin work, queueing,
 shedding, origin health and recovery.
@@ -21,15 +21,15 @@ rules, and dashboard work together:
 docker compose -f compose.observability.yaml up --build
 ```
 
-The stack runs three Next.js fixture origins behind Harmost. A traffic container
+The stack runs three Next.js fixture origins behind Tanod. A traffic container
 continuously exercises reusable, dynamic, private, and queueing routes while
-Prometheus scrapes Harmost and Grafana provisions this dashboard automatically.
+Prometheus scrapes Tanod and Grafana provisions this dashboard automatically.
 
 | Service | Local address |
 |---|---|
-| Harmost | <http://127.0.0.1:18080> |
+| Tanod | <http://127.0.0.1:18080> |
 | Prometheus | <http://127.0.0.1:19000> |
-| Grafana dashboard | <http://127.0.0.1:13000/d/harmost-overview/harmost> |
+| Grafana dashboard | <http://127.0.0.1:13000/d/tanod-overview/tanod> |
 
 Grafana is included in the Compose stack, so the demo does not require a local
 Grafana installation. The first build compiles the Rust and Next.js images;
@@ -46,8 +46,8 @@ docker compose -f compose.observability.yaml down
 ```
 
 The dependency and browser installation commands are only needed once. The
-capture writes `assets/harmost-dashboard.png` plus
-`assets/harmost-dashboard-full.png`.
+capture writes `assets/tanod-dashboard.png` plus
+`assets/tanod-dashboard-full.png`.
 
 ## `prometheus/alerts.yml`
 
@@ -57,17 +57,17 @@ resources, configuration.
 ```yaml
 # prometheus.yml
 rule_files:
-  - /etc/prometheus/rules/harmost-alerts.yml
+  - /etc/prometheus/rules/tanod-alerts.yml
 
 scrape_configs:
-  - job_name: harmost
+  - job_name: tanod
     static_configs:
-      - targets: ["harmost-1:9090", "harmost-2:9090"]
+      - targets: ["tanod-1:9090", "tanod-2:9090"]
 ```
 
-The rules assume `job="harmost"`. Every other label they use — `route`,
+The rules assume `job="tanod"`. Every other label they use — `route`,
 `upstream`, `limiter`, `decision`, `status`, `reason`, `outcome` — is
-config-derived on Harmost's side and never client-controlled, so no rule here
+config-derived on Tanod's side and never client-controlled, so no rule here
 can be made expensive by traffic.
 
 **Every threshold is a starting point, not a recommendation.** How much load
@@ -95,7 +95,7 @@ knowing when you extend it:
   makes two unrelated scales look correlated, and that is the single most
   common way a dashboard misleads.
 - **A budget is published as a metric**, not hardcoded in a panel.
-  `harmost_cache_max_bytes` and `harmost_spool_max_bytes` come from the running
+  `tanod_cache_max_bytes` and `tanod_spool_max_bytes` come from the running
   config, so a panel cannot go stale the first time somebody edits it.
 
 The four signals worth understanding before an incident are in

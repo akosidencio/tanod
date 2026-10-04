@@ -48,13 +48,13 @@ CONFIG="$BENCH_DIR/soak.yaml"
 
 bench_render_config "$BENCH_ROOT/bench/soak.yaml.tpl" "$CONFIG" \
   "LISTEN=$LISTEN_PORT" "ORIGIN=$ORIGIN_PORT" "ADMIN=$ADMIN_PORT" \
-  "METRICS=$METRICS_PORT" "PIDFILE=$BENCH_DIR/harmost.pid" \
+  "METRICS=$METRICS_PORT" "PIDFILE=$BENCH_DIR/tanod.pid" \
   "UPGRADESOCK=$BENCH_DIR/upgrade.sock"
 
 bench_spawn origin "$(bench_bin slow-origin)" "$ORIGIN_PORT" 25
 bench_wait_port 127.0.0.1 "$ORIGIN_PORT" "slow-origin"
-bench_start_harmost harmost "$CONFIG" "$LISTEN_PORT" "$ADMIN_PORT"
-PID=$(bench_pid harmost)
+bench_start_tanod tanod "$CONFIG" "$LISTEN_PORT" "$ADMIN_PORT"
+PID=$(bench_pid tanod)
 
 BASE="http://127.0.0.1:$LISTEN_PORT"
 
@@ -105,8 +105,8 @@ while [ "$(date +%s)" -lt "$END" ]; do
   printf '%s %s %s %s\n' \
     "$(date +%s)" \
     "$(bench_rss_kb "$PID")" \
-    "$(bench_metric "$METRICS_PORT" harmost_cache_bytes)" \
-    "$(bench_metric "$METRICS_PORT" 'harmost_origin_in_flight{limiter="global"}')" \
+    "$(bench_metric "$METRICS_PORT" tanod_cache_bytes)" \
+    "$(bench_metric "$METRICS_PORT" 'tanod_origin_in_flight{limiter="global"}')" \
     >> "$SAMPLES"
   sleep 2
 done
@@ -114,8 +114,8 @@ wait
 
 # ------------------------------------------------------------- assertions
 
-bench_alive "$PID" || bench_fail "harmost exited during the soak"
-bench_assert_no_panics harmost
+bench_alive "$PID" || bench_fail "tanod exited during the soak"
+bench_assert_no_panics tanod
 
 TOTAL=$(cat "$BENCH_DIR"/results-* 2>/dev/null | wc -l | tr -d ' ')
 OK=$(cat "$BENCH_DIR"/results-* 2>/dev/null | grep -c '^200$' || true)
@@ -198,7 +198,7 @@ bench_assert_gt "$ORIGIN_PEAK" 1 "origin peak concurrency (nothing ever overlapp
 
 # ---- no permit leaked
 
-IN_FLIGHT=$(bench_metric "$METRICS_PORT" 'harmost_origin_in_flight{limiter="global"}')
+IN_FLIGHT=$(bench_metric "$METRICS_PORT" 'tanod_origin_in_flight{limiter="global"}')
 READY=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$ADMIN_PORT/health/ready")
 echo
 echo "after the traffic stops"

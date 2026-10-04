@@ -5,13 +5,13 @@
 # accurate description of this repository rather than an embarrassment to be
 # attributed away.
 
-# These are Harmost YAML configs with @PLACEHOLDER@ substitution, rendered by
+# These are Tanod YAML configs with @PLACEHOLDER@ substitution, rendered by
 # bench_render_config. Linguist maps the .tpl extension to Go Template on the
 # name alone and never opens the file — there is no Go in this repository.
 *.yaml.tpl linguist-language=YAML
 
 # A Next.js storefront that exists to be a target for bench/nextjs.sh and
 # bench/nextjs-browser.sh. It is the thing under protection in those tests, not
-# part of Harmost, and it is counted out of the language bar for the same
+# part of Tanod, and it is counted out of the language bar for the same
 # reason a bundled example app usually is.
 fixtures/** linguist-vendored

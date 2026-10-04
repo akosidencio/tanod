@@ -3,8 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
-  deploymentId: process.env.HARMOST_BUILD_ID ?? "next-fixture-v1",
-  generateBuildId: async () => process.env.HARMOST_BUILD_ID ?? "next-fixture-v1",
+  deploymentId: process.env.TANOD_BUILD_ID ?? "next-fixture-v1",
+  generateBuildId: async () => process.env.TANOD_BUILD_ID ?? "next-fixture-v1",
   cacheHandler: require.resolve("./cache-handler.cjs"),
   cacheMaxMemorySize: 0,
   async headers() {
@@ -13,7 +13,7 @@ const nextConfig: NextConfig = {
         source: "/products/:slug",
         headers: [
           {
-            key: "X-Harmost-Cache-Tags",
+            key: "X-Tanod-Cache-Tags",
             value: "products",
           },
         ],

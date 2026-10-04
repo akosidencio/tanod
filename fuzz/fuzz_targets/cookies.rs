@@ -7,7 +7,7 @@
 //! look like pairs.
 
 use arbitrary::Arbitrary;
-use harmost::classifier::RequestMetadata;
+use tanod::classifier::RequestMetadata;
 use http::{HeaderMap, HeaderValue, Method, header};
 use libfuzzer_sys::fuzz_target;
 

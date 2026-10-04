@@ -5,7 +5,7 @@
 //! 1. **Active health checks** ([`health`]) — a probe on a configured path.
 //!    Cheap, periodic, and blind to everything it does not ask about.
 //! 2. **Passive failure observation** ([`breaker`]) — the outcome of the real
-//!    requests Harmost is already sending. This is what notices an origin that
+//!    requests Tanod is already sending. This is what notices an origin that
 //!    answers `/healthz` fine and fails every render.
 //! 3. **Live load** — in-flight work and observed latency per backend, which
 //!    is what [`crate::config::schema::LoadBalancing::LeastLoaded`] selects on.
@@ -34,13 +34,13 @@ use breaker::{Breaker, BreakerAllowance, BreakerState, ProbeToken};
 /// One configured upstream: the name from `origin.upstreams` and every
 /// address it currently resolves to.
 ///
-/// A name, not an address, because the platforms Harmost runs on hand out one
+/// A name, not an address, because the platforms Tanod runs on hand out one
 /// DNS name for a set of instances — App Platform's internal service name,
 /// a Kubernetes headless Service — and grow, shrink and replace that set
 /// without telling anyone. Resolving once and keeping the first address, as
-/// Harmost used to, pinned every origin connection to one instance: on the
+/// Tanod used to, pinned every origin connection to one instance: on the
 /// staging storefront one instance ran at 100% CPU while its twin idled, and a
-/// replaced instance would have been unreachable until Harmost restarted.
+/// replaced instance would have been unreachable until Tanod restarted.
 /// [`resolver`] re-resolves every `origin.resolve_interval`.
 #[derive(Debug, Clone)]
 pub struct Backend {
@@ -129,7 +129,7 @@ impl std::ops::Deref for SelectedBackend<'_> {
     }
 }
 
-/// Everything Harmost has learned about one backend since it started.
+/// Everything Tanod has learned about one backend since it started.
 struct BackendState {
     /// Set false by health checking. Starts false: a configured probe has not
     /// passed yet at startup, and strict readiness must not describe an
@@ -251,7 +251,7 @@ impl UpstreamPool {
             .is_some_and(|s| s.healthy.load(Ordering::Relaxed))
     }
 
-    /// How many backends are passing. Zero does not stop Harmost serving —
+    /// How many backends are passing. Zero does not stop Tanod serving —
     /// see [`UpstreamPool::select`] — but it is what an operator wants
     /// readiness to be able to report.
     pub fn healthy_count(&self) -> usize {
@@ -467,7 +467,7 @@ impl UpstreamPool {
                 .copied(),
             // Sending a given path to a consistent backend also warms the
             // origin's own render cache and JIT state, which is free origin
-            // work avoided on top of anything Harmost does.
+            // work avoided on top of anything Tanod does.
             LoadBalancing::HashByPath => {
                 // The remainder is smaller than `len`, so it always fits back
                 // into a `usize`; `unwrap_or` is unreachable, not a fallback.
@@ -897,7 +897,7 @@ mod tests {
     fn a_failed_lookup_keeps_the_previous_addresses() {
         let backend = multi_instance(&["10.0.0.1:3000", "10.0.0.2:3000"]);
         let unresolvable = Backend {
-            address: "harmost-test.invalid:3000".to_string(),
+            address: "tanod-test.invalid:3000".to_string(),
             ..backend.clone()
         };
 

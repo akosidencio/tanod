@@ -19,7 +19,7 @@ cache:
   max_memory: 64MiB
   max_body_size: 4MiB
   eviction: clock
-  tag_header: "x-harmost-cache-tags"
+  tag_header: "x-tanod-cache-tags"
   purge:
     token: "@TOKEN@"
 timeouts:

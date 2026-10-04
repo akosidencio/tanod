@@ -17,7 +17,7 @@ unambiguous.
 
 ## 1. Why these two components and nothing else
 
-Harmost's failure modes divide cleanly. Most of them make it slow, or make the
+Tanod's failure modes divide cleanly. Most of them make it slow, or make the
 origin do work it did not need to do. Two of them serve one person's data to
 another:
 
@@ -177,7 +177,7 @@ The author's own assessment of where this is weakest, in order:
 
 1. **The undeclared-personalisation gap.** An origin that personalises a
    response without `Set-Cookie`, `Cache-Control: private` or a declared `Vary`
-   is indistinguishable from a public one. Harmost's answer is the route class
+   is indistinguishable from a public one. Tanod's answer is the route class
    and `cache.vary`, both of which are the operator's judgement. Is there a
    detectable signal being missed? Is there a safer default than trusting the
    declared class?

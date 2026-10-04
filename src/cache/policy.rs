@@ -14,7 +14,7 @@ use crate::config::schema::RouteCache;
 use std::time::Duration;
 
 /// Why a response will not be shared. Recorded on the request for logs and
-/// the `harmost_cache_bypass_total` counter.
+/// the `tanod_cache_bypass_total` counter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BypassReason {
     UnsafeMethod,
@@ -781,7 +781,7 @@ mod proptests {
             let _ = cc.shared_ttl();
         }
 
-        /// Directives Harmost does not implement must be inert, not
+        /// Directives Tanod does not implement must be inert, not
         /// accidentally meaningful. Appending one may never change a decision.
         #[test]
         fn unknown_directives_do_not_change_the_parse(

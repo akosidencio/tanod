@@ -1,38 +1,38 @@
 groups:
-  - name: harmost-reference
+  - name: tanod-reference
     interval: 30s
     rules:
-      - record: harmost:admission_saturation:ratio
+      - record: tanod:admission_saturation:ratio
         expr: >-
-          sum by (job, instance, limiter) (harmost_origin_in_flight)
-          / clamp_min(sum by (job, instance, limiter) (harmost_concurrency_limit), 1)
+          sum by (job, instance, limiter) (tanod_origin_in_flight)
+          / clamp_min(sum by (job, instance, limiter) (tanod_concurrency_limit), 1)
 
-      - record: harmost:group_admission_saturation:ratio
+      - record: tanod:group_admission_saturation:ratio
         expr: >-
-          sum by (job, limiter) (harmost_origin_in_flight)
-          / clamp_min(sum by (job, limiter) (harmost_concurrency_limit), 1)
+          sum by (job, limiter) (tanod_origin_in_flight)
+          / clamp_min(sum by (job, limiter) (tanod_concurrency_limit), 1)
 
-      - record: harmost:shed_rate:ratio5m
+      - record: tanod:shed_rate:ratio5m
         expr: >-
-          sum by (job, instance, route) (rate(harmost_admission_total{decision=~"shed_.*"}[5m]))
-          / clamp_min(sum by (job, instance, route) (rate(harmost_admission_total[5m])), 0.001)
+          sum by (job, instance, route) (rate(tanod_admission_total{decision=~"shed_.*"}[5m]))
+          / clamp_min(sum by (job, instance, route) (rate(tanod_admission_total[5m])), 0.001)
 
-      - record: harmost:origin_latency:p95_5m
+      - record: tanod:origin_latency:p95_5m
         expr: >-
           histogram_quantile(0.95,
-          sum by (job, instance, route, le) (rate(harmost_origin_latency_seconds_bucket[5m])))
+          sum by (job, instance, route, le) (rate(tanod_origin_latency_seconds_bucket[5m])))
 
-      - record: harmost:origin_work_avoided:ratio5m
+      - record: tanod:origin_work_avoided:ratio5m
         expr: >-
-          sum by (job, instance) (rate(harmost_cache_total{status=~"hit|stale"}[5m]))
-          / clamp_min(sum by (job, instance) (rate(harmost_reuse_eligible_requests_total[5m])), 0.001)
+          sum by (job, instance) (rate(tanod_cache_total{status=~"hit|stale"}[5m]))
+          / clamp_min(sum by (job, instance) (rate(tanod_reuse_eligible_requests_total[5m])), 0.001)
 
-      - record: harmost:cache_occupancy:ratio
+      - record: tanod:cache_occupancy:ratio
         expr: >-
-          sum by (job, instance) (harmost_cache_bytes)
-          / clamp_min(sum by (job, instance) (harmost_cache_max_bytes), 1)
+          sum by (job, instance) (tanod_cache_bytes)
+          / clamp_min(sum by (job, instance) (tanod_cache_max_bytes), 1)
 
-      - record: harmost:spool_occupancy:ratio
+      - record: tanod:spool_occupancy:ratio
         expr: >-
-          sum by (job, instance) (harmost_spool_bytes)
-          / clamp_min(sum by (job, instance) (harmost_spool_max_bytes), 1)
+          sum by (job, instance) (tanod_spool_bytes)
+          / clamp_min(sum by (job, instance) (tanod_spool_max_bytes), 1)

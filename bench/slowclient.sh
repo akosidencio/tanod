@@ -2,7 +2,7 @@
 # Can a slow reader occupy origin capacity it is not using?
 #
 # Yes, partly — and this script measures how much, then asserts the one thing
-# Harmost actually promises about it.
+# Tanod actually promises about it.
 #
 # A permit models render capacity and is returned when pingora observes
 # upstream end-of-stream. Because pingora paces upstream reads against
@@ -57,10 +57,10 @@ EOF
 # Two rate-limited readers occupy both permits, then one ordinary request asks
 # for the capacity they are no longer using. RESULT is set for the caller.
 probe() { # url for the slow readers, label, settle seconds
-  bench_stop harmost; bench_stop origin
+  bench_stop tanod; bench_stop origin
   bench_spawn origin "$(bench_bin slow-origin)" "$ORIGIN_PORT" 50
   bench_wait_port 127.0.0.1 "$ORIGIN_PORT" "slow-origin"
-  bench_start_harmost harmost "$BENCH_DIR/slowclient.yaml" "$LISTEN_PORT"
+  bench_start_tanod tanod "$BENCH_DIR/slowclient.yaml" "$LISTEN_PORT"
 
   bench_spawn reader1 curl -s -o /dev/null --limit-rate 32k "$1"
   bench_spawn reader2 curl -s -o /dev/null --limit-rate 32k "$1"

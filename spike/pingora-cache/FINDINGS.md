@@ -67,7 +67,7 @@ The layering now has a clear division:
 ```
 pingora-cache   lock, freshness, Vary, purge, streaming write
      +
-harmost         Storage impl, cache key, shareability, admission
+tanod         Storage impl, cache key, shareability, admission
 ```
 
 Admission control earns its place twice over: the `GiveUp` path releases an

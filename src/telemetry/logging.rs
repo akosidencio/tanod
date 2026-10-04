@@ -11,9 +11,9 @@
 //!
 //! `trace_id` and `span_id` are on every line, whether or not spans are
 //! exported anywhere. They are what joins this line to the origin's own logs
-//! for the same request, and — because the id Harmost concluded is the one it
+//! for the same request, and — because the id Tanod concluded is the one it
 //! forwarded in `traceparent` — the join works even when the origin has no
-//! idea Harmost exists.
+//! idea Tanod exists.
 
 use super::json::{escape_into, field_str};
 use std::fmt::Write as _;
@@ -27,7 +27,7 @@ pub struct AccessLog<'a> {
     pub class: &'a str,
     pub cache: &'a str,
     pub upstream: Option<&'a str>,
-    /// The client address Harmost concluded, which for a request from a
+    /// The client address Tanod concluded, which for a request from a
     /// trusted proxy is the forwarded one and otherwise the connection peer.
     /// Not the raw header: see [`crate::net::forwarded`].
     pub client: &'a str,
@@ -52,7 +52,7 @@ pub struct AccessLog<'a> {
     /// W3C trace id, 32 lowercase hex characters. Always present: correlation
     /// does not depend on whether anything is exporting spans.
     pub trace_id: &'a str,
-    /// Harmost's own server span for this request.
+    /// Tanod's own server span for this request.
     pub span_id: &'a str,
     /// Whether this request joined a trace the caller had already started, or
     /// began one. Useful for finding the hop where propagation broke.

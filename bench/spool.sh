@@ -50,8 +50,8 @@ scenario() { # spool(true|false), max_body, label
   bench_render_config "$BENCH_ROOT/bench/spool.yaml" "$BENCH_DIR/$label.yaml" \
     "LISTEN=$listen" "ORIGIN=$ORIGIN_PORT" "SPOOL=$spool" "SPOOL_MAX_BODY=$max_body"
 
-  bench_stop harmost
-  bench_start_harmost harmost "$BENCH_DIR/$label.yaml" "$listen"
+  bench_stop tanod
+  bench_start_tanod tanod "$BENCH_DIR/$label.yaml" "$listen"
   bench_origin_reset "$ORIGIN_PORT"
 
   # Two slow readers take both permits. Distinct URLs so nothing is collapsed
@@ -148,8 +148,8 @@ fi
 LISTEN_CHECK=$(bench_free_port)
 bench_render_config "$BENCH_ROOT/bench/spool.yaml" "$BENCH_DIR/integrity.yaml" \
   "LISTEN=$LISTEN_CHECK" "ORIGIN=$ORIGIN_PORT" "SPOOL=true" "SPOOL_MAX_BODY=64KiB"
-bench_stop harmost
-bench_start_harmost harmost "$BENCH_DIR/integrity.yaml" "$LISTEN_CHECK"
+bench_stop tanod
+bench_start_tanod tanod "$BENCH_DIR/integrity.yaml" "$LISTEN_CHECK"
 DIRECT=$(curl -s "http://127.0.0.1:$ORIGIN_PORT/big/integrity/1" | cksum)
 THROUGH=$(curl -s "http://127.0.0.1:$LISTEN_CHECK/big/integrity/1" | cksum)
 [ "$DIRECT" = "$THROUGH" ] || bench_fail \

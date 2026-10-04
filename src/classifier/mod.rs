@@ -166,7 +166,7 @@ impl<'a> RequestMetadata<'a> {
     }
 
     // `HEAD`, `Range` and the `If-*` preconditions deliberately have no
-    // predicate here, because Harmost does not act on them itself.
+    // predicate here, because Tanod does not act on them itself.
     // `pingora_cache::filters::upstream::request_filter` rewrites a
     // cache-filling `HEAD` into a `GET` and strips `Range` and every `If-*`
     // header from the upstream request, so the origin returns the whole `200`

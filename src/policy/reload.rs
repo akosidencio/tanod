@@ -124,7 +124,7 @@ impl Reloader {
                     .to_string(),
             );
         }
-        // Everything below is compiled or bound once in `Harmost::new` and is
+        // Everything below is compiled or bound once in `Tanod::new` and is
         // not swapped per request. Refusing the edit is the whole point: a
         // reload that reported success while leaving the old trust policy in
         // force would be a security setting that silently did not apply, and
@@ -318,7 +318,7 @@ mod tests {
     use std::io::Write;
 
     fn write_config(body: &str) -> tempfile_lite::TempPath {
-        let path = tempfile_lite::TempPath::new("harmost-reload");
+        let path = tempfile_lite::TempPath::new("tanod-reload");
         let mut f = std::fs::File::create(&path.0).unwrap();
         f.write_all(body.as_bytes()).unwrap();
         path

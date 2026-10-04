@@ -1,11 +1,11 @@
-name: harmost-nextjs-fixture
+name: tanod-nextjs-fixture
 
 x-next-origin: &next-origin
-  image: harmost-next-origin:reference
+  image: tanod-next-origin:reference
   build:
     context: ./fixtures/next-storefront
     args:
-      HARMOST_BUILD_ID: next-fixture-v1
+      TANOD_BUILD_ID: next-fixture-v1
       NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
   expose:
     - "3000"
@@ -19,8 +19,8 @@ x-next-origin: &next-origin
     next-cache-init:
       condition: service_completed_successfully
   environment: &next-environment
-    HARMOST_BUILD_ID: next-fixture-v1
-    HARMOST_DOCTOR_TOKEN: nextjs-reference-doctor-token
+    TANOD_BUILD_ID: next-fixture-v1
+    TANOD_DOCTOR_TOKEN: nextjs-reference-doctor-token
     NEXT_SHARED_CACHE_DIR: /var/cache/next
   volumes:
     - next-cache:/var/cache/next
@@ -29,11 +29,11 @@ services:
   # Named volumes start as root-owned. Prepare the shared cache before the
   # non-root Next.js origins try to create entries and invalidation state.
   next-cache-init:
-    image: harmost-next-origin:reference
+    image: tanod-next-origin:reference
     build:
       context: ./fixtures/next-storefront
       args:
-        HARMOST_BUILD_ID: next-fixture-v1
+        TANOD_BUILD_ID: next-fixture-v1
         NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
     user: root
     entrypoint: ["sh", "-c"]
@@ -69,7 +69,7 @@ services:
     ports:
       - "127.0.0.1:13003:3000"
 
-  harmost:
+  tanod:
     build:
       context: .
     depends_on:
@@ -80,19 +80,19 @@ services:
       next-3:
         condition: service_healthy
     volumes:
-      - ${HARMOST_CONFIG_DIR:-./bench}:/etc/harmost:ro
+      - ${TANOD_CONFIG_DIR:-./bench}:/etc/tanod:ro
     expose:
       - "8080"
     ports:
       - "127.0.0.1:19090:9090"
       - "127.0.0.1:19091:9091"
     stop_grace_period: 25s
-    command: ["run", "--config", "/etc/harmost/nextjs.yaml"]
+    command: ["run", "--config", "/etc/tanod/nextjs.yaml"]
 
   edge:
     image: nginx:1.27-alpine
     depends_on:
-      - harmost
+      - tanod
     volumes:
       - ./ops/edge/nginx.conf:/etc/nginx/nginx.conf:ro
     ports:

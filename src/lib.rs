@@ -1,8 +1,8 @@
-//! Harmost — an origin workload governor for server-rendered applications.
+//! Tanod — an origin workload governor for server-rendered applications.
 //!
-//! The name is Greek: a *harmost* (ἁρμοστής, from ἁρμόζω, "to fit, to keep in
-//! proper adjustment") was an official posted to hold a system in correct
-//! adjustment. That is this crate's job for an SSR origin.
+//! The name is Tagalog: a *tanod* is the barangay watchman, posted at the gate
+//! to keep order so the community is never overrun. That is this crate's job
+//! for an SSR origin.
 //!
 //! Three primitives carry the product, and all three are pure logic that can be
 //! tested without a proxy runtime attached:

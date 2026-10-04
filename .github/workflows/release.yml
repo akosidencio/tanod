@@ -75,9 +75,9 @@ jobs:
 
   # The versioned release binary — Linux only, deliberately.
   #
-  # Harmost is deployed on Linux and the published image is `linux/amd64`, so
+  # Tanod is deployed on Linux and the published image is `linux/amd64`, so
   # this exists for the one documented topology a container does not serve: the
-  # systemd unit in docs/OPERATIONS.md, which runs `/usr/local/bin/harmost`
+  # systemd unit in docs/OPERATIONS.md, which runs `/usr/local/bin/tanod`
   # directly. A macOS build would be an artifact for a platform nothing is
   # deployed on, and one the reproducibility claim never covered anyway.
   #
@@ -125,19 +125,19 @@ jobs:
       # shared library is a release nobody can use, discovered by users.
       - name: Smoke test
         run: |
-          bin="target/${{ env.TARGET }}/release/harmost"
+          bin="target/${{ env.TARGET }}/release/tanod"
           "$bin" version
-          "$bin" check --config harmost.yaml
+          "$bin" check --config tanod.yaml
 
       - name: Package
         id: package
         shell: bash
         run: |
           version="$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
-          name="harmost-${version}-${{ env.TARGET }}"
+          name="tanod-${version}-${{ env.TARGET }}"
           mkdir -p "dist/$name/docs"
-          cp "target/${{ env.TARGET }}/release/harmost" "dist/$name/"
-          cp packaging/systemd/harmost.service "dist/$name/"
+          cp "target/${{ env.TARGET }}/release/tanod" "dist/$name/"
+          cp packaging/systemd/tanod.service "dist/$name/"
           cp packaging/install.sh "dist/$name/"
           chmod 0755 "dist/$name/install.sh"
           cp docs/STANDALONE.md "dist/$name/docs/"
@@ -147,7 +147,7 @@ jobs:
           # a modification time, so an archive is not byte-reproducible while
           # the binary inside it is. Verifying a rebuild means comparing the
           # inner one; this is what makes that possible.
-          ( cd "dist/$name" && shasum -a 256 harmost > "../$name.binary.sha256" )
+          ( cd "dist/$name" && shasum -a 256 tanod > "../$name.binary.sha256" )
           ( cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256" )
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -187,7 +187,7 @@ jobs:
           cargo cyclonedx --format json --all-features --spec-version 1.5
           find . -name '*.cdx.json' -not -path './target/*' -print
           mkdir -p dist
-          cp harmost.cdx.json "dist/harmost-${version}.cdx.json"
+          cp tanod.cdx.json "dist/tanod-${version}.cdx.json"
       - uses: actions/upload-artifact@v4
         with:
           name: sbom
@@ -228,7 +228,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ inputs.tag || github.ref_name }}
             type=raw,value=latest,enable=${{ !contains(inputs.tag || github.ref_name, '-') }}
           labels: |
-            org.opencontainers.image.title=harmost
+            org.opencontainers.image.title=tanod
             org.opencontainers.image.description=Origin workload governor for server-rendered applications
             org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -259,8 +259,8 @@ jobs:
         run: |
           image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}"
           docker run --rm "$image" version
-          docker run --rm -v "$PWD/harmost.yaml:/etc/harmost/harmost.yaml:ro" \
-            "$image" check --config /etc/harmost/harmost.yaml
+          docker run --rm -v "$PWD/tanod.yaml:/etc/tanod/tanod.yaml:ro" \
+            "$image" check --config /etc/tanod/tanod.yaml
 
       - name: Summarise
         run: |
@@ -355,7 +355,7 @@ jobs:
               --repo ${{ github.repository }}
             ```
 
-            `harmost-${{ steps.collect.outputs.version }}.cdx.json` is a
+            `tanod-${{ steps.collect.outputs.version }}.cdx.json` is a
             CycloneDX SBOM of the resolved Rust dependency tree. It lists what
             Cargo resolved, which is a superset of what is linked into any one
             artifact.

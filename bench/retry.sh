@@ -36,7 +36,7 @@ start_proxy() {
   bench_render_config "$BENCH_ROOT/bench/retry.yaml" "$config" \
     "LISTEN=$listen" "ORIGIN_A=$ORIGIN_A" "ORIGIN_B=$ORIGIN_B" \
     "METRICS=$metrics" "RETRY=$enabled" "PERCENT=$percent" "MIN=$minimum"
-  bench_start_harmost "harmost-$name" "$config" "$listen" "$metrics"
+  bench_start_tanod "tanod-$name" "$config" "$listen" "$metrics"
   eval "LISTEN_$name=$listen"
   eval "METRICS_$name=$metrics"
 }
@@ -58,13 +58,13 @@ drive_ok() { # listen_port
 
 retries_allowed() { # metrics_port
   curl -s --max-time 5 "http://127.0.0.1:$1/metrics" \
-    | sed -n 's/^harmost_origin_retries_total{[^}]*outcome="allowed"[^}]*} \([0-9]*\)$/\1/p' \
+    | sed -n 's/^tanod_origin_retries_total{[^}]*outcome="allowed"[^}]*} \([0-9]*\)$/\1/p' \
     | awk '{ n += $1 } END { print n + 0 }'
 }
 
 retries_refused() { # metrics_port
   curl -s --max-time 5 "http://127.0.0.1:$1/metrics" \
-    | sed -n 's/^harmost_origin_retries_total{[^}]*outcome="budget_exhausted"[^}]*} \([0-9]*\)$/\1/p' \
+    | sed -n 's/^tanod_origin_retries_total{[^}]*outcome="budget_exhausted"[^}]*} \([0-9]*\)$/\1/p' \
     | awk '{ n += $1 } END { print n + 0 }'
 }
 
@@ -110,7 +110,7 @@ bench_assert_gt "$ALLOWED_GEN" 0 "retries actually spent"
 bench_assert_gt "$REFUSED_TIGHT" 0 "retries refused for lack of budget"
 bench_assert_le "$OK_TIGHT" $(( OK_OFF + 4 )) "requests rescued by a one-retry budget"
 
-bench_assert_no_panics harmost-off
-bench_assert_no_panics harmost-generous
-bench_assert_no_panics harmost-tight
+bench_assert_no_panics tanod-off
+bench_assert_no_panics tanod-generous
+bench_assert_no_panics tanod-tight
 bench_pass "a dead backend cost $(( REQUESTS - OK_OFF )) requests with retries off and $(( REQUESTS - OK_GEN )) with a budget, while a one-retry budget refused $REFUSED_TIGHT retries rather than amplifying the failure"

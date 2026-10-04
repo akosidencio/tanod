@@ -5,7 +5,7 @@
 //! content means it is attacker-influenced. Parsing runs on the response path,
 //! where a panic takes the proxy down rather than failing one request.
 
-use harmost::cache::policy::CacheControl;
+use tanod::cache::policy::CacheControl;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &str| {

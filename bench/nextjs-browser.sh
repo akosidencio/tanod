@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Browser-driven half of the Next.js integration proof.
 #
-# bench/nextjs.sh asserts what Harmost does with requests a test wrote. This
+# bench/nextjs.sh asserts what Tanod does with requests a test wrote. This
 # asserts what it does with requests Next.js's own client wrote: a router
 # prefetch carrying a real `Next-Router-State-Tree`, and a Server Action POST
 # carrying an action id this build assigned. Neither can be written down in
@@ -13,7 +13,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPOSE=(docker compose -p harmost-nextjs-fixture -f compose.nextjs.yaml)
+COMPOSE=(docker compose -p tanod-nextjs-fixture -f compose.nextjs.yaml)
 PROXY_URL=${PROXY_URL:-http://127.0.0.1:18080}
 METRICS_URL=${METRICS_URL:-http://127.0.0.1:19090}
 STARTED_STACK=0
@@ -27,7 +27,7 @@ trap cleanup EXIT
 
 fail() {
   echo "FAIL: $*" >&2
-  "${COMPOSE[@]}" logs --no-color --tail=80 harmost >&2 || true
+  "${COMPOSE[@]}" logs --no-color --tail=80 tanod >&2 || true
   exit 1
 }
 

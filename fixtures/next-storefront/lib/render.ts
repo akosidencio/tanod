@@ -8,11 +8,11 @@ type FixtureStats = {
 };
 
 type FixtureGlobal = typeof globalThis & {
-  __harmostFixtureStats?: FixtureStats;
+  __tanodFixtureStats?: FixtureStats;
 };
 
 const fixtureGlobal = globalThis as FixtureGlobal;
-const stats = (fixtureGlobal.__harmostFixtureStats ??= {
+const stats = (fixtureGlobal.__tanodFixtureStats ??= {
   active: 0,
   peak: 0,
   total: 0,

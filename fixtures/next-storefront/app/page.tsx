@@ -9,7 +9,7 @@ export default function HomePage() {
           <p className="eyebrow">Deterministic integration fixture</p>
           <h1>A small store with intentionally expensive renders.</h1>
           <p>
-            Every route exists to prove one Harmost behavior without relying on
+            Every route exists to prove one Tanod behavior without relying on
             a production database, payment provider, or hidden framework mock.
           </p>
           <Link className="button" href="/products/atlas-runner">

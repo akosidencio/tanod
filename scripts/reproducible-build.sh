@@ -6,7 +6,7 @@ set -euo pipefail
 
 repo_root=$(git rev-parse --show-toplevel)
 cargo_root=${CARGO_HOME:-"${HOME}/.cargo"}
-remap_flags="--remap-path-prefix=${repo_root}=/harmost --remap-path-prefix=${cargo_root}/registry/src=/cargo/registry"
+remap_flags="--remap-path-prefix=${repo_root}=/tanod --remap-path-prefix=${cargo_root}/registry/src=/cargo/registry"
 
 if [ -n "${RUSTFLAGS:-}" ]; then
   export RUSTFLAGS="${RUSTFLAGS} ${remap_flags}"
@@ -15,4 +15,4 @@ else
 fi
 export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-"$(git log -1 --pretty=%ct)"}
 
-exec cargo build --release --locked --bin harmost "$@"
+exec cargo build --release --locked --bin tanod "$@"

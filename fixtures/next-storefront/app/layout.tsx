@@ -4,8 +4,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Harmost Test Store",
-  description: "A deterministic Next.js origin for Harmost integration tests",
+  title: "Tanod Test Store",
+  description: "A deterministic Next.js origin for Tanod integration tests",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -14,7 +14,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <header className="site-header">
           <Link href="/" className="brand">
-            Harmost Test Store
+            Tanod Test Store
           </Link>
           <nav aria-label="Primary navigation">
             <Link href="/products/atlas-runner">Product</Link>

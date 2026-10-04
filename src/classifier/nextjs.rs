@@ -240,7 +240,7 @@ mod tests {
     /// reading the cookie header as a string dropped the *entire* header when a
     /// single unrelated cookie carried one odd byte — and with it the draft-mode
     /// cookie. Next.js parses the same header from bytes and honours the cookie,
-    /// so Harmost cached an unpublished render and served it publicly.
+    /// so Tanod cached an unpublished render and served it publicly.
     #[test]
     fn a_non_ascii_byte_elsewhere_in_the_header_cannot_hide_the_draft_cookie() {
         let mut headers = HeaderMap::new();

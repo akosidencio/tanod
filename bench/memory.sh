@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Memory under pressure: does the process stay inside the budgets it was given?
 #
-# Every bound Harmost has is a *configured* number, and a configured bound is
+# Every bound Tanod has is a *configured* number, and a configured bound is
 # worth exactly as much as the evidence that it holds when the workload tries
 # to exceed it. This drives all three past their limits at once:
 #
@@ -42,12 +42,12 @@ CONFIG="$BENCH_DIR/memory.yaml"
 
 bench_render_config "$BENCH_ROOT/bench/memory.yaml.tpl" "$CONFIG" \
   "LISTEN=$LISTEN_PORT" "ORIGIN=$ORIGIN_PORT" "METRICS=$METRICS_PORT" \
-  "PIDFILE=$BENCH_DIR/harmost.pid" "UPGRADESOCK=$BENCH_DIR/upgrade.sock"
+  "PIDFILE=$BENCH_DIR/tanod.pid" "UPGRADESOCK=$BENCH_DIR/upgrade.sock"
 
 bench_spawn origin "$(bench_bin slow-origin)" "$ORIGIN_PORT" 20
 bench_wait_port 127.0.0.1 "$ORIGIN_PORT" "slow-origin"
-bench_start_harmost harmost "$CONFIG" "$LISTEN_PORT" "$METRICS_PORT"
-PID=$(bench_pid harmost)
+bench_start_tanod tanod "$CONFIG" "$LISTEN_PORT" "$METRICS_PORT"
+PID=$(bench_pid tanod)
 BASE="http://127.0.0.1:$LISTEN_PORT"
 
 RSS_BASELINE=$(bench_rss_kb "$PID")
@@ -62,7 +62,7 @@ echo "phase 1: $((ROUNDS * 16)) unique 1MiB entries against an 8MiB cache"
 for round in $(seq 1 "$ROUNDS"); do
   seq 1 16 | xargs -P 4 -I{} curl -s -o /dev/null --max-time 30 "$BASE/big/1?u=$round-{}"
   printf '%s %s\n' "$(bench_rss_kb "$PID")" \
-    "$(bench_metric "$METRICS_PORT" harmost_cache_bytes)" >> "$SAMPLES"
+    "$(bench_metric "$METRICS_PORT" tanod_cache_bytes)" >> "$SAMPLES"
 done
 CACHE_PEAK=$(awk '{print $2}' "$SAMPLES" | bench_max)
 echo "  peak cache bytes       $CACHE_PEAK"
@@ -106,14 +106,14 @@ for i in $(seq 1 "$SLOW_READERS"); do
 done
 for _ in $(seq 1 12); do
   printf '%s %s\n' "$(bench_rss_kb "$PID")" \
-    "$(bench_metric "$METRICS_PORT" harmost_spool_bytes)" >> "$SAMPLES"
+    "$(bench_metric "$METRICS_PORT" tanod_spool_bytes)" >> "$SAMPLES"
   sleep 1
 done
 wait 2>/dev/null
 
-SPOOL_PEAK=$(bench_metric "$METRICS_PORT" harmost_spool_bytes)
-SPOOL_EXHAUSTED=$(bench_metric "$METRICS_PORT" 'harmost_spool_total{reason="budget_exhausted",route="bulk"}')
-SPOOL_COMPLETE=$(bench_metric "$METRICS_PORT" 'harmost_spool_total{reason="complete",route="bulk"}')
+SPOOL_PEAK=$(bench_metric "$METRICS_PORT" tanod_spool_bytes)
+SPOOL_EXHAUSTED=$(bench_metric "$METRICS_PORT" 'tanod_spool_total{reason="budget_exhausted",route="bulk"}')
+SPOOL_COMPLETE=$(bench_metric "$METRICS_PORT" 'tanod_spool_total{reason="complete",route="bulk"}')
 echo "  spool bytes now        ${SPOOL_PEAK:-0}"
 echo "  spools completed       ${SPOOL_COMPLETE:-0}"
 echo "  spools budget-refused  ${SPOOL_EXHAUSTED:-0}"
@@ -127,8 +127,8 @@ bench_assert_gt "$(( ${SPOOL_COMPLETE%%.*} + ${SPOOL_EXHAUSTED%%.*} ))" 0 \
 
 # ------------------------------------------------------------- assertions
 
-bench_alive "$PID" || bench_fail "harmost exited under memory pressure"
-bench_assert_no_panics harmost
+bench_alive "$PID" || bench_fail "tanod exited under memory pressure"
+bench_assert_no_panics tanod
 
 RSS_PEAK=$(awk '{print $1}' "$SAMPLES" | bench_max)
 RSS_FINAL=$(bench_rss_kb "$PID")

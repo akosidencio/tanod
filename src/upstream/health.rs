@@ -78,7 +78,7 @@ impl HealthChecker {
                 .map(|(host, _)| host.trim_matches(['[', ']']))
                 .unwrap_or(address);
             let req = format!(
-                "GET {} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: harmost-health\r\nConnection: close\r\n\r\n",
+                "GET {} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: tanod-health\r\nConnection: close\r\n\r\n",
                 self.path
             );
             sock.write_all(req.as_bytes()).await.ok()?;

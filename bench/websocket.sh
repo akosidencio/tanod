@@ -40,7 +40,7 @@ echo
 DISABLED_PORT=$(bench_free_port)
 bench_render_config "$BENCH_ROOT/bench/websocket.yaml" "$BENCH_DIR/disabled.yaml" \
   "LISTEN=$DISABLED_PORT" "ORIGIN=$ORIGIN_PORT" "UPGRADE=false" "MAX_SOCKETS=10"
-bench_start_harmost disabled "$BENCH_DIR/disabled.yaml" "$DISABLED_PORT"
+bench_start_tanod disabled "$BENCH_DIR/disabled.yaml" "$DISABLED_PORT"
 bench_origin_reset "$ORIGIN_PORT"
 
 OFF=$(python3 "$WS_CLIENT" 127.0.0.1 "$DISABLED_PORT" /ws/echo hello)
@@ -58,7 +58,7 @@ bench_result disabled_status "$OFF_STATUS"
 LISTEN=$(bench_free_port)
 bench_render_config "$BENCH_ROOT/bench/websocket.yaml" "$BENCH_DIR/websocket.yaml" \
   "LISTEN=$LISTEN" "ORIGIN=$ORIGIN_PORT" "UPGRADE=true" "MAX_SOCKETS=$SOCKETS"
-bench_start_harmost harmost "$BENCH_DIR/websocket.yaml" "$LISTEN"
+bench_start_tanod tanod "$BENCH_DIR/websocket.yaml" "$LISTEN"
 bench_origin_reset "$ORIGIN_PORT"
 
 ECHO=$(python3 "$WS_CLIENT" 127.0.0.1 "$LISTEN" /ws/echo "round-trip")

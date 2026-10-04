@@ -985,7 +985,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "harmost"
+name = "tanod"
 version = "0.1.4"
 dependencies = [
  "arc-swap",

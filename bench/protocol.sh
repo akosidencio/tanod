@@ -24,7 +24,7 @@ ORIGIN_PORT=$(bench_start_origin origin "$RENDER_MS")
 LISTEN=$(bench_free_port)
 bench_render_config "$BENCH_ROOT/bench/protocol.yaml" "$BENCH_DIR/protocol.yaml" \
   "LISTEN=$LISTEN" "ORIGIN=$ORIGIN_PORT" "CEILING=20"
-bench_start_harmost harmost "$BENCH_DIR/protocol.yaml" "$LISTEN"
+bench_start_tanod tanod "$BENCH_DIR/protocol.yaml" "$LISTEN"
 
 BASE="http://127.0.0.1:$LISTEN"
 CHECKS=0
@@ -34,7 +34,7 @@ note() { CHECKS=$((CHECKS + 1)); printf '  %-46s %s\n' "$1" "$2"; }
 status() { curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$@"; }
 body_bytes() { curl -s --max-time 15 "$@" | wc -c | tr -d ' '; }
 
-echo "HTTP semantics through Harmost"
+echo "HTTP semantics through Tanod"
 echo
 
 # ------------------------------------------------------------------- HEAD
@@ -137,8 +137,8 @@ bench_result badchunk_renders "$CHUNK_RENDERS"
 
 # The proxy must survive both. A panic here is a denial of service that costs
 # one misbehaving origin response to trigger.
-bench_alive "$(bench_pid harmost)" || bench_fail "harmost died on a malformed origin response"
-note "harmost survived both malformed responses" "alive"
+bench_alive "$(bench_pid tanod)" || bench_fail "tanod died on a malformed origin response"
+note "tanod survived both malformed responses" "alive"
 
 # ---------------------------------------------------------- disconnects
 #
@@ -149,7 +149,7 @@ note "harmost survived both malformed responses" "alive"
 LISTEN_TIGHT=$(bench_free_port)
 bench_render_config "$BENCH_ROOT/bench/protocol.yaml" "$BENCH_DIR/tight.yaml" \
   "LISTEN=$LISTEN_TIGHT" "ORIGIN=$ORIGIN_PORT" "CEILING=1"
-bench_start_harmost tight "$BENCH_DIR/tight.yaml" "$LISTEN_TIGHT"
+bench_start_tanod tight "$BENCH_DIR/tight.yaml" "$LISTEN_TIGHT"
 
 ABANDONED=6
 for i in $(seq 1 $ABANDONED); do

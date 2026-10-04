@@ -10,7 +10,7 @@ const { deserialize, serialize } = require('node:v8');
  */
 module.exports = class SharedCacheHandler {
   constructor() {
-    this.root = process.env.NEXT_SHARED_CACHE_DIR || path.join(process.cwd(), '.next/cache/harmost');
+    this.root = process.env.NEXT_SHARED_CACHE_DIR || path.join(process.cwd(), '.next/cache/tanod');
     this.entries = path.join(this.root, 'entries');
     this.tagsFile = path.join(this.root, 'tags.json');
     this.tagsLock = path.join(this.root, 'tags.lock');

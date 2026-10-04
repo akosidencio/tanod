@@ -22,13 +22,13 @@ CONFIG="$BENCH_DIR/admin.yaml"
 
 bench_render_config "$BENCH_ROOT/bench/admin.yaml.tpl" "$CONFIG" \
   "LISTEN=$LISTEN_PORT" "ORIGIN=$ORIGIN_PORT" "ADMIN=$ADMIN_PORT" \
-  "METRICS=$METRICS_PORT" "PIDFILE=$BENCH_DIR/harmost.pid" \
+  "METRICS=$METRICS_PORT" "PIDFILE=$BENCH_DIR/tanod.pid" \
   "UPGRADESOCK=$BENCH_DIR/upgrade.sock"
 
 bench_spawn origin "$(bench_bin slow-origin)" "$ORIGIN_PORT" 50
 bench_wait_port 127.0.0.1 "$ORIGIN_PORT" "slow-origin"
-bench_start_harmost harmost "$CONFIG" "$LISTEN_PORT" "$ADMIN_PORT"
-PID=$(bench_pid harmost)
+bench_start_tanod tanod "$CONFIG" "$LISTEN_PORT" "$ADMIN_PORT"
+PID=$(bench_pid tanod)
 
 admin_code() { curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$ADMIN_PORT$1"; }
 admin_body() { curl -s --max-time 5 "http://127.0.0.1:$ADMIN_PORT$1"; }
@@ -150,20 +150,20 @@ esac
 echo
 echo "metrics agree with the endpoints"
 DRAINING=$(curl -s --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics" \
-  | sed -n 's/^harmost_draining \([0-9]*\)$/\1/p')
+  | sed -n 's/^tanod_draining \([0-9]*\)$/\1/p')
 GEN_METRIC=$(curl -s --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics" \
-  | sed -n 's/^harmost_config_generation \([0-9]*\)$/\1/p')
+  | sed -n 's/^tanod_config_generation \([0-9]*\)$/\1/p')
 FINGERPRINT_METRIC=$(curl -s --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics" \
-  | sed -n 's/^harmost_config_fingerprint \([0-9]*\)$/\1/p')
-echo "  harmost_draining          $DRAINING"
-echo "  harmost_config_generation $GEN_METRIC"
+  | sed -n 's/^tanod_config_fingerprint \([0-9]*\)$/\1/p')
+echo "  tanod_draining          $DRAINING"
+echo "  tanod_config_generation $GEN_METRIC"
 echo "  config fingerprint        $FINGERPRINT_METRIC"
 # A dashboard and an endpoint that disagree send an operator down the wrong
 # path at the worst possible moment.
-bench_assert_eq "${DRAINING:-x}" 1 "harmost_draining while draining"
-bench_assert_eq "${GEN_METRIC:-x}" 2 "harmost_config_generation after a reload"
+bench_assert_eq "${DRAINING:-x}" 1 "tanod_draining while draining"
+bench_assert_eq "${GEN_METRIC:-x}" 2 "tanod_config_generation after a reload"
 bench_assert_eq "${FINGERPRINT_METRIC:-x}" "$FINGERPRINT_AFTER" \
-  "harmost_config_fingerprint after a reload"
+  "tanod_config_fingerprint after a reload"
 
 echo
 bench_print_params

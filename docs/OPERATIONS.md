@@ -1,9 +1,9 @@
-# Operating Harmost
+# Operating Tanod
 
-Harmost is an overload governor for expensive SSR and dynamic origin workloads,
+Tanod is an overload governor for expensive SSR and dynamic origin workloads,
 not a general Next.js performance accelerator. Operate it around origin-work
 ceilings, queueing, shedding and recovery; a cache hit rate or latency change
-alone does not establish that the deployment benefits from Harmost.
+alone does not establish that the deployment benefits from Tanod.
 
 Everything here is asserted by a script in [`bench/`](../bench) rather than
 described from memory. Where a number appears, the benchmark that produced it
@@ -42,7 +42,7 @@ telemetry:
 the world spells them that way.
 
 **Bind it to loopback or a private address.** `/status` publishes backend
-health, cache occupancy and your configuration generation. `harmost check`
+health, cache occupancy and your configuration generation. `tanod check`
 warns when it is bound to an unspecified address, and startup refuses to share
 an address with the traffic listener or the metrics listener.
 
@@ -57,14 +57,14 @@ probe to the readiness endpoint makes it kill the process part-way through a
 drain, which is precisely the dropped request the drain existed to prevent.
 
 **`require_healthy_upstream` is off by default and the default is the careful
-one.** Harmost keeps serving a fully unhealthy pool — refusing to pick a
+one.** Tanod keeps serving a fully unhealthy pool — refusing to pick a
 backend would turn a degraded origin into a guaranteed outage, and
 `stale_if_error` exists for that window. Turn it on only when something above
-Harmost can route around this instance; otherwise a single origin problem takes
+Tanod can route around this instance; otherwise a single origin problem takes
 every replica out of rotation at once.
 
 When enabled, it requires a `health:` block and readiness starts at `503`.
-Harmost does not call an unprobed backend healthy: `/health/ready` changes to
+Tanod does not call an unprobed backend healthy: `/health/ready` changes to
 `200` only after at least one backend completes its configured successful-probe
 streak.
 
@@ -83,22 +83,22 @@ There are two mechanisms and they are not interchangeable.
 Pingora passes listening file descriptors between processes over a Unix socket
 with `SCM_RIGHTS`. **This works on Linux and nowhere else**: its non-Linux
 `get_fds_from` is a stub that logs `Upgrade is not currently supported` and
-returns `ECONNREFUSED`. Harmost refuses `--upgrade` up front on other
+returns `ECONNREFUSED`. Tanod refuses `--upgrade` up front on other
 platforms rather than letting that surface as a connection error that reads
 like "the old process is not running".
 
 ```bash
 # 1. Prove the new binary and config can actually start. Non-zero here means
 #    stop: you have not touched the running process yet.
-harmost run --config /etc/harmost/harmost.yaml --test
+tanod run --config /etc/tanod/tanod.yaml --test
 
 # Obtain this from the supervisor, a captured `$!`, or the pid file written by
-# --daemon. Foreground Harmost does not write server.graceful.pid_file.
-pid=${HARMOST_PID:?set HARMOST_PID to the running Harmost process}
+# --daemon. Foreground Tanod does not write server.graceful.pid_file.
+pid=${TANOD_PID:?set TANOD_PID to the running Tanod process}
 
 # 2. Start the new process. It takes the listening sockets over the
 #    upgrade socket; both processes must name the same path.
-harmost run --config /etc/harmost/harmost.yaml --upgrade &
+tanod run --config /etc/tanod/tanod.yaml --upgrade &
 
 # 3. Tell the old one to hand over and drain.
 kill -QUIT "$pid"
@@ -150,9 +150,9 @@ on a completely idle process. Two things follow:
   `drain_period: 5s`, `shutdown_timeout: 10s` — total 15 seconds, which fits
   inside Kubernetes' default `terminationGracePeriodSeconds: 30` and systemd's
   default `TimeoutStopSec=90`. Raise these two and you must raise those, or the
-  supervisor `SIGKILL`s Harmost mid-drain.
+  supervisor `SIGKILL`s Tanod mid-drain.
 - **There is no point setting `shutdown_timeout` far above your slowest
-  response.** It buys nothing and every restart pays it. `harmost check` prints
+  response.** It buys nothing and every restart pays it. `tanod check` prints
   the total and warns above 30 seconds.
 
 If `SIGUSR1` already started draining, the two windows overlap: `SIGTERM` waits
@@ -165,25 +165,25 @@ second full drain.
 ## systemd
 
 Release archives include the ready-to-install unit from
-[`packaging/systemd/harmost.service`](../packaging/systemd/harmost.service).
+[`packaging/systemd/tanod.service`](../packaging/systemd/tanod.service).
 The expanded example below documents each operational setting.
 
 ```ini
 [Unit]
-Description=Harmost origin workload governor
+Description=Tanod origin workload governor
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=harmost
-Group=harmost
-RuntimeDirectory=harmost
+User=tanod
+Group=tanod
+RuntimeDirectory=tanod
 RuntimeDirectoryMode=0750
 
 # Refuses to start on a bad config, before the old unit is stopped.
-ExecStartPre=/usr/local/bin/harmost check --config /etc/harmost/harmost.yaml
-ExecStart=/usr/local/bin/harmost run --config /etc/harmost/harmost.yaml
+ExecStartPre=/usr/local/bin/tanod check --config /etc/tanod/tanod.yaml
+ExecStart=/usr/local/bin/tanod run --config /etc/tanod/tanod.yaml
 
 # SIGHUP reloads policy in place. An invalid config is refused and the
 # running one keeps serving, so a failed reload is not a failed service.
@@ -201,7 +201,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/run/harmost
+ReadWritePaths=/run/tanod
 # Binding 80/443 without running as root.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
@@ -216,8 +216,8 @@ with
 ```yaml
 server:
   graceful:
-    pid_file: /run/harmost/harmost.pid
-    upgrade_socket: /run/harmost/upgrade.sock
+    pid_file: /run/tanod/tanod.pid
+    upgrade_socket: /run/tanod/upgrade.sock
 ```
 
 For a zero-downtime deploy on Linux, do the handover by hand rather than
@@ -245,9 +245,9 @@ spec:
       # two, then shutdown_timeout. Here: max(15, 5) + 10 = 25.
       terminationGracePeriodSeconds: 35
       containers:
-        - name: harmost
-          image: ghcr.io/OWNER/harmost:0.1.1
-          args: ["run", "--config", "/etc/harmost/harmost.yaml"]
+        - name: tanod
+          image: ghcr.io/OWNER/tanod:0.1.1
+          args: ["run", "--config", "/etc/tanod/tanod.yaml"]
           ports:
             - { name: http, containerPort: 8080 }
             - { name: admin, containerPort: 9091 }
@@ -311,7 +311,7 @@ Confirm it applied, from outside the process:
 ```bash
 curl -s localhost:9091/status | grep -o '"\(generation\|fingerprint\)":[0-9]*'
 # or
-curl -s localhost:9090/metrics | grep 'harmost_config_\(generation\|fingerprint\)'
+curl -s localhost:9090/metrics | grep 'tanod_config_\(generation\|fingerprint\)'
 ```
 
 A refused reload leaves both values unchanged. Generation distinguishes
@@ -353,20 +353,20 @@ purge endpoint is a stampede trigger anybody can pull.
 
 ```bash
 # One tag, or several.
-curl -X POST -H "Authorization: Bearer $HARMOST_PURGE_TOKEN" \
+curl -X POST -H "Authorization: Bearer $TANOD_PURGE_TOKEN" \
   "http://127.0.0.1:9091/purge?tag=product-42&tag=collection-sale"
 
 # One path, and every variant of it — query strings, Accept, the RSC payload
 # beside the HTML. This is what revalidatePath() means by a path.
-curl -X POST -H "Authorization: Bearer $HARMOST_PURGE_TOKEN" \
+curl -X POST -H "Authorization: Bearer $TANOD_PURGE_TOKEN" \
   "http://127.0.0.1:9091/purge?path=/products/iphone"
 
 # Both at once, so a deploy hook is one call rather than two.
-curl -X POST -H "Authorization: Bearer $HARMOST_PURGE_TOKEN" \
+curl -X POST -H "Authorization: Bearer $TANOD_PURGE_TOKEN" \
   "http://127.0.0.1:9091/purge?tag=collection-sale&path=/products/iphone"
 
 # Everything. Expect an origin load spike proportional to your traffic.
-curl -X POST -H "Authorization: Bearer $HARMOST_PURGE_TOKEN" \
+curl -X POST -H "Authorization: Bearer $TANOD_PURGE_TOKEN" \
   "http://127.0.0.1:9091/purge?all=1"
 ```
 
@@ -385,8 +385,8 @@ Four things worth knowing before you rely on it:
   unknown keys in the config file: an invalidation that quietly does nothing
   looks like a working one until somebody checks.
 - **Purge is per process.** Every replica has its own cache and endpoint. Fan
-  out from the deploy pipeline; `@harmost/next` accepts all admin listeners
-  through `endpoints` or `HARMOST_PURGE_URLS` and fails on partial delivery.
+  out from the deploy pipeline; `@tanod/next` accepts all admin listeners
+  through `endpoints` or `TANOD_PURGE_URLS` and fails on partial delivery.
 - **In-flight renders keep streaming, but are not admitted afterward.** A
   matching render already streaming to a client is allowed to finish, while
   its temporary fill is marked invalid so it cannot repopulate the cache after
@@ -404,7 +404,7 @@ Four constraints worth knowing:
 - **Exact, not a prefix.** `?path=/products` does not touch
   `/products/iphone`. There is no equivalent of
   `revalidatePath('/products/[slug]', 'page')` — matching a dynamic route
-  pattern needs route metadata Harmost does not have until phase 6.
+  pattern needs route metadata Tanod does not have until phase 6.
 - **Absolute and query-encoded.** Parameter values are percent-decoded exactly
   once. The decoded value must equal the stored request path, including that
   path's own encoding. For example, purging a stored `/products/a%2Fb` uses
@@ -424,12 +424,12 @@ is provably unchanged, and a test pins that.
 ### Where tags come from
 
 An entry is tagged by whatever the origin puts in the header named by
-`cache.tag_header`, default `x-harmost-cache-tags`, comma-separated. Harmost
+`cache.tag_header`, default `x-tanod-cache-tags`, comma-separated. Tanod
 strips that header from the downstream response: tag names describe an origin's
 internal content model and are nobody else's business.
 
 ```
-X-Harmost-Cache-Tags: product-42, collection-sale
+X-Tanod-Cache-Tags: product-42, collection-sale
 ```
 
 Any origin that can set a header can be purged by tag — no adapter, no
@@ -448,7 +448,7 @@ server runs with `NEXT_PRIVATE_MINIMAL_MODE=1`, and only for statically
 generated App Router routes — verified against Next 16.3.3. `NEXT_PRIVATE_*`
 is undocumented and unversioned, so this can break on a minor Next upgrade with
 no deprecation. Treat it as a useful shortcut with a compatibility risk, not as
-a supported contract; the supported one is phase 6's `@harmost/next`.
+a supported contract; the supported one is phase 6's `@tanod/next`.
 
 ### Deployment rollovers
 
@@ -462,27 +462,27 @@ purging on every `SIGHUP` would turn a routine config change into a stampede.
 
 | Signal | Means |
 |---|---|
-| `harmost_cache_purged_total{scope="tags"}` | Invalidations arriving. A flat line after a deploy that should have invalidated something is the failure to look for. |
-| `harmost_cache_purged_total{scope="all"}` rising | Somebody is purging everything, repeatedly. That is a stampede generator, not an invalidation strategy. |
-| `harmost_cache_evicted_total` rising while `harmost_cache_bytes` sits at its ceiling | The working set does not fit. More memory, a shorter TTL, or a narrower key. |
-| `harmost_cache_tags` growing without bound | The origin mints a tag per revision. The index is bounded by the entries pointing at it, but a tag per render means a tag index the size of the cache. |
+| `tanod_cache_purged_total{scope="tags"}` | Invalidations arriving. A flat line after a deploy that should have invalidated something is the failure to look for. |
+| `tanod_cache_purged_total{scope="all"}` rising | Somebody is purging everything, repeatedly. That is a stampede generator, not an invalidation strategy. |
+| `tanod_cache_evicted_total` rising while `tanod_cache_bytes` sits at its ceiling | The working set does not fit. More memory, a shorter TTL, or a narrower key. |
+| `tanod_cache_tags` growing without bound | The origin mints a tag per revision. The index is bounded by the entries pointing at it, but a tag per render means a tag index the size of the cache. |
 
 ---
 
 ## Tracing and correlation
 
 Correlation is unconditional and costs nothing. Every request gets a W3C trace
-id and span id; both appear on every access log line, and the id Harmost
+id and span id; both appear on every access log line, and the id Tanod
 concluded is the one it forwards to the origin as `traceparent`. That is what
-joins Harmost's log to the origin's for the same request — even when the origin
-has no idea Harmost exists.
+joins Tanod's log to the origin's for the same request — even when the origin
+has no idea Tanod exists.
 
 Span *export* is configuration:
 
 ```yaml
 telemetry:
   tracing:
-    service_name: harmost
+    service_name: tanod
     sample:
       mode: parent_or_ratio   # follow the caller, else sample one in N
       one_in: 20
@@ -490,16 +490,16 @@ telemetry:
       endpoint: "http://127.0.0.1:4318/v1/traces"
 ```
 
-Two spans per sampled request: a server span for what Harmost did, and a client
+Two spans per sampled request: a server span for what Tanod did, and a client
 span for the origin fetch nested under it. The nesting is what lets you tell
 "the origin was slow" apart from "we queued for two seconds before asking it".
 
 **An inbound `traceparent` is a claim and is ignored by default.**
 `from_trusted_proxies` is safe only when every trusted proxy strips or replaces
 client-supplied `traceparent` and `tracestate`. Unlike `X-Forwarded-For`, trace
-context has no hop chain Harmost can walk to distinguish an edge-generated
+context has no hop chain Tanod can walk to distinguish an edge-generated
 value from one the edge merely forwarded. Ignoring one never costs the request
-— Harmost simply starts a fresh trace.
+— Tanod simply starts a fresh trace.
 
 **The exporter is plaintext OTLP/HTTP only.** `https://` endpoints are refused
 at startup rather than quietly downgraded. Run an OpenTelemetry Collector as a
@@ -508,7 +508,7 @@ sidecar and let it handle transport, authentication and retry.
 **Telemetry is never load-bearing.** The span queue is bounded and full means
 drop; recording is a non-blocking `try_send`; an export failure is counted and
 logged at debug. Final shutdown flushing has one total `otlp.timeout` deadline,
-not one timeout per queued batch. A collector that is down costs `harmost_spans_total{outcome=
+not one timeout per queued batch. A collector that is down costs `tanod_spans_total{outcome=
 "export_failed"}` and nothing else — asserted by
 [`bench/tracing.sh`](../bench/tracing.sh), which kills the collector and then
 measures that fifteen requests still complete promptly.
@@ -523,16 +523,16 @@ four that matter most:
 
 | Signal | Means |
 |---|---|
-| `harmost_admission_total{decision=~"shed_.*"}` rising | The origin ceiling is being hit. Either the origin got slower or traffic grew. This is Harmost working, but it is also users seeing `503`. |
-| `harmost_origin_in_flight` pinned at `harmost_concurrency_limit` | Saturated. Look at `harmost_origin_latency_seconds` before raising the ceiling — a higher ceiling against a slower origin makes it slower still. |
-| `harmost_upstream_healthy == 0` | No backend is passing its health check. Harmost is still serving, on `stale_if_error` and on whatever the origin manages. |
-| `harmost_draining == 1` for longer than a deploy | An instance drained and was never replaced. It is serving and reporting itself not-ready, so a balancer has withdrawn it and nothing is watching. |
+| `tanod_admission_total{decision=~"shed_.*"}` rising | The origin ceiling is being hit. Either the origin got slower or traffic grew. This is Tanod working, but it is also users seeing `503`. |
+| `tanod_origin_in_flight` pinned at `tanod_concurrency_limit` | Saturated. Look at `tanod_origin_latency_seconds` before raising the ceiling — a higher ceiling against a slower origin makes it slower still. |
+| `tanod_upstream_healthy == 0` | No backend is passing its health check. Tanod is still serving, on `stale_if_error` and on whatever the origin manages. |
+| `tanod_draining == 1` for longer than a deploy | An instance drained and was never replaced. It is serving and reporting itself not-ready, so a balancer has withdrawn it and nothing is watching. |
 
 Two that are easy to miss:
 
-- `harmost_spans_total{outcome="dropped"}` — the trace queue is too small for
+- `tanod_spans_total{outcome="dropped"}` — the trace queue is too small for
   the traffic. Costs traces, never requests.
-- `harmost_cache_bytes` at `cache.max_memory` **with a low hit ratio** — the
+- `tanod_cache_bytes` at `cache.max_memory` **with a low hit ratio** — the
   working set does not fit and eviction is destroying entries before they are
   reused. More memory, or a shorter TTL and a narrower key.
 
@@ -542,20 +542,20 @@ Only meaningful with `origin.breaker` or `origin.retry` enabled.
 
 | Signal | Means |
 |---|---|
-| `harmost_upstream_ejected == 1` **while** `harmost_upstream_healthy == 1` | The case passive observation exists for: the backend answers its probe and fails real requests. Look at that backend's logs, not at Harmost's. |
-| `harmost_upstream_breaker_trips_total` climbing steadily | Flapping. The backend recovers enough to pass its probe and fails again. Usually worse than a backend that stays down, because each cycle sends live traffic at it. |
-| `sum(harmost_upstream_ejected) == count(harmost_upstream_ejected)` | Every backend is ejected, so the ejection cap has taken over and breaker state is being ignored. This is an origin-wide failure, not a backend one. |
-| `harmost_origin_retries_total{outcome="budget_exhausted"}` rising | Requests are failing faster than the budget absorbs. Raising the budget makes it worse; the origin is the problem. |
-| `harmost_upstream_failures_total{kind="connect"}` rising | Processes are gone or refusing connections. Distinct from `kind="status"`, which is a process that is up and cannot render. |
+| `tanod_upstream_ejected == 1` **while** `tanod_upstream_healthy == 1` | The case passive observation exists for: the backend answers its probe and fails real requests. Look at that backend's logs, not at Tanod's. |
+| `tanod_upstream_breaker_trips_total` climbing steadily | Flapping. The backend recovers enough to pass its probe and fails again. Usually worse than a backend that stays down, because each cycle sends live traffic at it. |
+| `sum(tanod_upstream_ejected) == count(tanod_upstream_ejected)` | Every backend is ejected, so the ejection cap has taken over and breaker state is being ignored. This is an origin-wide failure, not a backend one. |
+| `tanod_origin_retries_total{outcome="budget_exhausted"}` rising | Requests are failing faster than the budget absorbs. Raising the budget makes it worse; the origin is the problem. |
+| `tanod_upstream_failures_total{kind="connect"}` rising | Processes are gone or refusing connections. Distinct from `kind="status"`, which is a process that is up and cannot render. |
 
 Two things worth knowing before you trust these:
 
-- **Read `harmost_upstream_failures_total` before enabling `origin.retry`.**
+- **Read `tanod_upstream_failures_total` before enabling `origin.retry`.**
   Retries added to a misdiagnosed problem make it worse, and the budget is
   designed to make that failure *bounded*, not impossible.
 - **`least_loaded` publishes what it decides on.**
-  `harmost_upstream_in_flight` and
-  `harmost_upstream_latency_ewma_microseconds` are the two inputs to the score,
+  `tanod_upstream_in_flight` and
+  `tanod_upstream_latency_ewma_microseconds` are the two inputs to the score,
   so a routing decision that looks wrong can be checked rather than guessed at.
   A backend with a much higher EWMA and much less traffic is the strategy
   working.

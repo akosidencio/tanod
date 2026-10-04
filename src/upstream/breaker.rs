@@ -7,7 +7,7 @@
 //! while every render throws, a pod whose database pool is exhausted, a
 //! container that lost its CPU share: all of them pass a probe and fail real
 //! traffic. This module watches the real traffic instead, which costs no extra
-//! requests because Harmost is already sending them.
+//! requests because Tanod is already sending them.
 //!
 //! Like [`super::window`], every method takes `now_ms` rather than reading a
 //! clock, so a state machine made entirely of minute-long deadlines is

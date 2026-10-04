@@ -1,4 +1,4 @@
-//! The `harmost.yaml` shape.
+//! The `tanod.yaml` shape.
 //!
 //! Every struct is `deny_unknown_fields`. A typo'd key is a silent policy
 //! change otherwise, and a silent policy change in *this* config means either
@@ -19,7 +19,7 @@ pub struct Config {
     pub server: Server,
     pub origin: Origin,
     /// Optional static partition of one origin-work budget across a bounded
-    /// Harmost replica group.
+    /// Tanod replica group.
     #[serde(default)]
     pub capacity: Option<CapacityGroup>,
     #[serde(default)]
@@ -42,7 +42,7 @@ pub struct Config {
     pub routes: Vec<Route>,
     #[serde(default)]
     pub telemetry: Telemetry,
-    /// Emit the `X-Harmost` cache-status header. Off by default: it tells an
+    /// Emit the `X-Tanod` cache-status header. Off by default: it tells an
     /// attacker whether their probe was cached, which is reconnaissance for
     /// cache poisoning.
     #[serde(default)]
@@ -62,7 +62,7 @@ pub enum Mode {
 pub struct CapacityGroup {
     /// Maximum combined origin work across the declared replica group.
     pub global_max: usize,
-    /// Maximum number of simultaneously active Harmost replicas.
+    /// Maximum number of simultaneously active Tanod replicas.
     pub replicas: usize,
 }
 
@@ -80,10 +80,10 @@ pub struct Server {
     /// classification and cache keying both read.
     #[serde(default)]
     pub h2c: bool,
-    /// Terminate TLS here rather than in front of Harmost.
+    /// Terminate TLS here rather than in front of Tanod.
     #[serde(default)]
     pub tls: Option<ServerTls>,
-    /// Who is allowed to tell Harmost about the client.
+    /// Who is allowed to tell Tanod about the client.
     #[serde(default)]
     pub trusted_proxies: TrustedProxies,
     /// Process lifecycle: pid file, upgrade socket, drain and shutdown
@@ -110,12 +110,12 @@ impl Default for Server {
 /// process over `upgrade_socket`, so the old process keeps serving what it
 /// already accepted while the new one takes every new connection. Both
 /// processes must agree on the socket path, which is why it is configuration
-/// rather than a constant: two Harmosts on one host with the same default
+/// rather than a constant: two Tanods on one host with the same default
 /// would hand each other their listeners.
 ///
 /// `drain_period` is separate from `shutdown_timeout` and does different work.
 /// Draining is for the *load balancer*: readiness starts failing immediately,
-/// and Harmost keeps serving normally for this long so the balancer has time
+/// and Tanod keeps serving normally for this long so the balancer has time
 /// to notice and stop sending new work. Only then does the shutdown itself
 /// begin, bounded by `shutdown_timeout`. Skipping the first window is the
 /// usual cause of "we did a graceful restart and still dropped requests".
@@ -134,14 +134,14 @@ impl Default for Server {
 /// * The defaults add up to 15 seconds, which fits inside Kubernetes'
 ///   default `terminationGracePeriodSeconds: 30` and systemd's default
 ///   `TimeoutStopSec=90`. Raise these two and you must raise those, or the
-///   supervisor `SIGKILL`s Harmost part-way through the drain — dropping
+///   supervisor `SIGKILL`s Tanod part-way through the drain — dropping
 ///   exactly the requests the drain existed to protect.
 /// * There is no point setting `shutdown_timeout` far above the longest
 ///   response you actually serve. It buys nothing and every restart pays it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Graceful {
-    /// Written by Pingora when `harmost run --daemon` starts. Foreground
+    /// Written by Pingora when `tanod run --daemon` starts. Foreground
     /// supervisors and containers should signal their tracked main process
     /// instead; Pingora does not create a pid file in foreground mode.
     #[serde(default = "default_pid_file")]
@@ -149,13 +149,13 @@ pub struct Graceful {
     /// Unix socket the old and new processes use to pass listening fds.
     #[serde(default = "default_upgrade_socket")]
     pub upgrade_socket: String,
-    /// How long Harmost keeps serving after readiness starts failing, before
+    /// How long Tanod keeps serving after readiness starts failing, before
     /// the shutdown proper begins. Gives a load balancer time to take this
     /// instance out of rotation.
     #[serde(default = "d_5s")]
     pub drain_period: Dur,
     /// How long in-flight requests get once the shutdown proper begins.
-    /// Pingora accepts whole seconds, so Harmost rounds upward.
+    /// Pingora accepts whole seconds, so Tanod rounds upward.
     ///
     /// Ten seconds rather than thirty: see the note above on this being a
     /// floor. A thirty-second value makes every ordinary restart take
@@ -177,10 +177,10 @@ impl Default for Graceful {
 }
 
 fn default_pid_file() -> String {
-    "/tmp/harmost.pid".into()
+    "/tmp/tanod.pid".into()
 }
 fn default_upgrade_socket() -> String {
-    "/tmp/harmost-upgrade.sock".into()
+    "/tmp/tanod-upgrade.sock".into()
 }
 
 fn default_listen() -> String {
@@ -206,10 +206,10 @@ pub struct ServerTls {
 /// Forwarded metadata is a claim, not a fact.
 ///
 /// `X-Forwarded-For` and `X-Forwarded-Proto` are set by whoever spoke to us
-/// last, and anyone on the internet can spoof both. Harmost therefore reads
+/// last, and anyone on the internet can spoof both. Tanod therefore reads
 /// them only from a peer whose address is in `from`. Everyone else is treated
 /// as the client, whatever they claim — which is also why `from` is empty by
-/// default: an unconfigured Harmost cannot be lied to.
+/// default: an unconfigured Tanod cannot be lied to.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedProxies {
@@ -361,7 +361,7 @@ impl Priority {
 /// exactly why it misses the failures that matter: a Node origin that answers
 /// `/healthz` in a millisecond while every render 500s, a pod whose upstream
 /// database connection died, a container that lost its CPU share. Passive
-/// observation watches the requests Harmost is *already* sending and needs no
+/// observation watches the requests Tanod is *already* sending and needs no
 /// extra traffic to see any of that.
 ///
 /// The breaker is per backend and additive: a backend must be passing its
@@ -397,7 +397,7 @@ pub struct Breaker {
     /// This is the check that keeps a breaker from causing the outage it
     /// exists to contain. When an origin-wide dependency fails, *every*
     /// backend starts failing, every breaker trips, and a proxy that honoured
-    /// all of them would have nowhere to send anything. Past this cap Harmost
+    /// all of them would have nowhere to send anything. Past this cap Tanod
     /// ignores breaker state entirely and goes back to health-based routing:
     /// if everything is broken, "broken" is no longer a reason to prefer one
     /// backend over another.
@@ -425,7 +425,7 @@ impl Default for Breaker {
 /// not configurable because getting them wrong is not a tuning mistake:
 ///
 /// * Only **safe** methods are ever retried — `GET`, `HEAD`, `OPTIONS`,
-///   `TRACE`. `PUT` and `DELETE` are idempotent on paper, but Harmost does not
+///   `TRACE`. `PUT` and `DELETE` are idempotent on paper, but Tanod does not
 ///   buffer request bodies and cannot replay one; and an origin that treats
 ///   `POST` as idempotent is not a bet a proxy gets to make on its behalf.
 /// * A retry is only ever attempted **before the origin has answered** — a
@@ -502,7 +502,7 @@ pub struct OriginTls {
     /// Verify the origin's certificate chain.
     ///
     /// `false` is accepted for a self-signed origin behind a private network,
-    /// and is loud in `harmost check` because it turns the connection into
+    /// and is loud in `tanod check` because it turns the connection into
     /// encryption without authentication.
     #[serde(default = "yes")]
     pub verify_cert: bool,
@@ -636,11 +636,11 @@ pub struct CacheDefaults {
     /// purged by tag, with no adapter and no JavaScript. Next.js emits its own
     /// `x-next-cache-tags` on statically generated App Router responses when
     /// the server runs in minimal mode, so pointing this at that header makes
-    /// `revalidateTag()` reachable from Harmost without an integration — at
+    /// `revalidateTag()` reachable from Tanod without an integration — at
     /// the cost of depending on a private Next environment variable. See
     /// `docs/OPERATIONS.md`.
     ///
-    /// Whatever it is named, Harmost strips it from the downstream response:
+    /// Whatever it is named, Tanod strips it from the downstream response:
     /// tag names describe an origin's internal content model and are nobody
     /// else's business.
     #[serde(default = "default_tag_header")]
@@ -691,7 +691,7 @@ pub struct Purge {
 }
 
 fn default_tag_header() -> String {
-    "x-harmost-cache-tags".into()
+    "x-tanod-cache-tags".into()
 }
 
 impl Default for CacheDefaults {
@@ -780,7 +780,7 @@ pub struct Timeouts {
     /// `coalesce.wait_timeout`.
     #[serde(default = "d_30s")]
     pub origin: Dur,
-    /// How long Harmost will wait on a stalled *client* before abandoning the
+    /// How long Tanod will wait on a stalled *client* before abandoning the
     /// downstream write. Without this a slow reader occupies a slot forever.
     #[serde(default = "d_30s")]
     pub downstream_write: Dur,
@@ -1108,11 +1108,11 @@ pub struct Admin {
     pub listen: String,
     /// Report not-ready while every upstream is failing its health check.
     ///
-    /// Off by default, and the default is the careful one: Harmost still
+    /// Off by default, and the default is the careful one: Tanod still
     /// serves a fully unhealthy pool (stale-if-error exists for that window),
     /// so taking every replica out of rotation because the *origin* is down
     /// converts a degraded origin into a total outage at the edge as well.
-    /// Turn it on when something upstream of Harmost can route around it.
+    /// Turn it on when something upstream of Tanod can route around it.
     #[serde(default)]
     pub require_healthy_upstream: bool,
 }
@@ -1135,7 +1135,7 @@ pub struct Tracing {
     pub otlp: Option<Otlp>,
     #[serde(default)]
     pub sample: Sample,
-    /// Whose `traceparent` Harmost will join.
+    /// Whose `traceparent` Tanod will join.
     #[serde(default)]
     pub trust_incoming: TrustIncoming,
 }
@@ -1238,7 +1238,7 @@ pub enum SampleMode {
 /// does let anyone on the internet write into your tracing backend under a
 /// trace of their choosing, and join their requests to someone else's trace.
 /// The default is `never`. Unlike `X-Forwarded-For`, a trace context has no hop
-/// chain Harmost can walk to distinguish a value created by a trusted edge from
+/// chain Tanod can walk to distinguish a value created by a trusted edge from
 /// one the edge merely forwarded from an internet client. Opting into proxy
 /// trust is safe only when that proxy strips or replaces inbound trace headers.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]

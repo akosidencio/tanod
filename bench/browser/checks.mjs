@@ -1,4 +1,4 @@
-// Browser-driven checks against the Next.js fixture behind Harmost.
+// Browser-driven checks against the Next.js fixture behind Tanod.
 //
 // Everything else in bench/ speaks to the proxy with curl. That is enough for
 // the claims that are about HTTP, but two of Next.js's behaviours are not
@@ -7,7 +7,7 @@
 //
 //   * A prefetch is issued by the router, with a `Next-Router-State-Tree` that
 //     encodes the entire client route state. Hand-writing one proves that a
-//     header Harmost invented is handled; it does not prove the real thing is.
+//     header Tanod invented is handled; it does not prove the real thing is.
 //   * A Server Action submission is a POST the React runtime builds, with an
 //     action id the build assigns. It cannot be written down in advance,
 //     because it changes every build.
@@ -47,14 +47,14 @@ function assert(condition, message) {
   return false;
 }
 
-/// Origin requests for one route, read from Harmost's own counter. The Next
+/// Origin requests for one route, read from Tanod's own counter. The Next
 /// fixture reports render ids in the body too, but a prefetch payload has no
 /// body a test can read, so the counter is the observable that covers both.
 async function originRequests(route) {
   const text = await (await fetch(`${METRICS}/metrics`)).text();
   let sum = 0;
   for (const line of text.split("\n")) {
-    if (!line.startsWith("harmost_origin_requests_total{")) continue;
+    if (!line.startsWith("tanod_origin_requests_total{")) continue;
     if (!line.includes(`route="${route}"`)) continue;
     sum += Number(line.trim().split(/\s+/).pop());
   }

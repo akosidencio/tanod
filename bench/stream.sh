@@ -28,7 +28,7 @@ bench_render_config "$BENCH_ROOT/bench/coalesce.yaml" "$CONFIG" \
 
 bench_spawn origin "$(bench_bin slow-origin)" "$ORIGIN_PORT" "$RENDER_MS"
 bench_wait_port 127.0.0.1 "$ORIGIN_PORT" "slow-origin"
-bench_start_harmost harmost "$CONFIG" "$LISTEN_PORT" "$METRICS_PORT"
+bench_start_tanod tanod "$CONFIG" "$LISTEN_PORT" "$METRICS_PORT"
 bench_origin_reset "$ORIGIN_PORT"
 
 echo "$CONCURRENCY concurrent requests for one streaming url"

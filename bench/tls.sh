@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Native TLS, downstream and upstream.
 #
-# The transport is Pingora's; what this checks is what Harmost does with the
+# The transport is Pingora's; what this checks is what Tanod does with the
 # fact of it. Terminating TLS changes an input the cache key reads — the
 # scheme — and an input the origin reads — `X-Forwarded-Proto`. Both must now
 # come from the connection rather than from a header, because on a TLS
@@ -17,7 +17,7 @@ BENCH_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$BENCH_ROOT/bench/lib.sh"
 
 RENDER_MS=${1:-100}
-SNI=harmost.test
+SNI=tanod.test
 
 BENCH_FEATURES=tls
 bench_init tls
@@ -44,13 +44,13 @@ bench_render_config "$BENCH_ROOT/bench/tls.yaml" "$BENCH_DIR/tls.yaml" \
   "LISTEN=$LISTEN" "TLS_LISTEN=$TLS_LISTEN" "ORIGIN=$ORIGIN_PORT" \
   "CERT=$CERT" "KEY=$KEY"
 
-# `harmost check` first: a binary built without the feature must refuse this
+# `tanod check` first: a binary built without the feature must refuse this
 # config rather than start and leave the TLS port dead.
-"$(bench_bin harmost)" check --config "$BENCH_DIR/tls.yaml" >/dev/null 2>&1 \
-  || bench_fail "harmost check refused a valid TLS config — is this build missing the tls feature?"
+"$(bench_bin tanod)" check --config "$BENCH_DIR/tls.yaml" >/dev/null 2>&1 \
+  || bench_fail "tanod check refused a valid TLS config — is this build missing the tls feature?"
 
-bench_start_harmost harmost "$BENCH_DIR/tls.yaml" "$LISTEN"
-bench_wait_port 127.0.0.1 "$TLS_LISTEN" "harmost TLS listener"
+bench_start_tanod tanod "$BENCH_DIR/tls.yaml" "$LISTEN"
+bench_wait_port 127.0.0.1 "$TLS_LISTEN" "tanod TLS listener"
 
 echo "TLS termination and origin TLS"
 echo
@@ -120,13 +120,13 @@ printf '  %-46s %s\n' "two https requests are one cache entry" "$REUSED render"
 
 # ----------------------------------------------------------- origin TLS
 #
-# The Harmost above becomes the origin: a second one is pointed at its TLS
+# The Tanod above becomes the origin: a second one is pointed at its TLS
 # listener with `origin.tls`, so a real TLS client connector talks to a real
 # TLS acceptor.
 OUTER=$(bench_free_port)
 bench_render_config "$BENCH_ROOT/bench/tls-origin.yaml" "$BENCH_DIR/outer.yaml" \
   "LISTEN=$OUTER" "ORIGIN=$TLS_LISTEN" "SNI=$SNI"
-bench_start_harmost outer "$BENCH_DIR/outer.yaml" "$OUTER"
+bench_start_tanod outer "$BENCH_DIR/outer.yaml" "$OUTER"
 
 bench_origin_reset "$ORIGIN_PORT"
 UP=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "http://127.0.0.1:$OUTER/p/origin-tls")
@@ -151,7 +151,7 @@ bench_result origin_tls_integrity yes
 # against the system roots, and no way to tell the difference from outside.
 sed 's|verify_cert: false|verify_cert: true\n    ca: "'"$CERT"'"|' \
   "$BENCH_DIR/outer.yaml" > "$BENCH_DIR/with-ca.yaml"
-if "$(bench_bin harmost)" check --config "$BENCH_DIR/with-ca.yaml" >/dev/null 2>&1; then
+if "$(bench_bin tanod)" check --config "$BENCH_DIR/with-ca.yaml" >/dev/null 2>&1; then
   bench_fail "origin.tls.ca was accepted; Pingora's rustls connector ignores it, so the config would claim a verification that is not happening"
 fi
 printf '  %-46s %s\n' "origin.tls.ca is refused, not ignored" "check exits non-zero"

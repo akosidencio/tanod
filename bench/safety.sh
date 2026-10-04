@@ -24,7 +24,7 @@ bench_render_config "$BENCH_ROOT/bench/coalesce.yaml" "$CONFIG" \
 
 bench_spawn origin "$(bench_bin slow-origin)" "$ORIGIN_PORT" 200
 bench_wait_port 127.0.0.1 "$ORIGIN_PORT" "slow-origin"
-bench_start_harmost harmost "$CONFIG" "$LISTEN_PORT" "$METRICS_PORT"
+bench_start_tanod tanod "$CONFIG" "$LISTEN_PORT" "$METRICS_PORT"
 bench_origin_reset "$ORIGIN_PORT"
 
 echo "$CONCURRENCY concurrent requests to a Set-Cookie route,"
@@ -41,8 +41,8 @@ echo "  requests served        $SERVED / $CONCURRENCY"
 echo "  distinct session ids   $COOKIES"
 echo "  origin renders         $RENDERS"
 echo
-echo "  X-Harmost breakdown:"
-echo "$OUT" | grep -i '^x-harmost:' | tr -d '\r' | awk '{print "    " $2}' | sort | uniq -c
+echo "  X-Tanod breakdown:"
+echo "$OUT" | grep -i '^x-tanod:' | tr -d '\r' | awk '{print "    " $2}' | sort | uniq -c
 echo
 bench_print_params
 echo

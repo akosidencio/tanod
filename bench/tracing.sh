@@ -5,7 +5,7 @@
 # because they fail separately: correlation is unconditional and free, export
 # is configuration and can be broken by a collector nobody noticed was down.
 #
-# Every assertion reads a witness other than Harmost's own account of itself:
+# Every assertion reads a witness other than Tanod's own account of itself:
 #
 #   * what `traceparent` the *origin* received, from the fixture's
 #     /echo-headers — not what the proxy logged that it sent;
@@ -34,14 +34,14 @@ SPANS="$BENCH_DIR/spans.txt"
 
 bench_render_config "$BENCH_ROOT/bench/tracing.yaml.tpl" "$CONFIG" \
   "LISTEN=$LISTEN_PORT" "ORIGIN=$ORIGIN_PORT" "METRICS=$METRICS_PORT" \
-  "COLLECTOR=$COLLECTOR_PORT" "PIDFILE=$BENCH_DIR/harmost.pid" \
+  "COLLECTOR=$COLLECTOR_PORT" "PIDFILE=$BENCH_DIR/tanod.pid" \
   "UPGRADESOCK=$BENCH_DIR/upgrade.sock"
 
 bench_spawn collector python3 "$BENCH_ROOT/bench/collector.py" "$COLLECTOR_PORT" "$SPANS"
 bench_wait_port 127.0.0.1 "$COLLECTOR_PORT" "otlp collector"
 bench_spawn origin "$(bench_bin slow-origin)" "$ORIGIN_PORT" 20
 bench_wait_port 127.0.0.1 "$ORIGIN_PORT" "slow-origin"
-bench_start_harmost harmost "$CONFIG" "$LISTEN_PORT"
+bench_start_tanod tanod "$CONFIG" "$LISTEN_PORT"
 
 echoed() { # path, extra curl args...
   local path=$1; shift
@@ -67,7 +67,7 @@ CONT_TP=$(field "$CONT" traceparent)
 CONT_TS=$(field "$CONT" tracestate)
 echo "  trusted inbound        $CONT_TP"
 echo "  tracestate             $CONT_TS"
-# The trace id must survive the hop, or every trace has a hole where Harmost is.
+# The trace id must survive the hop, or every trace has a hole where Tanod is.
 case "$CONT_TP" in
   00-4bf92f3577b34da6a3ce929d0e0e4736-*) ;;
   *) bench_fail "a believed trace id was not continued: '$CONT_TP'" ;;
@@ -100,19 +100,19 @@ esac
 # something you do during an incident rather than at a restart.
 echo
 echo "trust_incoming: never, applied by SIGHUP"
-PID=$(bench_pid harmost)
+PID=$(bench_pid tanod)
 sed -i.bak 's/    trust_incoming: .*/    trust_incoming: never/' "$CONFIG" 2>/dev/null || true
 grep -q 'trust_incoming' "$CONFIG" \
   || sed -i.bak 's/^  tracing:$/  tracing:\n    trust_incoming: never/' "$CONFIG"
 rm -f "$CONFIG.bak"
-before=$(wc -l < "$(bench_log harmost)")
+before=$(wc -l < "$(bench_log tanod)")
 kill -HUP "$PID"
 for _ in $(seq 1 100); do
-  tail -n "+$((before + 1))" "$(bench_log harmost)" | grep -q "config reloaded" && break
+  tail -n "+$((before + 1))" "$(bench_log tanod)" | grep -q "config reloaded" && break
   sleep 0.1
 done
-tail -n "+$((before + 1))" "$(bench_log harmost)" | grep -q "config reloaded" \
-  || bench_fail "SIGHUP did not apply telemetry.tracing.trust_incoming: $(tail -n 3 "$(bench_log harmost)")"
+tail -n "+$((before + 1))" "$(bench_log tanod)" | grep -q "config reloaded" \
+  || bench_fail "SIGHUP did not apply telemetry.tracing.trust_incoming: $(tail -n 3 "$(bench_log tanod)")"
 
 IGNORED=$(echoed /d -H "traceparent: $INBOUND" -H 'tracestate: vendor=abc')
 IGNORED_TP=$(field "$IGNORED" traceparent)
@@ -130,7 +130,7 @@ esac
 
 echo
 echo "access log"
-LOG=$(bench_log harmost)
+LOG=$(bench_log tanod)
 LOG_TRACE=$(grep -o '"trace_id":"[0-9a-f]\{32\}"' "$LOG" | tail -1 | sed 's/.*:"//;s/"//')
 LOG_GEN=$(grep -o '"generation":[0-9]*' "$LOG" | tail -1 | sed 's/.*://')
 echo "  trace_id               $LOG_TRACE"
@@ -162,7 +162,7 @@ grep -q '^application/json' "$SPANS" \
   || bench_fail "the exporter did not send Content-Type: application/json"
 grep -q '"resourceSpans"' "$SPANS" || bench_fail "the payload is not an OTLP trace document"
 grep -q '"service.name"' "$SPANS" || bench_fail "no service.name resource attribute"
-grep -q 'harmost-bench' "$SPANS" || bench_fail "the configured service name is not in the payload"
+grep -q 'tanod-bench' "$SPANS" || bench_fail "the configured service name is not in the payload"
 # Protobuf JSON renders 64-bit fields as strings. A number here is rejected for
 # the whole batch, and it is exactly the mistake a hand-written encoder makes.
 grep -q '"startTimeUnixNano":"[0-9]' "$SPANS" \
@@ -193,18 +193,18 @@ grep -q '4bf92f3577b34da6a3ce929d0e0e4736' "$SPANS" \
 echo
 echo "metrics"
 EXPORTED=$(curl -s --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics" \
-  | sed -n 's/^harmost_spans_total{outcome="exported"} \([0-9]*\)$/\1/p')
+  | sed -n 's/^tanod_spans_total{outcome="exported"} \([0-9]*\)$/\1/p')
 FAILED=$(curl -s --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics" \
-  | sed -n 's/^harmost_spans_total{outcome="export_failed"} \([0-9]*\)$/\1/p')
+  | sed -n 's/^tanod_spans_total{outcome="export_failed"} \([0-9]*\)$/\1/p')
 DROPPED=$(curl -s --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics" \
-  | sed -n 's/^harmost_spans_total{outcome="dropped"} \([0-9]*\)$/\1/p')
+  | sed -n 's/^tanod_spans_total{outcome="dropped"} \([0-9]*\)$/\1/p')
 echo "  exported               ${EXPORTED:-0}"
 echo "  export_failed          ${FAILED:-0}"
 echo "  dropped                ${DROPPED:-0}"
 bench_result spans_exported "${EXPORTED:-0}"
-bench_assert_gt "${EXPORTED:-0}" 2 "harmost_spans_total{exported}"
-bench_assert_eq "${FAILED:-0}" 0 "harmost_spans_total{export_failed} against a healthy collector"
-bench_assert_eq "${DROPPED:-0}" 0 "harmost_spans_total{dropped} at this traffic level"
+bench_assert_gt "${EXPORTED:-0}" 2 "tanod_spans_total{exported}"
+bench_assert_eq "${FAILED:-0}" 0 "tanod_spans_total{export_failed} against a healthy collector"
+bench_assert_eq "${DROPPED:-0}" 0 "tanod_spans_total{dropped} at this traffic level"
 
 # ------------------------------------------ telemetry is never load-bearing
 
@@ -228,7 +228,7 @@ bench_result ms_with_dead_collector "$ELAPSED_MS"
 # the connect timeout instead.
 bench_assert_eq "$OK" 15 "requests served while the collector is unreachable"
 bench_assert_le "$ELAPSED_MS" 8000 "wall time for 15 requests with a dead collector"
-bench_alive "$(bench_pid harmost)" || bench_fail "harmost died when its collector went away"
+bench_alive "$(bench_pid tanod)" || bench_fail "tanod died when its collector went away"
 
 echo
 bench_print_params

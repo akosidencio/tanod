@@ -9,9 +9,9 @@
 //! anyone who can reach the site — a reconnaissance gift, and on a governor
 //! whose whole job is to be the thing that stays up during an incident.
 //!
-//! Bind it to loopback or a private address. Harmost refuses to start if it is
+//! Bind it to loopback or a private address. Tanod refuses to start if it is
 //! bound to the same address as the traffic listener; it cannot tell whether
-//! `0.0.0.0` is safe on your network, and says so in `harmost check` instead.
+//! `0.0.0.0` is safe on your network, and says so in `tanod check` instead.
 //!
 //! # No client-controlled cardinality
 //!
@@ -28,7 +28,7 @@
 //! `/health/ready` answers 503 while draining, so a load balancer stops
 //! sending new work before the process starts shutting down. That gap is the
 //! whole reason zero-downtime restarts work, and it is why draining is a state
-//! Harmost enters some seconds *before* it begins to exit.
+//! Tanod enters some seconds *before* it begins to exit.
 
 pub mod drain;
 
@@ -402,7 +402,7 @@ fn limiter_json(s: &mut String, limiter: &Limiter) {
 }
 
 const INDEX: &str = concat!(
-    "harmost ",
+    "tanod ",
     env!("CARGO_PKG_VERSION"),
     " admin\n\n",
     "GET  /health/live   always 200 while the process is running\n",
@@ -604,7 +604,7 @@ fn unauthorized() -> Response<Vec<u8>> {
     );
     response.headers_mut().insert(
         http::header::WWW_AUTHENTICATE,
-        http::HeaderValue::from_static("Bearer realm=\"harmost-purge\""),
+        http::HeaderValue::from_static("Bearer realm=\"tanod-purge\""),
     );
     response
 }
@@ -665,7 +665,7 @@ mod tests {
         admission.route_limiter("products", 4, 2, Duration::from_millis(100));
         Admin {
             started: Instant::now(),
-            config_path: "/etc/harmost/harmost.yaml".to_string(),
+            config_path: "/etc/tanod/tanod.yaml".to_string(),
             policy: Arc::new(ArcSwap::from(policy)),
             admission,
             upstreams: Arc::new({
@@ -919,7 +919,7 @@ mod tests {
         assert!(body.contains(r#""purge_enabled":true"#), "{body}");
         assert!(body.contains(r#""eviction":"clock""#), "{body}");
         assert!(
-            body.contains(r#""tag_header":"x-harmost-cache-tags""#),
+            body.contains(r#""tag_header":"x-tanod-cache-tags""#),
             "{body}"
         );
         assert_balanced(&body);
@@ -961,7 +961,7 @@ mod tests {
             pool.set_healthy(0, false);
             pool.set_healthy(1, false);
         }
-        // The default is deliberate: Harmost still serves a fully unhealthy
+        // The default is deliberate: Tanod still serves a fully unhealthy
         // pool, so taking every replica out of rotation would turn a degraded
         // origin into a total outage at the edge too.
         assert_eq!(lenient.readiness(), Ok(()));
@@ -983,7 +983,7 @@ mod tests {
             r#""fingerprint":"#,
             r#""routes":1"#,
             r#""draining":false"#,
-            r#""path":"/etc/harmost/harmost.yaml""#,
+            r#""path":"/etc/tanod/tanod.yaml""#,
             r#""address":"127.0.0.1:3000""#,
             r#""healthy":true"#,
             r#""name":"global""#,

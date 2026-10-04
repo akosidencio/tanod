@@ -2,7 +2,7 @@
 # Cache tags and the purge API, end to end.
 #
 # Three claims, each asserted against the origin's own render counter rather
-# than against anything Harmost says about itself:
+# than against anything Tanod says about itself:
 #
 #   * a purge by tag removes exactly the entries carrying that tag
 #   * an untagged-by-that-tag entry survives it
@@ -28,8 +28,8 @@ bench_render_config "$BENCH_ROOT/bench/purge.yaml" "$CONFIG" \
 
 bench_spawn origin "$(bench_bin slow-origin)" "$ORIGIN_PORT" "$RENDER_MS"
 bench_wait_port 127.0.0.1 "$ORIGIN_PORT" "slow-origin"
-bench_start_harmost harmost "$CONFIG" "$LISTEN_PORT" "$METRICS_PORT"
-bench_wait_http "http://127.0.0.1:$ADMIN_PORT/health/live" "harmost admin"
+bench_start_tanod tanod "$CONFIG" "$LISTEN_PORT" "$METRICS_PORT"
+bench_wait_http "http://127.0.0.1:$ADMIN_PORT/health/live" "tanod admin"
 bench_origin_reset "$ORIGIN_PORT"
 
 get() { curl -sS -o /dev/null -D - "http://127.0.0.1:$LISTEN_PORT$1" | tr -d '\r' | sed -n 's/^[Xx]-[Hh]armost: //p'; }
@@ -108,8 +108,8 @@ bench_assert_eq "$(status_field entries)" 0 "entries after purging everything"
 bench_assert_eq "$(status_field bytes_used)" 0 "bytes after purging everything"
 
 PURGED_METRIC=$(curl -fsS "http://127.0.0.1:$METRICS_PORT/metrics" \
-  | awk '/^harmost_cache_purged_total[{]/ { sum += $2 } END { print sum + 0 }')
-bench_assert_gt "$PURGED_METRIC" 2 "harmost_cache_purged_total"
+  | awk '/^tanod_cache_purged_total[{]/ { sum += $2 } END { print sum + 0 }')
+bench_assert_gt "$PURGED_METRIC" 2 "tanod_cache_purged_total"
 
 echo
 bench_print_params
@@ -118,5 +118,5 @@ bench_result purged_by_tag "$PURGED"
 bench_result purged_by_path "$BY_PATH"
 bench_result rerenders_after_purge "$((RENDERS_AFTER - RENDERS_BEFORE))"
 
-bench_assert_no_panics harmost
+bench_assert_no_panics tanod
 bench_pass "a tag purge removed 2 of 3 entries and cost exactly 2 re-renders; a path purge removed both query variants of one page; unauthorised and malformed purges changed nothing"

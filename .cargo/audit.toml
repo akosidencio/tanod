@@ -14,18 +14,18 @@ ignore = [
     # *its* prometheus default registry, while `telemetry::metrics` registers
     # into ours. Those are the same registry only for as long as both crates
     # resolve to the same `prometheus`. Bumping to `prometheus 0.14` links two
-    # instances with two registries and drops every Harmost metric from
+    # instances with two registries and drops every Tanod metric from
     # /metrics without an error anywhere — a worse failure than the advisory.
     # The fix is a pingora release that moves off `prometheus 0.13`.
     #
     # Not reachable: prometheus uses protobuf for its metric *data model* and
-    # for the protobuf exposition format. Harmost only ever encodes metrics it
+    # for the protobuf exposition format. Tanod only ever encodes metrics it
     # built itself, and no path in this binary decodes protobuf from the
     # network, which is what the advisory requires.
     "RUSTSEC-2024-0437",
 
     # daemonize 0.5.0 is unmaintained. It is pulled in by pingora-core 0.8.1;
-    # Harmost does not use daemonize directly and cannot replace it while
+    # Tanod does not use daemonize directly and cannot replace it while
     # retaining Pingora's server runtime. Remove this when Pingora moves off it.
     "RUSTSEC-2025-0069",
 
@@ -40,7 +40,7 @@ ignore = [
     "RUSTSEC-2025-0134",
 
     # lru 0.16.4's pop() is not panic-safe when a key's Drop panics inside a
-    # catch_unwind boundary. Pingora owns every affected cache and pool; Harmost
+    # catch_unwind boundary. Pingora owns every affected cache and pool; Tanod
     # and Pingora use ordinary non-panicking key types and neither codebase puts
     # these operations inside catch_unwind. The version is fixed only in 0.18.2,
     # while Pingora 0.8.1 constrains lru to 0.16. Remove this after Pingora moves

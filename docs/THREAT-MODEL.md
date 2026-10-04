@@ -1,12 +1,12 @@
-# Harmost threat model
+# Tanod threat model
 
-Harmost is an overload governor for expensive SSR and dynamic origin workloads,
+Tanod is an overload governor for expensive SSR and dynamic origin workloads,
 not a general Next.js performance accelerator. This model therefore treats
 unbounded or amplified origin work as a primary availability threat alongside
 the confidentiality risks introduced by safe response reuse.
 
 **Status: first edition, written 2026-08-27 alongside roadmap phase 1. Not
-independently reviewed.** Harmost has never run in production and has had no
+independently reviewed.** Tanod has never run in production and has had no
 third-party security review. This document is the author's own analysis; read
 it as a statement of what the design intends and where the author believes it
 is weak, not as an assurance that it holds.
@@ -14,7 +14,7 @@ is weak, not as an assurance that it holds.
 The point of writing it down is that a cache is a component whose failures are
 silent by construction. A cache that serves the wrong body serves it quickly,
 with a 200, and looks healthy on every dashboard. So the useful question is not
-"is Harmost secure" but "what specifically would have to go wrong, and what
+"is Tanod secure" but "what specifically would have to go wrong, and what
 stops each one".
 
 ---
@@ -27,9 +27,9 @@ Three assets, in order of how bad it is to lose them.
 | --- | --- | --- |
 | A1 | **Response confidentiality** — one user's rendered page never reaches another | A logged-in user sees someone else's account page, cart, or draft content |
 | A2 | **Origin availability** — the origin is not driven past its render capacity | The origin's event loop queues, health checks time out, the orchestrator restarts pods, survivors inherit the load |
-| A3 | **Proxy availability** — Harmost itself keeps serving | Everything behind Harmost is down, including the parts that would have survived without it |
+| A3 | **Proxy availability** — Tanod itself keeps serving | Everything behind Tanod is down, including the parts that would have survived without it |
 
-A1 outranks A2 absolutely. Every mechanism in Harmost that improves A2 —
+A1 outranks A2 absolutely. Every mechanism in Tanod that improves A2 —
 caching, coalescing — is a mechanism that shares a response, and every place
 those two pull against each other is resolved in favour of A1. That is why
 `Set-Cookie` is an unconditional refusal that no configuration reaches, and why
@@ -45,11 +45,11 @@ a route-level override of the origin's cache directives requires an explicit
 | T1 | **An anonymous internet client** | Sends any syntactically valid HTTP over any supported version. Chooses every header, path, query, cookie and body. Opens many connections. Reads responses arbitrarily slowly, or not at all. |
 | T2 | **An authenticated user** | Everything T1 has, plus a valid session for their own account. Wants somebody else's response. |
 | T3 | **A hostile or compromised origin** | Returns any status, headers and body, including framing that contradicts itself. In scope because SSR origins render third-party content and because a compromised origin should not be able to escalate into a cross-user leak through the cache. |
-| T4 | **A network position between Harmost and the origin** | Reads and modifies the origin connection. Only in scope where `origin.tls` is configured, and the honest answer without it is that Harmost offers nothing here. |
+| T4 | **A network position between Tanod and the origin** | Reads and modifies the origin connection. Only in scope where `origin.tls` is configured, and the honest answer without it is that Tanod offers nothing here. |
 | T5 | **An operator writing a config** | Not malicious. In scope because a configuration mistake in *this* component is a data leak, and because "the config was wrong" is not a defence a user cares about. |
 
 Explicitly **out of scope**: an attacker with local code execution or memory
-access on the Harmost host; an attacker who can modify Harmost's binary or
+access on the Tanod host; an attacker who can modify Tanod's binary or
 config file; side channels (timing, cache occupancy) that reveal *whether* a
 URL is cached rather than its content; and denial of service by raw bandwidth
 exhaustion, which is a layer below this.
@@ -60,7 +60,7 @@ exhaustion, which is a layer below this.
 
 ```
                      ┌──────────────────────────────────────────┐
-    T1, T2           │  Harmost                                 │        T3
+    T1, T2           │  Tanod                                 │        T3
   ────────────▶ (B1) │                                          │ (B3) ◀────────
    client            │   classify ─▶ key ─▶ share? ─▶ admit     │      origin
    connection        │                  │                        │
@@ -101,7 +101,7 @@ exhaustion, which is a layer below this.
 | Draft-mode / preview content is published | `__prerender_bypass` and `__next_preview_data` force a bypass ahead of every other rule in the Next.js adapter, matched on bytes |
 
 **Residual risk.** The absolute rules are absolute only against the response
-signals Harmost can see. An origin that personalises a response *without*
+signals Tanod can see. An origin that personalises a response *without*
 `Set-Cookie`, `Cache-Control: private` or a `Vary` — personalising on a header
 it did not declare — is indistinguishable from a public one. `cache.vary` and
 route classes exist for that case and are the operator's responsibility (T5).
@@ -109,9 +109,9 @@ This is the largest unmitigated confidentiality risk in the design.
 
 ### 4.2 Origin-work amplification (A2)
 
-The inversion that matters: Harmost sits in front of the origin to *reduce*
+The inversion that matters: Tanod sits in front of the origin to *reduce*
 origin work, so any input a client controls that multiplies cache keys turns
-Harmost into an amplifier.
+Tanod into an amplifier.
 
 | Threat | Mechanism |
 | --- | --- |
@@ -126,7 +126,7 @@ Harmost into an amplifier.
 
 ### 4.3 Capacity leaks (A2, A3)
 
-A permit that is taken and never returned tightens Harmost's own ceiling until
+A permit that is taken and never returned tightens Tanod's own ceiling until
 it admits nothing. That failure presents as an overloaded origin and is not
 one, which makes it worth enumerating separately.
 
@@ -145,11 +145,11 @@ one, which makes it worth enumerating separately.
 | --- | --- |
 | A truncated body is promoted to a complete cache entry and replayed for the full TTL | The miss handler is only promoted on `finish`, which Pingora calls only at a genuine end of stream; a dropped handler removes its temporary entry and returns its bytes. Asserted for both `Content-Length` truncation and unterminated chunked framing in `bench/protocol.sh` |
 | An oversized body exhausts memory during a fill | `cache.max_body_size` is tracked as the body arrives, not only from `Content-Length` |
-| The origin sets Harmost's own internal marker header | `TRANSIENT_HEADER` is removed from every stored and forwarded response before Harmost sets it |
+| The origin sets Tanod's own internal marker header | `TRANSIENT_HEADER` is removed from every stored and forwarded response before Tanod sets it |
 | A slow or hanging origin holds a permit forever | `timeouts.origin` is re-checked in the response and body filters, not only as a socket timeout |
 
-**Residual risk.** Request smuggling between Harmost and the origin is
-Pingora's HTTP/1.1 parser to defend, not Harmost's. Harmost adds no
+**Residual risk.** Request smuggling between Tanod and the origin is
+Pingora's HTTP/1.1 parser to defend, not Tanod's. Tanod adds no
 request-line or header rewriting that could reintroduce it, but it also does not
 independently validate framing. This has not been tested adversarially.
 
@@ -177,7 +177,7 @@ The design position is that a config which parses must mean what it says.
   class, `override_origin` without an explicit class or TTL ceiling,
   `cache.vary` on `Cookie`/`Authorization`/`User-Agent`/`*`, a coalescing wait
   shorter than the origin timeout, spooling a streaming route.
-* `harmost check` prints the settings that trade a safety property for
+* `tanod check` prints the settings that trade a safety property for
   convenience: an empty trusted-proxy list, `verify_cert: false`, upgrades
   enabled, spooling enabled.
 
@@ -196,15 +196,15 @@ does not exist.
 1. **Cache occupancy side channels.** An attacker can learn whether a URL is
    currently cached by timing. `debug_headers` is off by default for the same
    reason, but timing remains.
-2. **Bandwidth-level denial of service.** Harmost bounds origin *work*. It does
+2. **Bandwidth-level denial of service.** Tanod bounds origin *work*. It does
    not bound bytes, connections per source, or request rate. There is no
    per-client rate limiting of any kind.
 3. **Request smuggling.** Inherited from Pingora, untested here.
-4. **Multi-instance capacity.** Two Harmost replicas each enforce their own
+4. **Multi-instance capacity.** Two Tanod replicas each enforce their own
    ceiling, so the effective origin limit is the sum. Roadmap phase 5.
 5. **Purge and invalidation.** There is no way to evict an entry that turns out
    to be wrong except by waiting for its TTL. Roadmap phase 4.
-6. **Compromise of the Harmost host.** Out of scope entirely.
+6. **Compromise of the Tanod host.** Out of scope entirely.
 
 ---
 

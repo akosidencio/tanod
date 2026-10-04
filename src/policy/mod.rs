@@ -94,7 +94,7 @@ impl PolicySnapshot {
 
 /// Fingerprint the fully defaulted, effective configuration rather than the
 /// source YAML. Comments and formatting therefore do not create false fleet
-/// drift, while any value Harmost actually reads changes the input.
+/// drift, while any value Tanod actually reads changes the input.
 fn config_fingerprint(config: &Config) -> u64 {
     let rendered = format!("{config:#?}");
     // FNV-1a is deterministic, tiny, and sufficient here: config is trusted

@@ -6,7 +6,7 @@
 //! that should have received a different body.
 
 use arbitrary::Arbitrary;
-use harmost::fuzzing::unsupported_vary;
+use tanod::fuzzing::unsupported_vary;
 use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]

@@ -3,7 +3,7 @@
 # every important Grafana section has real data without a separate load tool.
 set -eu
 
-base=http://harmost:8080
+base=http://tanod:8080
 until wget -q -O /dev/null "$base/healthz"; do
   sleep 1
 done

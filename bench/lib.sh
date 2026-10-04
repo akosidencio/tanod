@@ -5,7 +5,7 @@
 # README, so the harness they share has to be trustworthy before the numbers
 # are. Three habits it exists to remove:
 #
-#   * `pkill -f target/debug/harmost` kills every Harmost on the machine,
+#   * `pkill -f target/debug/tanod` kills every Tanod on the machine,
 #     including another developer's, another benchmark's, and — on a laptop
 #     running the fixture — the one under test in a different terminal. Every
 #     process here is started through `bench_spawn`, which records the exact
@@ -43,7 +43,7 @@ bench_cpu_count() {
 
 bench_init() {
   BENCH_NAME=$1
-  BENCH_DIR=$(mktemp -d "${TMPDIR:-/tmp}/harmost-bench-XXXXXX")
+  BENCH_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tanod-bench-XXXXXX")
   mkdir -p "$BENCH_DIR/pids" "$BENCH_DIR/logs"
   BENCH_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   trap bench_cleanup EXIT
@@ -296,11 +296,11 @@ bench_render_config() { # template, out, then KEY=VALUE...
   fi
 }
 
-bench_start_harmost() { # name, config, listen_port [, metrics_port]
+bench_start_tanod() { # name, config, listen_port [, metrics_port]
   local name=$1 config=$2 listen=$3 metrics=${4:-}
-  bench_spawn "$name" "$(bench_bin harmost)" run --config "$config"
-  bench_wait_port 127.0.0.1 "$listen" "harmost"
-  [ -n "$metrics" ] && bench_wait_port 127.0.0.1 "$metrics" "harmost metrics"
+  bench_spawn "$name" "$(bench_bin tanod)" run --config "$config"
+  bench_wait_port 127.0.0.1 "$listen" "tanod"
+  [ -n "$metrics" ] && bench_wait_port 127.0.0.1 "$metrics" "tanod metrics"
   return 0
 }
 
@@ -319,8 +319,8 @@ bench_rss_kb() { # pid
 }
 
 # One Prometheus metric value, by exact series name. The `^` anchor matters:
-# without it `harmost_cache_bytes` also matches nothing useful but
-# `harmost_spool_bytes` would match a HELP line.
+# without it `tanod_cache_bytes` also matches nothing useful but
+# `tanod_spool_bytes` would match a HELP line.
 bench_metric() { # port, series
   curl -s --max-time 5 "http://127.0.0.1:$1/metrics" \
     | sed -n "s/^$2 \([0-9.e+-]*\)$/\1/p" | head -1

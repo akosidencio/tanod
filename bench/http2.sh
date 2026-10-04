@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Does Harmost behave the same over HTTP/2 as it does over HTTP/1.1?
+# Does Tanod behave the same over HTTP/2 as it does over HTTP/1.1?
 #
 # The question is not whether bytes move — Pingora handles the transport. It is
 # whether the governor's own rules survive the protocol change, because HTTP/2
@@ -16,7 +16,7 @@
 # `server.h2c` is switched on and is invisible before then. This benchmark
 # asserts against it directly.
 #
-# Upstream h2 is exercised by chaining two Harmost processes: the inner one
+# Upstream h2 is exercised by chaining two Tanod processes: the inner one
 # serves h2c, the outer one is configured to speak HTTP/2 to it. That keeps a
 # second server implementation out of the repository and still puts a real h2
 # client and a real h2 server on either end of the connector.
@@ -40,7 +40,7 @@ ORIGIN_PORT=$(bench_start_origin origin "$RENDER_MS")
 LISTEN=$(bench_free_port)
 bench_render_config "$BENCH_ROOT/bench/http2.yaml" "$BENCH_DIR/http2.yaml" \
   "LISTEN=$LISTEN" "ORIGIN=$ORIGIN_PORT" "CEILING=5" "UPSTREAM_VERSION=http1"
-bench_start_harmost harmost "$BENCH_DIR/http2.yaml" "$LISTEN"
+bench_start_tanod tanod "$BENCH_DIR/http2.yaml" "$LISTEN"
 BASE="http://127.0.0.1:$LISTEN"
 
 h2() { curl -s --http2-prior-knowledge --max-time 20 "$@"; }
@@ -97,7 +97,7 @@ bench_result reuse_renders "$REUSED"
 # ------------------------------------------------- coalescing over h2
 #
 # Separate connections rather than one multiplexed one: multiplexing would
-# prove that h2 works, not that Harmost collapses concurrent duplicates.
+# prove that h2 works, not that Tanod collapses concurrent duplicates.
 bench_origin_reset "$ORIGIN_PORT"
 seq 1 "$CONCURRENCY" | xargs -P "$CONCURRENCY" -I{} \
   curl -s --http2-prior-knowledge -o /dev/null --max-time 30 "$BASE/coalesced" 2>/dev/null
@@ -122,20 +122,20 @@ bench_result admission_peak "$PEAK"
 
 # ------------------------------------------------------- upstream h2
 #
-# A second Harmost, serving h2c, becomes the origin. The outer proxy is told
+# A second Tanod, serving h2c, becomes the origin. The outer proxy is told
 # to speak HTTP/2 to it: over cleartext that is prior-knowledge h2c, with no
 # ALPN and no upgrade dance, so an origin that could not speak it would fail
 # outright rather than fall back and quietly make this test an h1 test.
-bench_stop harmost
+bench_stop tanod
 INNER=$(bench_free_port)
 bench_render_config "$BENCH_ROOT/bench/http2-inner.yaml" "$BENCH_DIR/inner.yaml" \
   "LISTEN=$INNER" "ORIGIN=$ORIGIN_PORT"
-bench_start_harmost inner "$BENCH_DIR/inner.yaml" "$INNER"
+bench_start_tanod inner "$BENCH_DIR/inner.yaml" "$INNER"
 
 OUTER=$(bench_free_port)
 bench_render_config "$BENCH_ROOT/bench/http2.yaml" "$BENCH_DIR/outer.yaml" \
   "LISTEN=$OUTER" "ORIGIN=$INNER" "CEILING=5" "UPSTREAM_VERSION=http2"
-bench_start_harmost outer "$BENCH_DIR/outer.yaml" "$OUTER"
+bench_start_tanod outer "$BENCH_DIR/outer.yaml" "$OUTER"
 
 bench_origin_reset "$ORIGIN_PORT"
 UP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "http://127.0.0.1:$OUTER/upstream-h2")

@@ -19,7 +19,7 @@
 //! * `GET /healthz`  — liveness, deliberately excluded from the counters so an
 //!   active health check cannot inflate a render count.
 //! * `GET /tagged/<tag>/<n>` — an ordinary render that also declares
-//!   `X-Harmost-Cache-Tags: <tag>`, so a benchmark can prove a purge by tag
+//!   `X-Tanod-Cache-Tags: <tag>`, so a benchmark can prove a purge by tag
 //!   removes exactly the entries carrying it and nothing else.
 //! * `GET /__fail` / `GET /__heal` — make every *render* answer `502` while
 //!   leaving `/healthz` answering `200`. That combination is the whole point:
@@ -329,7 +329,7 @@ async fn main() -> std::io::Result<()> {
                 .filter(|tag| {
                     !tag.is_empty() && tag.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
                 })
-                .map(|tag| format!("X-Harmost-Cache-Tags: {tag}\r\n"))
+                .map(|tag| format!("X-Tanod-Cache-Tags: {tag}\r\n"))
                 .unwrap_or_default();
             let set_cookie = if path.starts_with("/private") {
                 format!("Set-Cookie: session=user-{instance}-{seq}; Path=/\r\n")
@@ -461,7 +461,7 @@ fn header_value(head: &str, name: &str) -> Option<String> {
 ///
 /// Faithful rather than approximate on purpose. A fixture that answered `101`
 /// with a wrong `Sec-WebSocket-Accept` would still tunnel bytes through the
-/// proxy — which is all Harmost handles — and would therefore pass a test that
+/// proxy — which is all Tanod handles — and would therefore pass a test that
 /// a browser would fail. Computing the accept key is forty lines and removes
 /// that whole class of false confidence.
 async fn serve_websocket(mut sock: tokio::net::TcpStream, head: &str, stats: &Arc<Stats>) {

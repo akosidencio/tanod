@@ -1,4 +1,4 @@
-# Real Next.js integration fixture: one Harmost process governing three
+# Real Next.js integration fixture: one Tanod process governing three
 # independently identifiable standalone origins.
 version: 1
 mode: protect
@@ -38,7 +38,7 @@ cache:
   store: memory
   max_memory: 64MiB
   max_body_size: 4MiB
-  tag_header: "x-harmost-cache-tags"
+  tag_header: "x-tanod-cache-tags"
   purge:
     token: "nextjs-reference-purge-token-0001"
 
@@ -65,7 +65,7 @@ routes:
 
   # The image optimiser. `vary: [Accept]` is load-bearing: Next negotiates the
   # output format on `Accept` and answers `Vary: Accept`, so without it in the
-  # key Harmost refuses to store anything and the route gets a 0% hit rate.
+  # key Tanod refuses to store anything and the route gets a 0% hit rate.
   # Step 11 asserts the hit, the format separation, and the tier ceiling.
   - id: next-image
     match: "/_next/image"

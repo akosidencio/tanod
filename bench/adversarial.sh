@@ -42,7 +42,7 @@ METRICS=$(bench_free_port)
 bench_render_config "$BENCH_ROOT/bench/adversarial.yaml" "$BENCH_DIR/adversarial.yaml" \
   "LISTEN=$LISTEN" "ORIGIN=$ORIGIN_PORT" "METRICS=$METRICS" \
   "CEILING=$CEILING" "CACHE_MEMORY=$CACHE_MEMORY"
-bench_start_harmost harmost "$BENCH_DIR/adversarial.yaml" "$LISTEN" "$METRICS"
+bench_start_tanod tanod "$BENCH_DIR/adversarial.yaml" "$LISTEN" "$METRICS"
 bench_origin_reset "$ORIGIN_PORT"
 
 BASE="http://127.0.0.1:$LISTEN"
@@ -180,10 +180,10 @@ bench_result distinct_sessions "$DISTINCT"
 # 3. Memory stayed inside its budget. Read from the proxy's own metrics,
 #    which is the number an operator would page on.
 metric() { curl -s --max-time 5 "http://127.0.0.1:$METRICS/metrics" | awk -v m="$1" '$1 == m { print $2 }'; }
-CACHE_BYTES=$(metric harmost_cache_bytes)
-SPOOL_BYTES=$(metric harmost_spool_bytes)
+CACHE_BYTES=$(metric tanod_cache_bytes)
+SPOOL_BYTES=$(metric tanod_spool_bytes)
 CACHE_LIMIT=$(( $(echo "$CACHE_MEMORY" | tr -dc '0-9') * 1024 * 1024 ))
-bench_assert_int "${CACHE_BYTES%%.*}" "harmost_cache_bytes"
+bench_assert_int "${CACHE_BYTES%%.*}" "tanod_cache_bytes"
 bench_assert_le "${CACHE_BYTES%%.*}" "$CACHE_LIMIT" \
   "the cache held ${CACHE_BYTES} bytes against a budget of $CACHE_MEMORY"
 bench_assert_le "${SPOOL_BYTES%%.*}" 8388608 \
@@ -194,8 +194,8 @@ bench_result cache_bytes "${CACHE_BYTES%%.*}"
 bench_result spool_bytes "${SPOOL_BYTES%%.*}"
 
 # 4. Still running, and still correct — not merely alive.
-bench_alive "$(bench_pid harmost)" || bench_fail \
-  "harmost died during the run; see $(bench_log harmost)"
+bench_alive "$(bench_pid tanod)" || bench_fail \
+  "tanod died during the run; see $(bench_log tanod)"
 FINAL=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$BASE/p/after?q=stable")
 bench_assert_eq "$FINAL" 200 \
   "after the run the proxy answered HTTP $FINAL to an ordinary request"
@@ -204,9 +204,9 @@ bench_result final_status "$FINAL"
 
 # A panic that was caught per-request would leave the process alive and the
 # log full. Nothing in the request path may panic at all.
-if grep -qi "panicked at" "$(bench_log harmost)"; then
+if grep -qi "panicked at" "$(bench_log tanod)"; then
   bench_fail "the proxy logged a panic under adversarial load:
-$(grep -i -m3 'panicked at' "$(bench_log harmost)")"
+$(grep -i -m3 'panicked at' "$(bench_log tanod)")"
 fi
 printf '  %-46s %s\n' "no panic in the request path" "clean"
 

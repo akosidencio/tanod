@@ -4,7 +4,7 @@
 //! that set changes: an instance is added, replaced after a crash, or moved by
 //! a rollout. [`Resolver`] looks every name up again on `origin.resolve_interval`
 //! so new instances start receiving traffic and replaced ones stop, without a
-//! Harmost restart. Lookups are blocking (`getaddrinfo`), so they run on the
+//! Tanod restart. Lookups are blocking (`getaddrinfo`), so they run on the
 //! blocking pool, never on a proxy worker.
 
 use std::sync::Arc;

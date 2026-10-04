@@ -1,31 +1,31 @@
-//! `harmost` — origin workload governor.
+//! `tanod` — origin workload governor.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-harmost — origin workload governor for server-rendered applications
+tanod — origin workload governor for server-rendered applications
 
 USAGE:
-    harmost init [OPTIONS]          Create a safe single-server config
-    harmost check [--config <FILE>] Validate a config file and exit
-    harmost version                 Print the version and build features
+    tanod init [OPTIONS]          Create a safe single-server config
+    tanod check [--config <FILE>] Validate a config file and exit
+    tanod version                 Print the version and build features
 
-    harmost run [--config <FILE>] [OPTIONS]
+    tanod run [--config <FILE>] [OPTIONS]
 
 CONFIG:
-    --config, -c <FILE>  Use this file. Otherwise Harmost checks
-                         $HARMOST_CONFIG, ./harmost.yaml, ./harmost.yml,
-                         /etc/harmost/harmost.yaml, then /etc/harmost/harmost.yml.
+    --config, -c <FILE>  Use this file. Otherwise Tanod checks
+                         $TANOD_CONFIG, ./tanod.yaml, ./tanod.yml,
+                         /etc/tanod/tanod.yaml, then /etc/tanod/tanod.yml.
 
 INIT OPTIONS:
     --upstream <ADDR>       Origin address (default: 127.0.0.1:3000)
-    --listen <ADDR>         Harmost address (default: 127.0.0.1:8080)
+    --listen <ADDR>         Tanod address (default: 127.0.0.1:8080)
     --concurrency <NUMBER>  Origin work ceiling (default: 16)
     --force                 Replace an existing config file
 
 RUN OPTIONS:
-    --upgrade    Take the listening sockets over from a running Harmost.
+    --upgrade    Take the listening sockets over from a running Tanod.
                  The old process keeps serving what it already accepted and
                  exits when those finish; no connection is refused in between.
                  Both processes must agree on server.graceful.upgrade_socket.
@@ -53,9 +53,9 @@ fn main() -> ExitCode {
             // number otherwise, and "which build is this" is the first
             // question during an incident.
             println!(
-                "harmost {} (config schema v{}, features: {})",
+                "tanod {} (config schema v{}, features: {})",
                 env!("CARGO_PKG_VERSION"),
-                harmost::config::SCHEMA_VERSION,
+                tanod::config::SCHEMA_VERSION,
                 if cfg!(feature = "tls") { "tls" } else { "none" }
             );
             ExitCode::SUCCESS
@@ -68,7 +68,7 @@ fn main() -> ExitCode {
         Some("check") => match resolve_config_path(&args) {
             Ok(path) => check(path.to_string_lossy().as_ref()),
             Err(error) => {
-                eprintln!("harmost check: {error}");
+                eprintln!("tanod check: {error}");
                 ExitCode::from(2)
             }
         },
@@ -80,13 +80,13 @@ fn main() -> ExitCode {
                     test: has_flag(&args, "--test"),
                 };
                 if let Some(unknown) = unknown_run_flag(&args) {
-                    eprintln!("harmost run: unknown option `{unknown}`\n\n{USAGE}");
+                    eprintln!("tanod run: unknown option `{unknown}`\n\n{USAGE}");
                     return ExitCode::from(2);
                 }
                 run(path.to_string_lossy().as_ref(), flags)
             }
             Err(error) => {
-                eprintln!("harmost run: {error}");
+                eprintln!("tanod run: {error}");
                 ExitCode::from(2)
             }
         },
@@ -95,7 +95,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some(other) => {
-            eprintln!("harmost: unknown command `{other}`\n\n{USAGE}");
+            eprintln!("tanod: unknown command `{other}`\n\n{USAGE}");
             ExitCode::from(2)
         }
     }
@@ -110,22 +110,22 @@ fn resolve_config_path(args: &[String]) -> Result<PathBuf, String> {
             .ok_or_else(|| "--config requires a file path".to_string());
     }
 
-    if let Some(path) = std::env::var_os("HARMOST_CONFIG").filter(|value| !value.is_empty()) {
+    if let Some(path) = std::env::var_os("TANOD_CONFIG").filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(path));
     }
 
     const DEFAULTS: [&str; 4] = [
-        "harmost.yaml",
-        "harmost.yml",
-        "/etc/harmost/harmost.yaml",
-        "/etc/harmost/harmost.yml",
+        "tanod.yaml",
+        "tanod.yml",
+        "/etc/tanod/tanod.yaml",
+        "/etc/tanod/tanod.yml",
     ];
     DEFAULTS
         .iter()
         .map(PathBuf::from)
         .find(|path| path.is_file())
         .ok_or_else(|| {
-            "no config found; run `harmost init`, set HARMOST_CONFIG, or pass --config <FILE>"
+            "no config found; run `tanod init`, set TANOD_CONFIG, or pass --config <FILE>"
                 .to_string()
         })
 }
@@ -142,7 +142,7 @@ struct InitOptions {
 impl Default for InitOptions {
     fn default() -> Self {
         Self {
-            config: PathBuf::from("harmost.yaml"),
+            config: PathBuf::from("tanod.yaml"),
             upstream: "127.0.0.1:3000".to_string(),
             listen: "127.0.0.1:8080".to_string(),
             concurrency: 16,
@@ -155,7 +155,7 @@ fn init(args: &[String]) -> ExitCode {
     let options = match parse_init_options(args) {
         Ok(options) => options,
         Err(error) => {
-            eprintln!("harmost init: {error}\n\n{USAGE}");
+            eprintln!("tanod init: {error}\n\n{USAGE}");
             return ExitCode::from(2);
         }
     };
@@ -163,25 +163,25 @@ fn init(args: &[String]) -> ExitCode {
 
     // Parse and validate the generated text before touching the destination.
     // This also validates user-provided listener and upstream addresses.
-    let config: harmost::config::schema::Config = match serde_saphyr::from_str(&contents) {
+    let config: tanod::config::schema::Config = match serde_saphyr::from_str(&contents) {
         Ok(config) => config,
         Err(error) => {
-            eprintln!("harmost init: generated an invalid config: {error}");
+            eprintln!("tanod init: generated an invalid config: {error}");
             return ExitCode::FAILURE;
         }
     };
-    if let Err(error) = harmost::config::validation::validate(&config) {
-        eprintln!("harmost init: {error}");
+    if let Err(error) = tanod::config::validation::validate(&config) {
+        eprintln!("tanod init: {error}");
         return ExitCode::from(2);
     }
-    if let Err(error) = harmost::policy::PolicySnapshot::build(config, 1) {
-        eprintln!("harmost init: {error}");
+    if let Err(error) = tanod::policy::PolicySnapshot::build(config, 1) {
+        eprintln!("tanod init: {error}");
         return ExitCode::from(2);
     }
 
     if options.config.exists() && !options.force {
         eprintln!(
-            "harmost init: {} already exists; pass --force to replace it",
+            "tanod init: {} already exists; pass --force to replace it",
             options.config.display()
         );
         return ExitCode::from(2);
@@ -193,14 +193,14 @@ fn init(args: &[String]) -> ExitCode {
         && let Err(error) = std::fs::create_dir_all(parent)
     {
         eprintln!(
-            "harmost init: could not create {}: {error}",
+            "tanod init: could not create {}: {error}",
             parent.display()
         );
         return ExitCode::FAILURE;
     }
     if let Err(error) = std::fs::write(&options.config, contents) {
         eprintln!(
-            "harmost init: could not write {}: {error}",
+            "tanod init: could not write {}: {error}",
             options.config.display()
         );
         return ExitCode::FAILURE;
@@ -210,7 +210,7 @@ fn init(args: &[String]) -> ExitCode {
     println!("  listen: {}", options.listen);
     println!("  upstream: {}", options.upstream);
     println!("  origin concurrency ceiling: {}", options.concurrency);
-    println!("next: harmost check --config {}", options.config.display());
+    println!("next: tanod check --config {}", options.config.display());
     ExitCode::SUCCESS
 }
 
@@ -277,7 +277,7 @@ fn yaml_quote(value: &str) -> String {
 fn render_initial_config(options: &InitOptions) -> String {
     let queue = options.concurrency.saturating_mul(2);
     format!(
-        r#"# Generated by `harmost init`. Add reviewed public routes above the private catch-all.
+        r#"# Generated by `tanod init`. Add reviewed public routes above the private catch-all.
 version: 1
 
 server:
@@ -356,7 +356,7 @@ fn unknown_run_flag(args: &[String]) -> Option<&str> {
 /// Pingora's limit counts total upstream tries, the same unit exposed by
 /// `origin.retry.max_attempts`. Bind the framework ceiling to the policy rather
 /// than leaving Pingora's independent default of 16 in force.
-fn proxy_max_attempts(retry: &harmost::config::schema::Retry) -> usize {
+fn proxy_max_attempts(retry: &tanod::config::schema::Retry) -> usize {
     if retry.enabled {
         usize::try_from(retry.max_attempts).unwrap_or(usize::MAX)
     } else {
@@ -365,17 +365,17 @@ fn proxy_max_attempts(retry: &harmost::config::schema::Retry) -> usize {
 }
 
 fn run(path: &str, flags: RunFlags) -> ExitCode {
-    use harmost::admin::Admin;
-    use harmost::admin::drain::{DrainShutdownSignalWatch, DrainState, DrainWatcher};
-    use harmost::admission::AdmissionController;
-    use harmost::policy::PolicySnapshot;
-    use harmost::policy::reload::Reloader;
-    use harmost::proxy::Harmost;
-    use harmost::upstream::UpstreamPool;
-    use harmost::upstream::health::HealthChecker;
+    use tanod::admin::Admin;
+    use tanod::admin::drain::{DrainShutdownSignalWatch, DrainState, DrainWatcher};
+    use tanod::admission::AdmissionController;
+    use tanod::policy::PolicySnapshot;
+    use tanod::policy::reload::Reloader;
+    use tanod::proxy::Tanod;
+    use tanod::upstream::UpstreamPool;
+    use tanod::upstream::health::HealthChecker;
     use std::sync::Arc;
 
-    let cfg = match harmost::config::load(path) {
+    let cfg = match tanod::config::load(path) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: {e}");
@@ -390,7 +390,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
-    harmost::telemetry::metrics::preregister();
+    tanod::telemetry::metrics::preregister();
 
     let listen = cfg.server.listen.clone();
     let h2c = cfg.server.h2c;
@@ -417,7 +417,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
                     tracing_cfg
                         .service_name
                         .clone()
-                        .unwrap_or_else(|| "harmost".to_string()),
+                        .unwrap_or_else(|| "tanod".to_string()),
                 ),
                 (
                     "service.version".to_string(),
@@ -427,7 +427,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
             if let Some(id) = &deployment_id {
                 resource.push(("deployment.id".to_string(), id.clone()));
             }
-            match harmost::telemetry::otlp::build(otlp, resource) {
+            match tanod::telemetry::otlp::build(otlp, resource) {
                 Ok(pair) => Some(pair),
                 Err(error) => {
                     eprintln!("error: telemetry.tracing.otlp: {error}");
@@ -488,28 +488,28 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
     // updates the tier it actually changes, avoiding nine registry lookups per
     // request while keeping an idle tier visible as zero.
     for tier in admission.tier_limiters() {
-        harmost::telemetry::metrics::LIMIT
+        tanod::telemetry::metrics::LIMIT
             .with_label_values(&[tier.name()])
             .set(i64::try_from(tier.limit()).unwrap_or(i64::MAX));
-        harmost::telemetry::metrics::QUEUE_DEPTH
+        tanod::telemetry::metrics::QUEUE_DEPTH
             .with_label_values(&[tier.name()])
             .set(0);
-        harmost::telemetry::metrics::IN_FLIGHT
+        tanod::telemetry::metrics::IN_FLIGHT
             .with_label_values(&[tier.name()])
             .set(0);
     }
 
-    harmost::telemetry::metrics::CONFIG_GENERATION.set(1);
-    harmost::telemetry::metrics::CONFIG_FINGERPRINT
+    tanod::telemetry::metrics::CONFIG_GENERATION.set(1);
+    tanod::telemetry::metrics::CONFIG_FINGERPRINT
         .set(i64::try_from(policy.load().fingerprint).unwrap_or(i64::MAX));
     // The ceilings the occupancy gauges are measured against. Published from
     // config rather than left for a dashboard to hardcode, so an alert cannot
     // go stale the first time somebody edits the budget.
     {
         let snapshot = policy.load();
-        harmost::telemetry::metrics::CACHE_MAX_BYTES
+        tanod::telemetry::metrics::CACHE_MAX_BYTES
             .set(i64::try_from(snapshot.config.cache.max_memory.get()).unwrap_or(i64::MAX));
-        harmost::telemetry::metrics::SPOOL_MAX_BYTES
+        tanod::telemetry::metrics::SPOOL_MAX_BYTES
             .set(i64::try_from(snapshot.config.spool.max_memory.get()).unwrap_or(i64::MAX));
     }
 
@@ -529,7 +529,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
         )),
         ..Default::default()
     };
-    // Harmost's signal watcher spends the load-balancer drain window before it
+    // Tanod's signal watcher spends the load-balancer drain window before it
     // returns SIGTERM to Pingora. Once Pingora receives it, every listener
     // stops accepting immediately, so repeating the drain here would only add
     // a second silent wait after the useful window had already ended.
@@ -589,16 +589,16 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
         upstreams.assume_healthy();
     }
     for backend in upstreams.backends() {
-        harmost::telemetry::metrics::UPSTREAM_HEALTHY
+        tanod::telemetry::metrics::UPSTREAM_HEALTHY
             .with_label_values(&[&backend.address])
             .set(i64::from(upstreams.is_healthy(backend.id)));
-        harmost::telemetry::metrics::UPSTREAM_EJECTED
+        tanod::telemetry::metrics::UPSTREAM_EJECTED
             .with_label_values(&[&backend.address])
             .set(0);
-        harmost::telemetry::metrics::UPSTREAM_IN_FLIGHT
+        tanod::telemetry::metrics::UPSTREAM_IN_FLIGHT
             .with_label_values(&[&backend.address])
             .set(0);
-        harmost::telemetry::metrics::UPSTREAM_LATENCY_EWMA
+        tanod::telemetry::metrics::UPSTREAM_LATENCY_EWMA
             .with_label_values(&[&backend.address])
             .set(0);
     }
@@ -628,7 +628,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
 
     let resolve_interval = policy.load().config.origin.resolve_interval.as_duration();
     for backend in upstreams.backends() {
-        harmost::telemetry::metrics::UPSTREAM_ADDRESSES
+        tanod::telemetry::metrics::UPSTREAM_ADDRESSES
             .with_label_values(&[&backend.address])
             .set(i64::try_from(backend.sockets().len()).unwrap_or(i64::MAX));
     }
@@ -636,7 +636,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
         eprintln!("  upstream re-resolution: every {resolve_interval:?}");
         server.add_service(pingora_core::services::background::background_service(
             "resolver",
-            harmost::upstream::resolver::Resolver::new(upstreams.clone(), resolve_interval),
+            tanod::upstream::resolver::Resolver::new(upstreams.clone(), resolve_interval),
         ));
     }
 
@@ -652,26 +652,26 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
         ));
     }
 
-    let harmost = match Harmost::new(
+    let tanod = match Tanod::new(
         policy.clone(),
         admission.clone(),
         upstreams.clone(),
         span_sink,
     ) {
-        Ok(harmost) => harmost,
+        Ok(tanod) => tanod,
         Err(error) => {
             eprintln!("error: {error}");
             return ExitCode::FAILURE;
         }
     };
     // Registered here rather than earlier because the reloader needs the
-    // response cache, which `Harmost::new` creates: a `deployment.id` change
+    // response cache, which `Tanod::new` creates: a `deployment.id` change
     // has to reclaim the previous build's entries, and a reloader with no
     // store would silently skip that.
     server.add_service(pingora_core::services::background::background_service(
         "reload",
         Reloader::new(path.to_string(), policy.clone(), admission.clone())
-            .with_store(harmost.store()),
+            .with_store(tanod.store()),
     ));
     eprintln!("  reload config with: kill -HUP <pid>");
 
@@ -685,15 +685,15 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
         policy: policy.clone(),
         admission: admission.clone(),
         upstreams: upstreams.clone(),
-        store: harmost.store(),
-        spool: harmost.spool_budget(),
-        upgrades: harmost.upgrade_limiter(),
-        retry: harmost.retry_budget(),
+        store: tanod.store(),
+        spool: tanod.spool_budget(),
+        upgrades: tanod.upgrade_limiter(),
+        retry: tanod.retry_budget(),
         purge_token: purge_token.clone(),
         drain: drain.clone(),
         require_healthy_upstream: admin_cfg.require_healthy_upstream,
     });
-    let mut service = pingora_proxy::http_proxy_service(&server.configuration, harmost);
+    let mut service = pingora_proxy::http_proxy_service(&server.configuration, tanod);
 
     // HTTP/2 over cleartext. Pingora peeks for the connection preface, so this
     // listener still serves HTTP/1.1 clients; it only decides whether an h2
@@ -725,7 +725,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
         match tls_settings(tls) {
             Ok(settings) => {
                 service.add_tls_with_settings(&tls.listen, None, settings);
-                eprintln!("harmost listening on {} (TLS)", tls.listen);
+                eprintln!("tanod listening on {} (TLS)", tls.listen);
             }
             Err(error) => {
                 eprintln!("error: server.tls: {error}");
@@ -745,7 +745,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
         let mut metrics = pingora_core::services::listening::Service::prometheus_http_service();
         metrics.add_tcp(addr);
         server.add_service(metrics);
-        eprintln!("harmost metrics on {addr}/metrics");
+        eprintln!("tanod metrics on {addr}/metrics");
     }
 
     if let (Some(admin), Some(addr)) = (admin, admin_listen) {
@@ -755,10 +755,10 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
         );
         service.add_tcp(&addr);
         server.add_service(service);
-        eprintln!("harmost admin on {addr}  (/health/live, /health/ready, /status)");
+        eprintln!("tanod admin on {addr}  (/health/live, /health/ready, /status)");
     }
 
-    eprintln!("harmost listening on {listen}");
+    eprintln!("tanod listening on {listen}");
     eprintln!("  origin concurrency ceiling: {}", concurrency.max);
     let run_args = pingora_core::server::RunArgs {
         shutdown_signal: Box::new(DrainShutdownSignalWatch::new(
@@ -790,7 +790,7 @@ fn pingora_seconds(duration: std::time::Duration) -> u64 {
 /// rejected rather than skipped.
 #[cfg(feature = "tls")]
 fn tls_settings(
-    tls: &harmost::config::schema::ServerTls,
+    tls: &tanod::config::schema::ServerTls,
 ) -> std::result::Result<pingora_core::listeners::tls::TlsSettings, String> {
     let mut settings = pingora_core::listeners::tls::TlsSettings::intermediate(&tls.cert, &tls.key)
         .map_err(|error| {
@@ -809,19 +809,19 @@ fn tls_settings(
 
 #[cfg(not(feature = "tls"))]
 fn tls_settings(
-    _tls: &harmost::config::schema::ServerTls,
+    _tls: &tanod::config::schema::ServerTls,
 ) -> std::result::Result<std::convert::Infallible, String> {
     Err(
         "this binary was built without the `tls` feature; rebuild with \
-         `cargo build --features tls` or terminate TLS in front of Harmost"
+         `cargo build --features tls` or terminate TLS in front of Tanod"
             .to_string(),
     )
 }
 
 fn check(path: &str) -> ExitCode {
-    match harmost::config::load(path) {
+    match tanod::config::load(path) {
         Ok(cfg) => {
-            let policy = match harmost::policy::PolicySnapshot::build(cfg, 1) {
+            let policy = match tanod::policy::PolicySnapshot::build(cfg, 1) {
                 Ok(policy) => policy,
                 Err(e) => {
                     eprintln!("error: invalid configuration in {path}");
@@ -834,16 +834,16 @@ fn check(path: &str) -> ExitCode {
             let upstreams = cfg.origin.upstreams.len();
             println!("ok: {path}");
             println!(
-                "  config schema v{} (harmost {})",
+                "  config schema v{} (tanod {})",
                 cfg.version,
                 env!("CARGO_PKG_VERSION")
             );
             println!("  {upstreams} upstream(s), {routes} route(s)");
             match cfg.mode {
-                harmost::config::schema::Mode::Observe => println!(
+                tanod::config::schema::Mode::Observe => println!(
                     "  mode: observe — classification and telemetry only; admission, cache, coalescing, and spooling are disabled"
                 ),
-                harmost::config::schema::Mode::Protect => println!("  mode: protect"),
+                tanod::config::schema::Mode::Protect => println!("  mode: protect"),
             }
             println!(
                 "  global origin concurrency: {}",
@@ -953,7 +953,7 @@ fn check(path: &str) -> ExitCode {
                     if admin.require_healthy_upstream {
                         println!(
                             "    readiness FAILS when no upstream is healthy; make sure something \
-                             upstream of Harmost can route around this instance, or a degraded \
+                             upstream of Tanod can route around this instance, or a degraded \
                              origin takes every replica out of rotation at once"
                         );
                     }
@@ -987,7 +987,7 @@ fn check(path: &str) -> ExitCode {
                 ),
             }
             if cfg.telemetry.tracing.trust_incoming
-                == harmost::config::schema::TrustIncoming::FromTrustedProxies
+                == tanod::config::schema::TrustIncoming::FromTrustedProxies
             {
                 println!(
                     "  WARNING: traceparent is trusted from server.trusted_proxies; those proxies \
@@ -1062,10 +1062,10 @@ mod tests {
     fn init_defaults_make_a_safe_valid_config() {
         let options = InitOptions::default();
         let text = render_initial_config(&options);
-        let config: harmost::config::schema::Config = serde_saphyr::from_str(&text).unwrap();
+        let config: tanod::config::schema::Config = serde_saphyr::from_str(&text).unwrap();
 
-        harmost::config::validation::validate(&config).unwrap();
-        harmost::policy::PolicySnapshot::build(config, 1).unwrap();
+        tanod::config::validation::validate(&config).unwrap();
+        tanod::policy::PolicySnapshot::build(config, 1).unwrap();
         assert!(text.contains("class: private_dynamic"));
         assert!(text.contains("enabled: false"));
     }
@@ -1122,7 +1122,7 @@ mod tests {
 
     #[test]
     fn pingora_attempt_ceiling_tracks_the_retry_policy_instead_of_its_default() {
-        let mut retry = harmost::config::schema::Retry::default();
+        let mut retry = tanod::config::schema::Retry::default();
         assert_eq!(proxy_max_attempts(&retry), 1);
         retry.enabled = true;
         retry.max_attempts = 23;
@@ -1132,7 +1132,7 @@ mod tests {
     #[test]
     fn check_rejects_a_matcher_that_cannot_be_compiled() {
         let path = std::env::temp_dir().join(format!(
-            "harmost-check-{}-{}.yaml",
+            "tanod-check-{}-{}.yaml",
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));

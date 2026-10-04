@@ -3,7 +3,7 @@
 //!
 //! Two reasons this belongs here rather than only in unit tests.
 //!
-//! First, the inputs are the most directly attacker-controlled bytes Harmost
+//! First, the inputs are the most directly attacker-controlled bytes Tanod
 //! reads. `X-Forwarded-For`, `X-Forwarded-Proto` and RFC 7239 `Forwarded` are
 //! set by whoever spoke to the proxy last, and on a public listener that is
 //! the client. A panic here is a denial of service that costs one request.
@@ -17,8 +17,8 @@
 //!   — a fresh origin render per invented scheme string;
 //! * an untrusted peer never moves the answer, whatever it sends.
 
-use harmost::config::schema::{ForwardedSource, TrustedProxies};
-use harmost::net::forwarded::{ListenerScheme, TrustPolicy};
+use tanod::config::schema::{ForwardedSource, TrustedProxies};
+use tanod::net::forwarded::{ListenerScheme, TrustPolicy};
 use libfuzzer_sys::fuzz_target;
 
 #[derive(arbitrary::Arbitrary, Debug)]
@@ -53,7 +53,7 @@ fuzz_target!(|input: Input| {
         ("forwarded", &input.forwarded),
     ] {
         // Only values `http` itself accepts can reach the proxy, so only those
-        // are worth generating. Everything else is rejected before Harmost is
+        // are worth generating. Everything else is rejected before Tanod is
         // ever asked.
         if let Ok(value) = http::HeaderValue::from_str(value) {
             headers.insert(name, value);

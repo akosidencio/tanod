@@ -30,7 +30,7 @@ use std::sync::LazyLock;
 
 pub static REQUESTS: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "harmost_requests_total",
+        "tanod_requests_total",
         "Requests received, by route and classification",
         &["route", "class"]
     )
@@ -40,7 +40,7 @@ pub static REQUESTS: LazyLock<IntCounterVec> = LazyLock::new(|| {
 /// `status` is one of hit, miss, stale, bypass, disabled.
 pub static CACHE: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "harmost_cache_total",
+        "tanod_cache_total",
         "Cache outcomes, by route and status",
         &["route", "status"]
     )
@@ -50,7 +50,7 @@ pub static CACHE: LazyLock<IntCounterVec> = LazyLock::new(|| {
 /// Why a response was not shared. Bounded: the variants of `BypassReason`.
 pub static BYPASS_REASON: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "harmost_cache_bypass_reason_total",
+        "tanod_cache_bypass_reason_total",
         "Reasons a response was not shared",
         &["route", "reason"]
     )
@@ -60,7 +60,7 @@ pub static BYPASS_REASON: LazyLock<IntCounterVec> = LazyLock::new(|| {
 /// `decision` is one of observe, admitted, exempt, shed_queue_full, shed_queue_timeout.
 pub static ADMISSION: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "harmost_admission_total",
+        "tanod_admission_total",
         "Admission decisions, by route",
         &["route", "decision"]
     )
@@ -69,7 +69,7 @@ pub static ADMISSION: LazyLock<IntCounterVec> = LazyLock::new(|| {
 
 pub static ORIGIN_REQUESTS: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "harmost_origin_requests_total",
+        "tanod_origin_requests_total",
         "Requests that reached the origin",
         &["route", "upstream"]
     )
@@ -78,7 +78,7 @@ pub static ORIGIN_REQUESTS: LazyLock<IntCounterVec> = LazyLock::new(|| {
 
 pub static ORIGIN_LATENCY: LazyLock<HistogramVec> = LazyLock::new(|| {
     register_histogram_vec!(
-        "harmost_origin_latency_seconds",
+        "tanod_origin_latency_seconds",
         "Time the origin spent producing a response",
         &["route"],
         // Bucketed for server rendering, where 50ms is fast and 5s is a
@@ -99,7 +99,7 @@ pub static ORIGIN_LATENCY: LazyLock<HistogramVec> = LazyLock::new(|| {
 /// eligibility, which makes it unfalsifiable and therefore worthless.
 pub static REUSE_ELIGIBLE: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "harmost_reuse_eligible_requests_total",
+        "tanod_reuse_eligible_requests_total",
         "Requests for which reuse was possible; the denominator of the avoidance ratio",
         &["route"]
     )
@@ -108,7 +108,7 @@ pub static REUSE_ELIGIBLE: LazyLock<IntCounterVec> = LazyLock::new(|| {
 
 pub static QUEUE_DEPTH: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec!(
-        "harmost_queue_depth",
+        "tanod_queue_depth",
         "Requests currently waiting for origin capacity",
         &["limiter"]
     )
@@ -117,7 +117,7 @@ pub static QUEUE_DEPTH: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 
 pub static LIMIT: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec!(
-        "harmost_concurrency_limit",
+        "tanod_concurrency_limit",
         "Configured origin concurrency ceiling",
         &["limiter"]
     )
@@ -126,7 +126,7 @@ pub static LIMIT: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 
 pub static IN_FLIGHT: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec!(
-        "harmost_origin_in_flight",
+        "tanod_origin_in_flight",
         "Origin requests currently holding a permit",
         &["limiter"]
     )
@@ -135,7 +135,7 @@ pub static IN_FLIGHT: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 
 pub static SPOOL: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "harmost_spool_total",
+        "tanod_spool_total",
         "Responses that were spooled, by route and outcome",
         &["route", "reason"]
     )
@@ -144,7 +144,7 @@ pub static SPOOL: LazyLock<IntCounterVec> = LazyLock::new(|| {
 
 pub static SPOOL_BYTES: LazyLock<IntGauge> = LazyLock::new(|| {
     register_int_gauge!(
-        "harmost_spool_bytes",
+        "tanod_spool_bytes",
         "Bytes currently held across every in-flight response spool"
     )
     .expect("metric registration")
@@ -152,7 +152,7 @@ pub static SPOOL_BYTES: LazyLock<IntGauge> = LazyLock::new(|| {
 
 pub static CACHE_BYTES: LazyLock<IntGauge> = LazyLock::new(|| {
     register_int_gauge!(
-        "harmost_cache_bytes",
+        "tanod_cache_bytes",
         "Bytes held by the response cache, including fills in progress"
     )
     .expect("metric registration")
@@ -160,14 +160,14 @@ pub static CACHE_BYTES: LazyLock<IntGauge> = LazyLock::new(|| {
 
 /// The configured cache budget.
 ///
-/// Published so `harmost_cache_bytes` has a denominator. Occupancy on its own
+/// Published so `tanod_cache_bytes` has a denominator. Occupancy on its own
 /// is a number nobody can act on: "512MB used" is healthy or an emergency
 /// depending entirely on the ceiling, and an alert that hardcodes the ceiling
 /// goes stale the first time someone edits the config.
 pub static CACHE_MAX_BYTES: LazyLock<IntGauge> = LazyLock::new(|| {
     register_int_gauge!(
-        "harmost_cache_max_bytes",
-        "Configured cache.max_memory, the ceiling harmost_cache_bytes is measured against"
+        "tanod_cache_max_bytes",
+        "Configured cache.max_memory, the ceiling tanod_cache_bytes is measured against"
     )
     .expect("metric registration")
 });
@@ -175,15 +175,15 @@ pub static CACHE_MAX_BYTES: LazyLock<IntGauge> = LazyLock::new(|| {
 /// The configured spool budget, for the same reason.
 pub static SPOOL_MAX_BYTES: LazyLock<IntGauge> = LazyLock::new(|| {
     register_int_gauge!(
-        "harmost_spool_max_bytes",
-        "Configured spool.max_memory, the ceiling harmost_spool_bytes is measured against"
+        "tanod_spool_max_bytes",
+        "Configured spool.max_memory, the ceiling tanod_spool_bytes is measured against"
     )
     .expect("metric registration")
 });
 
 pub static CACHE_ENTRIES: LazyLock<IntGauge> = LazyLock::new(|| {
     register_int_gauge!(
-        "harmost_cache_entries",
+        "tanod_cache_entries",
         "Completed entries in the response cache"
     )
     .expect("metric registration")
@@ -191,7 +191,7 @@ pub static CACHE_ENTRIES: LazyLock<IntGauge> = LazyLock::new(|| {
 
 pub static UPGRADES: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "harmost_upgrade_total",
+        "tanod_upgrade_total",
         "Protocol upgrade requests, by route and decision",
         &["route", "decision"]
     )
@@ -200,7 +200,7 @@ pub static UPGRADES: LazyLock<IntCounterVec> = LazyLock::new(|| {
 
 pub static UPGRADES_ACTIVE: LazyLock<IntGauge> = LazyLock::new(|| {
     register_int_gauge!(
-        "harmost_upgrade_active",
+        "tanod_upgrade_active",
         "Upgraded connections currently held open"
     )
     .expect("metric registration")
@@ -214,7 +214,7 @@ pub static UPGRADES_ACTIVE: LazyLock<IntGauge> = LazyLock::new(|| {
 /// to slow a single request down to tell you.
 pub static SPANS: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "harmost_spans_total",
+        "tanod_spans_total",
         "Spans by outcome: recorded, dropped, exported, export_failed",
         &["outcome"]
     )
@@ -227,7 +227,7 @@ pub static SPANS: LazyLock<IntCounterVec> = LazyLock::new(|| {
 /// a deploy is "is this instance still taking traffic", which is a state.
 pub static DRAINING: LazyLock<IntGauge> = LazyLock::new(|| {
     register_int_gauge!(
-        "harmost_draining",
+        "tanod_draining",
         "1 while this instance is draining and reporting itself not ready"
     )
     .expect("metric registration")
@@ -238,7 +238,7 @@ pub static DRAINING: LazyLock<IntGauge> = LazyLock::new(|| {
 /// what makes "did my config actually apply" answerable from a dashboard.
 pub static CONFIG_GENERATION: LazyLock<IntGauge> = LazyLock::new(|| {
     register_int_gauge!(
-        "harmost_config_generation",
+        "tanod_config_generation",
         "Generation of the configuration currently in force"
     )
     .expect("metric registration")
@@ -249,7 +249,7 @@ pub static CONFIG_GENERATION: LazyLock<IntGauge> = LazyLock::new(|| {
 /// number of times.
 pub static CONFIG_FINGERPRINT: LazyLock<IntGauge> = LazyLock::new(|| {
     register_int_gauge!(
-        "harmost_config_fingerprint",
+        "tanod_config_fingerprint",
         "Stable fingerprint of the effective configuration currently in force"
     )
     .expect("metric registration")
@@ -259,7 +259,7 @@ pub static CONFIG_FINGERPRINT: LazyLock<IntGauge> = LazyLock::new(|| {
 /// address, which is config-derived like every other label in this file.
 pub static UPSTREAM_HEALTHY: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec!(
-        "harmost_upstream_healthy",
+        "tanod_upstream_healthy",
         "1 when a backend is passing its health check, 0 when it is not",
         &["upstream"]
     )
@@ -267,11 +267,11 @@ pub static UPSTREAM_HEALTHY: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 });
 
 /// How many addresses each upstream's name currently resolves to — the number
-/// of origin instances Harmost is spreading work across. A drop to 1 when the
+/// of origin instances Tanod is spreading work across. A drop to 1 when the
 /// platform runs several instances means the others are not being used.
 pub static UPSTREAM_ADDRESSES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec!(
-        "harmost_upstream_addresses",
+        "tanod_upstream_addresses",
         "Addresses an upstream name currently resolves to",
         &["upstream"]
     )
@@ -280,14 +280,14 @@ pub static UPSTREAM_ADDRESSES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 
 /// 1 while a backend's circuit breaker is open, 0 while it is closed.
 ///
-/// The companion to `harmost_upstream_healthy`, and the one that moves when an
+/// The companion to `tanod_upstream_healthy`, and the one that moves when an
 /// origin is answering probes and failing renders. A backend that is healthy
 /// and ejected at the same time is not a contradiction — it is the whole
 /// reason passive observation exists, and seeing both series is how an
 /// operator tells that story apart from a network partition.
 pub static UPSTREAM_EJECTED: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec!(
-        "harmost_upstream_ejected",
+        "tanod_upstream_ejected",
         "1 when a backend's circuit breaker is open and it is out of rotation",
         &["upstream"]
     )
@@ -299,7 +299,7 @@ pub static UPSTREAM_EJECTED: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 /// and usually worse problem.
 pub static UPSTREAM_TRIPS: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "harmost_upstream_breaker_trips_total",
+        "tanod_upstream_breaker_trips_total",
         "Times a backend's circuit breaker has opened",
         &["upstream"]
     )
@@ -311,7 +311,7 @@ pub static UPSTREAM_TRIPS: LazyLock<IntCounterVec> = LazyLock::new(|| {
 /// dead process, a status failure is a live one that cannot do its job.
 pub static UPSTREAM_FAILURES: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "harmost_upstream_failures_total",
+        "tanod_upstream_failures_total",
         "Origin failures observed passively, by backend and kind",
         &["upstream", "kind"]
     )
@@ -323,7 +323,7 @@ pub static UPSTREAM_FAILURES: LazyLock<IntCounterVec> = LazyLock::new(|| {
 /// rather than a black box.
 pub static UPSTREAM_IN_FLIGHT: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec!(
-        "harmost_upstream_in_flight",
+        "tanod_upstream_in_flight",
         "Origin requests currently outstanding to each backend",
         &["upstream"]
     )
@@ -337,7 +337,7 @@ pub static UPSTREAM_IN_FLIGHT: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 /// 5ms origin would otherwise publish as zero.
 pub static UPSTREAM_LATENCY_EWMA: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec!(
-        "harmost_upstream_latency_ewma_microseconds",
+        "tanod_upstream_latency_ewma_microseconds",
         "Exponentially weighted mean time to first byte per backend",
         &["upstream"]
     )
@@ -353,7 +353,7 @@ pub static UPSTREAM_LATENCY_EWMA: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 /// a retry-tuning problem.
 pub static RETRIES: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "harmost_origin_retries_total",
+        "tanod_origin_retries_total",
         "Retry decisions, by route and outcome",
         &["route", "outcome"]
     )
@@ -361,12 +361,12 @@ pub static RETRIES: LazyLock<IntCounterVec> = LazyLock::new(|| {
 });
 
 /// Retries the budget would currently allow. The denominator for
-/// `harmost_origin_retries_total{outcome="allowed"}`, published for the same
-/// reason as `harmost_cache_max_bytes`: a count with no ceiling beside it is a
+/// `tanod_origin_retries_total{outcome="allowed"}`, published for the same
+/// reason as `tanod_cache_max_bytes`: a count with no ceiling beside it is a
 /// number nobody can act on.
 pub static RETRY_BUDGET: LazyLock<IntGauge> = LazyLock::new(|| {
     register_int_gauge!(
-        "harmost_origin_retry_budget",
+        "tanod_origin_retry_budget",
         "Retries the current window's budget would allow"
     )
     .expect("metric registration")
@@ -380,7 +380,7 @@ pub static RETRY_BUDGET: LazyLock<IntGauge> = LazyLock::new(|| {
 /// fall off a cliff" unanswerable.
 pub static CACHE_PURGED: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
-        "harmost_cache_purged_total",
+        "tanod_cache_purged_total",
         "Cache entries removed by an explicit purge, by scope",
         &["scope"]
     )
@@ -389,12 +389,12 @@ pub static CACHE_PURGED: LazyLock<IntCounterVec> = LazyLock::new(|| {
 
 /// Entries discarded to stay inside `cache.max_memory`.
 ///
-/// Read against `harmost_cache_bytes` and the hit ratio: eviction rising while
+/// Read against `tanod_cache_bytes` and the hit ratio: eviction rising while
 /// the cache is at its ceiling and the hit ratio is falling is the signal that
 /// the working set does not fit.
 pub static CACHE_EVICTED: LazyLock<IntCounter> = LazyLock::new(|| {
     register_int_counter!(
-        "harmost_cache_evicted_total",
+        "tanod_cache_evicted_total",
         "Cache entries discarded to stay inside the byte budget"
     )
     .expect("metric registration")
@@ -405,7 +405,7 @@ pub static CACHE_EVICTED: LazyLock<IntCounter> = LazyLock::new(|| {
 /// origin's tagging scheme is as small as its author thinks.
 pub static CACHE_TAGS: LazyLock<IntGauge> = LazyLock::new(|| {
     register_int_gauge!(
-        "harmost_cache_tags",
+        "tanod_cache_tags",
         "Distinct invalidation tags currently indexed"
     )
     .expect("metric registration")
@@ -474,7 +474,7 @@ mod tests {
         assert!(
             prometheus::gather()
                 .iter()
-                .any(|family| family.get_name() == "harmost_cache_bypass_reason_total")
+                .any(|family| family.get_name() == "tanod_cache_bypass_reason_total")
         );
     }
 
@@ -483,7 +483,7 @@ mod tests {
         preregister();
         let family = prometheus::gather()
             .into_iter()
-            .find(|family| family.get_name() == "harmost_cache_evicted_total")
+            .find(|family| family.get_name() == "tanod_cache_evicted_total")
             .unwrap();
         assert_eq!(
             family.get_field_type(),

@@ -1,4 +1,4 @@
-name: harmost-observability-demo
+name: tanod-observability-demo
 
 x-next-origin: &next-origin
   build:
@@ -30,7 +30,7 @@ services:
       INSTANCE_ID: next-3
       RENDER_DELAY_MS: "350"
 
-  harmost:
+  tanod:
     build:
       context: .
     depends_on:
@@ -41,7 +41,7 @@ services:
       next-3:
         condition: service_healthy
     volumes:
-      - ./bench/nextjs.yaml:/etc/harmost/harmost.yaml:ro
+      - ./bench/nextjs.yaml:/etc/tanod/tanod.yaml:ro
     ports:
       - "127.0.0.1:18080:8080"
       - "127.0.0.1:19090:9090"
@@ -50,15 +50,15 @@ services:
   prometheus:
     image: prom/prometheus:v3.2.1
     depends_on:
-      - harmost
+      - tanod
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --web.enable-lifecycle
     volumes:
       - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./ops/prometheus/alerts.yml:/etc/prometheus/rules/harmost-alerts.yml:ro
-      - ./ops/prometheus/recording-rules.yml:/etc/prometheus/rules/harmost-recording-rules.yml:ro
+      - ./ops/prometheus/alerts.yml:/etc/prometheus/rules/tanod-alerts.yml:ro
+      - ./ops/prometheus/recording-rules.yml:/etc/prometheus/rules/tanod-recording-rules.yml:ro
     ports:
       - "127.0.0.1:19000:9090"
 
@@ -70,21 +70,21 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
-      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/harmost.json
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/tanod.json
       GF_NEWS_NEWS_FEED_ENABLED: "false"
       GF_PLUGINS_PREINSTALL_DISABLED: "true"
       GF_USERS_DEFAULT_THEME: dark
     volumes:
       - ./ops/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./ops/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
-      - ./ops/grafana/dashboard.json:/var/lib/grafana/dashboards/harmost.json:ro
+      - ./ops/grafana/dashboard.json:/var/lib/grafana/dashboards/tanod.json:ro
     ports:
       - "127.0.0.1:13000:3000"
 
   traffic:
     image: alpine:3.21
     depends_on:
-      - harmost
+      - tanod
     entrypoint: ["/bin/sh", "/demo/traffic.sh"]
     volumes:
       - ./ops/demo/traffic.sh:/demo/traffic.sh:ro

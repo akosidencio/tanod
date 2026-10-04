@@ -127,7 +127,7 @@ pub struct Ctx {
     /// Correlation for this request: trace id, this request's span, and the
     /// child span the origin fetch runs under. Present on every request
     /// whether or not anything is exporting spans — the ids are what join
-    /// Harmost's access log to the origin's own.
+    /// Tanod's access log to the origin's own.
     pub trace: RequestTrace,
     /// Wall clock at request start, kept only so a span can carry a real
     /// timestamp. `started` is a monotonic `Instant` and cannot be turned
@@ -182,7 +182,7 @@ impl Ctx {
     }
 }
 
-pub struct Harmost {
+pub struct Tanod {
     policy: Arc<ArcSwap<PolicySnapshot>>,
     admission: Arc<AdmissionController>,
     upstreams: Arc<UpstreamPool>,
@@ -210,7 +210,7 @@ pub struct Harmost {
     retry: Arc<RetryBudget>,
 }
 
-impl Harmost {
+impl Tanod {
     pub fn new(
         policy: Arc<ArcSwap<PolicySnapshot>>,
         admission: Arc<AdmissionController>,
@@ -242,7 +242,7 @@ impl Harmost {
         let retry = Arc::new(RetryBudget::new(&initial.config.origin.retry));
         drop(initial);
 
-        Ok(Harmost {
+        Ok(Tanod {
             store,
             cache_lock,
             adapter: Arc::new(NextJs),
@@ -283,7 +283,7 @@ impl Harmost {
     /// Build and enqueue this request's spans.
     ///
     /// Two of them when the request reached an origin: the server span for
-    /// what Harmost did, and a client span for the origin fetch nested under
+    /// what Tanod did, and a client span for the origin fetch nested under
     /// it. The nesting is what makes an origin-latency number attributable —
     /// a single flat span cannot distinguish "the origin was slow" from "we
     /// queued for two seconds before asking it".
@@ -327,7 +327,7 @@ impl Harmost {
                 attributes: vec![
                     Attr::str("http.request.method", access.method),
                     Attr::str("server.address", access.upstream.unwrap_or("-")),
-                    Attr::str("harmost.route", route),
+                    Attr::str("tanod.route", route),
                     Attr::int("http.response.status_code", i64::from(status)),
                 ],
             });
@@ -352,14 +352,14 @@ impl Harmost {
                 Attr::str("server.address", request_host(session.req_header())),
                 Attr::str("client.address", access.client),
                 Attr::int("http.response.status_code", i64::from(status)),
-                Attr::str("harmost.route", route),
-                Attr::str("harmost.class", access.class),
-                Attr::str("harmost.cache", access.cache),
-                Attr::bool("harmost.shed", ctx.shed),
-                Attr::str("harmost.permit_released", access.permit_released_at),
-                Attr::str("harmost.spool", access.spool),
+                Attr::str("tanod.route", route),
+                Attr::str("tanod.class", access.class),
+                Attr::str("tanod.cache", access.cache),
+                Attr::bool("tanod.shed", ctx.shed),
+                Attr::str("tanod.permit_released", access.permit_released_at),
+                Attr::str("tanod.spool", access.spool),
                 Attr::int(
-                    "harmost.config_generation",
+                    "tanod.config_generation",
                     i64::try_from(ctx.policy.generation).unwrap_or(i64::MAX),
                 ),
             ],
@@ -491,7 +491,7 @@ impl Harmost {
         ))
     }
 
-    /// Answer an upgrade request that Harmost will not proxy.
+    /// Answer an upgrade request that Tanod will not proxy.
     ///
     /// `501` rather than the overload status: nothing is overloaded, the proxy
     /// simply does not implement this. Sending the overload `503` would invite
@@ -502,7 +502,7 @@ impl Harmost {
         resp.insert_header("Cache-Control", "no-store")?;
         resp.insert_header("Connection", "close")?;
         if policy.config.debug_headers {
-            resp.insert_header("X-Harmost", "UPGRADE-DISABLED")?;
+            resp.insert_header("X-Tanod", "UPGRADE-DISABLED")?;
         }
         session.as_downstream_mut().set_keepalive(None);
         session.write_response_header(Box::new(resp), true).await?;
@@ -517,7 +517,7 @@ impl Harmost {
         // A CDN that caches this turns a brief origin blip into a long outage.
         resp.insert_header("Cache-Control", "no-store")?;
         if policy.config.debug_headers {
-            resp.insert_header("X-Harmost", "SHED")?;
+            resp.insert_header("X-Tanod", "SHED")?;
         }
         // proxy_upstream_filter(false) is reusable by default in Pingora. The
         // request body may still be unread, so keeping this connection alive
@@ -529,7 +529,7 @@ impl Harmost {
 }
 
 #[async_trait]
-impl ProxyHttp for Harmost {
+impl ProxyHttp for Tanod {
     type CTX = Ctx;
 
     fn new_ctx(&self) -> Ctx {
@@ -551,7 +551,7 @@ impl ProxyHttp for Harmost {
         }
 
         // Resolve who the client is and what scheme they used, once, before
-        // anything reads either. Both are claims when Harmost sits behind a
+        // anything reads either. Both are claims when Tanod sits behind a
         // load balancer, and the scheme in particular is part of the cache
         // key — a client that could set it would own a key dimension and turn
         // one URL into an unbounded number of renders.
@@ -908,7 +908,7 @@ impl ProxyHttp for Harmost {
             // Background revalidation in flight: serve the stale copy now.
             None => true,
             // Only an origin failure justifies stale. An error raised by
-            // Harmost itself (a shed, a bad config) is not a reason to hand
+            // Tanod itself (a shed, a bad config) is not a reason to hand
             // out old content.
             Some(e) => e.esource() == &pingora_core::ErrorSource::Upstream,
         }
@@ -945,7 +945,7 @@ impl ProxyHttp for Harmost {
                     )
                 })?;
                 let mut stored = resp.clone();
-                // Never let an origin-supplied value collide with Harmost's
+                // Never let an origin-supplied value collide with Tanod's
                 // private storage marker.
                 stored.remove_header(crate::cache::TRANSIENT_HEADER);
                 Ok(RespCacheable::Cacheable(CacheMeta::new(
@@ -1019,8 +1019,8 @@ impl ProxyHttp for Harmost {
         ctx.origin_wall_started = Some(std::time::SystemTime::now());
         // The origin fetch gets its own span id, minted here so that the
         // `traceparent` sent upstream names *it* as the parent. Without this
-        // the origin's spans would sit beside Harmost's rather than under the
-        // fetch, and the origin latency Harmost measures would have nothing
+        // the origin's spans would sit beside Tanod's rather than under the
+        // fetch, and the origin latency Tanod measures would have nothing
         // to hang off.
         ctx.trace.origin_span_id = Some(SpanId::random());
         metrics::ORIGIN_REQUESTS
@@ -1051,7 +1051,7 @@ impl ProxyHttp for Harmost {
     /// A connect failure: nothing was written upstream, nothing was written
     /// downstream, and the backend is demonstrably not answering.
     ///
-    /// This is the one error where Harmost turns a retry *on*. Everywhere
+    /// This is the one error where Tanod turns a retry *on*. Everywhere
     /// else it can only narrow, because Pingora knows things this layer does
     /// not — chiefly whether a response byte has already been sent.
     fn fail_to_connect(
@@ -1083,7 +1083,7 @@ impl ProxyHttp for Harmost {
         // `retry()`, which panics on an error whose retry is still undecided.
         e.retry
             .decide_reuse(client_reused && !session.as_ref().retry_buffer_truncated());
-        // From here Harmost only ever narrows. A `false` is never turned into
+        // From here Tanod only ever narrows. A `false` is never turned into
         // a `true`.
         if e.retry() && !self.decide_retry(session, ctx).allowed() {
             e.set_retry(false);
@@ -1105,7 +1105,7 @@ impl ProxyHttp for Harmost {
         // chose. Since the origin's own rate limits and audit logs are
         // downstream of this, that is a forged identity with real effects.
         //
-        // What Harmost sends is the one address it concluded, and the
+        // What Tanod sends is the one address it concluded, and the
         // conclusion already accounts for the hop chain: see
         // [`crate::net::forwarded`].
         match ctx.client.client_ip {
@@ -1121,7 +1121,7 @@ impl ProxyHttp for Harmost {
         }
         upstream.insert_header("X-Forwarded-Proto", ctx.client.scheme)?;
 
-        // Propagate the context Harmost concluded, never the one that
+        // Propagate the context Tanod concluded, never the one that
         // arrived. `insert_header` for the same reason as `X-Forwarded-For`:
         // an appended second `traceparent` is ambiguous, and every runtime
         // resolves the ambiguity differently.
@@ -1137,7 +1137,7 @@ impl ProxyHttp for Harmost {
                 upstream.remove_header(TRACESTATE);
             }
         }
-        // Same reasoning. Harmost does not emit RFC 7239 `Forwarded` itself,
+        // Same reasoning. Tanod does not emit RFC 7239 `Forwarded` itself,
         // so anything arriving under that name is a claim nobody vouched for.
         upstream.remove_header("Forwarded");
         Ok(())
@@ -1266,7 +1266,7 @@ impl ProxyHttp for Harmost {
         // from the cache.
         resp.remove_header(self.store.tag_header());
         if ctx.policy.config.debug_headers {
-            resp.insert_header("X-Harmost", cache_status(session, ctx).to_ascii_uppercase())?;
+            resp.insert_header("X-Tanod", cache_status(session, ctx).to_ascii_uppercase())?;
         }
         Ok(())
     }

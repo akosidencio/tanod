@@ -2,7 +2,7 @@
 //!
 //! Both questions have an easy wrong answer. `X-Forwarded-For`,
 //! `X-Forwarded-Proto` and RFC 7239 `Forwarded` are all set by whoever spoke
-//! to Harmost last, and on a public listener that is the client themselves.
+//! to Tanod last, and on a public listener that is the client themselves.
 //! Reading them unconditionally hands an attacker two things:
 //!
 //! * **A cache partition they control.** The scheme is part of the cache key.
@@ -10,12 +10,12 @@
 //!   number of distinct keys for one URL, which is a render per probe — the
 //!   exact origin-work amplification this project exists to stop.
 //! * **A forged identity in the audit trail**, and, if the origin trusts the
-//!   `X-Forwarded-For` Harmost passes on, in the origin's own logs and
+//!   `X-Forwarded-For` Tanod passes on, in the origin's own logs and
 //!   rate limits.
 //!
 //! So the rule is: a forwarded header is read only when the *connection peer*
 //! is inside a configured trusted block. Nothing is trusted by default, which
-//! means an unconfigured Harmost cannot be lied to — it just reports the peer.
+//! means an unconfigured Tanod cannot be lied to — it just reports the peer.
 //!
 //! The other half is the hop walk. A chain like
 //! `X-Forwarded-For: 9.9.9.9, 203.0.113.7, 10.0.0.4` is partly attacker-written:
@@ -43,7 +43,7 @@ impl ListenerScheme {
     }
 }
 
-/// What Harmost concluded about the connection.
+/// What Tanod concluded about the connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientFacts {
     /// The address to log, and to send upstream as `X-Forwarded-For`.
@@ -227,7 +227,7 @@ impl TrustPolicy {
 /// Only two schemes exist as far as the cache key is concerned.
 ///
 /// Anything else — `ftp`, `httpss`, an empty value, a 4KiB string — is not a
-/// scheme Harmost serves, and accepting it would let a client mint cache keys
+/// scheme Tanod serves, and accepting it would let a client mint cache keys
 /// by inventing scheme names. Falling back to the listener's own scheme is
 /// both correct and unforgeable.
 fn normalize_scheme(raw: &str) -> Option<&'static str> {
@@ -659,7 +659,7 @@ mod proptests {
             prop_assert!(matches!(facts.scheme, "http" | "https"));
         }
 
-        /// Nothing an untrusted peer sends can change what Harmost concludes.
+        /// Nothing an untrusted peer sends can change what Tanod concludes.
         #[test]
         fn an_untrusted_peer_cannot_move_the_answer(
             chain in prop::string::string_regex("[0-9a-f.:, \\[\\]]{0,60}").unwrap(),

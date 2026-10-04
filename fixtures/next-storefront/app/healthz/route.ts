@@ -3,7 +3,7 @@ export async function GET() {
     status: 204,
     headers: {
       "Cache-Control": "no-store",
-      "X-Harmost-Build-Id": process.env.HARMOST_BUILD_ID ?? "unknown",
+      "X-Tanod-Build-Id": process.env.TANOD_BUILD_ID ?? "unknown",
     },
   });
 }

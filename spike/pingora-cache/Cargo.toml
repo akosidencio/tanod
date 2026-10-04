@@ -4,7 +4,7 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
-# Throwaway. Answers one question: can Harmost sit on pingora-cache's Storage
+# Throwaway. Answers one question: can Tanod sit on pingora-cache's Storage
 # trait and cache lock instead of building its own store and coalescer?
 
 [dependencies]

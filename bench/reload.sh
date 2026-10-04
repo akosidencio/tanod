@@ -46,8 +46,8 @@ EOF
 write_config 1
 bench_spawn origin "$(bench_bin slow-origin)" "$ORIGIN_PORT" 400
 bench_wait_port 127.0.0.1 "$ORIGIN_PORT" "slow-origin"
-bench_start_harmost harmost "$CONFIG" "$LISTEN_PORT"
-PID=$(bench_pid harmost)
+bench_start_tanod tanod "$CONFIG" "$LISTEN_PORT"
+PID=$(bench_pid tanod)
 
 # Fire a burst and report the peak concurrency the origin actually saw. The
 # counters are reset first so each phase is measured on its own.
@@ -63,13 +63,13 @@ burst_peak() { # path prefix
 # refused one.
 signal_and_wait() { # pattern
   local before
-  before=$(wc -l < "$(bench_log harmost)")
+  before=$(wc -l < "$(bench_log tanod)")
   kill -HUP "$PID"
   for _ in $(seq 1 100); do
-    if tail -n "+$((before + 1))" "$(bench_log harmost)" | grep -q "$1"; then return 0; fi
+    if tail -n "+$((before + 1))" "$(bench_log tanod)" | grep -q "$1"; then return 0; fi
     sleep 0.1
   done
-  bench_fail "harmost never logged '$1' after SIGHUP"
+  bench_fail "tanod never logged '$1' after SIGHUP"
 }
 
 echo "route ceiling 1, $BURST concurrent requests"
@@ -83,24 +83,24 @@ echo "SIGHUP with an invalid config (duplicate route id)"
 printf 'version: 1\norigin:\n  upstreams: ["127.0.0.1:%s"]\nroutes:\n  - id: dup\n    match: "/a"\n  - id: dup\n    match: "/b"\n' \
   "$ORIGIN_PORT" > "$CONFIG"
 signal_and_wait "reload refused"
-echo "  $(grep -o 'reload refused.*' "$(bench_log harmost)" | tail -1)"
+echo "  $(grep -o 'reload refused.*' "$(bench_log tanod)" | tail -1)"
 REFUSED_PEAK=$(burst_peak b)
 echo "  origin peak            $REFUSED_PEAK"
 bench_result refused_peak "$REFUSED_PEAK"
-bench_alive "$PID" || bench_fail "harmost exited on an invalid config instead of refusing it"
-[ "$(bench_pid harmost)" = "$PID" ] || bench_fail "harmost restarted rather than keeping the running config"
+bench_alive "$PID" || bench_fail "tanod exited on an invalid config instead of refusing it"
+[ "$(bench_pid tanod)" = "$PID" ] || bench_fail "tanod restarted rather than keeping the running config"
 bench_assert_eq "$REFUSED_PEAK" 1 "origin peak after a refused reload (the bad config took effect)"
 
 echo
 echo "SIGHUP raising the ceiling to $RAISED"
 write_config "$RAISED"
 signal_and_wait "config reloaded"
-echo "  $(grep -o 'config reloaded.*' "$(bench_log harmost)" | tail -1)"
+echo "  $(grep -o 'config reloaded.*' "$(bench_log tanod)" | tail -1)"
 RAISED_PEAK=$(burst_peak c)
 echo "  origin peak            $RAISED_PEAK"
 bench_result raised_peak "$RAISED_PEAK"
-bench_alive "$PID" || bench_fail "harmost exited during a valid reload"
-[ "$(bench_pid harmost)" = "$PID" ] || bench_fail "harmost restarted rather than reloading in place"
+bench_alive "$PID" || bench_fail "tanod exited during a valid reload"
+[ "$(bench_pid tanod)" = "$PID" ] || bench_fail "tanod restarted rather than reloading in place"
 # The point of the phase: the limiter was resized in place, so the burst now
 # reaches the origin at the new width. Asserting only "the log said reloaded"
 # would pass even if the new ceiling were ignored entirely.

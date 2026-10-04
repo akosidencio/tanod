@@ -116,7 +116,7 @@ is exactly the untrustworthy evidence this project spent a phase removing.
 - `SHA256SUMS` is present and covers every published archive.
 - The CycloneDX SBOM is attached.
 - The image's provenance attestation verifies:
-  `gh attestation verify "oci://ghcr.io/OWNER/harmost:<version>" --repo OWNER/harmost`
+  `gh attestation verify "oci://ghcr.io/OWNER/tanod:<version>" --repo OWNER/tanod`
 - A Linux release binary reproduces from a clean checkout of the tag —
   [`scripts/reproducible-build.sh`](../scripts/reproducible-build.sh).
 
@@ -145,9 +145,9 @@ exclusions reads as more coverage than it has.
   absolute numbers are not a baseline anybody else's hardware should be held
   to, and a performance gate on shared runners fails for reasons unrelated to
   the change.
-- **Every platform except Linux.** Harmost is deployed on Linux, the image is
+- **Every platform except Linux.** Tanod is deployed on Linux, the image is
   `linux/amd64` and the only release binary is `x86_64-unknown-linux-gnu`, so
-  nothing is built or tested anywhere else. Harmost still *compiles* on macOS
+  nothing is built or tested anywhere else. Tanod still *compiles* on macOS
   and is usable for local development, but that is unverified by CI and no
   artifact is published for it.
 - **Dynamic replica coordination.** The replicated reference tests a fixed

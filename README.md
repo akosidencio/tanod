@@ -1,6 +1,6 @@
-![Harmost — Stop traffic spikes from becoming render spikes.](./assets/harmost-banner.png)
+![Tanod — Stop traffic spikes from becoming render spikes.](./assets/tanod-banner.png)
 
-# Harmost
+# Tanod
 
 **Stop traffic spikes from becoming render spikes.**
 
@@ -9,7 +9,7 @@ bounded render concurrency, request coalescing, safe microcaching, bounded
 queues and load shedding. Built on Pingora.
 
 > [!CAUTION]
-> **Harmost is under active development and remains pre-1.0.** Version 0.1.2 is
+> **Tanod is under active development and remains pre-1.0.** Version 0.1.2 is
 > running and externally load-tested in a controlled DigitalOcean
 > staging deployment, but it has not been validated under sustained production
 > traffic or independently security-audited. APIs, configuration, behavior and
@@ -29,7 +29,7 @@ cached shell; the next fans out into a React render, a database round trip, a
 CMS call and a pricing service. Rate limiting, connection limits and autoscaling
 triggers all count requests, so none of them can tell those two apart.
 
-Harmost counts the work instead. It is an open-source Rust reverse proxy that
+Tanod counts the work instead. It is an open-source Rust reverse proxy that
 bounds how much *rendering* may reach an origin at once, rather than how many
 requests arrive. The ordering is the point: cache hits and duplicate requests
 are reused **first**, and only genuine cache misses enter per-route and global
@@ -38,19 +38,19 @@ still cannot absorb meets a bounded queue, a deadline, and a defined answer —
 stale content or a shed request — instead of an unbounded pile of concurrent
 renders.
 
-Harmost is built on [Pingora](https://github.com/cloudflare/pingora), the Rust
+Tanod is built on [Pingora](https://github.com/cloudflare/pingora), the Rust
 proxy framework Cloudflare wrote to replace its NGINX fleet. Cloudflare reports
 that Pingora has served more than 40 million Internet requests per second for
 years. The parts of a reverse proxy that are
 unglamorous and easy to get subtly wrong — connection pooling, HTTP/1 and
 HTTP/2 handling, graceful restarts, timeouts, the cache lock — are inherited
-from that codebase, and Harmost now exercises that surface end to end: HTTP/1.1
+from that codebase, and Tanod now exercises that surface end to end: HTTP/1.1
 and HTTP/2 in both directions, TLS in both directions, `Upgrade` tunnelling,
-`Range` and conditional requests. What Harmost adds on top is the governor:
+`Range` and conditional requests. What Tanod adds on top is the governor:
 classification, cache-key and shareability rules, and bounded origin admission.
 
-> A *harmost* (ἁρμοστής, from ἁρμόζω, "to fit, to keep in proper adjustment") was
-> an official posted to hold a system in correct adjustment.
+> A *tanod* (Tagalog) is the barangay watchman: the one posted at the gate to
+> keep order, so the community is never overrun.
 
 ## Project maturity and expectations
 
@@ -89,14 +89,14 @@ known to be incomplete.
 **Using it**
 [Quick start](#quick-start) ·
 [Installation](#installation) ·
-[Using Harmost with Next.js](#using-harmost-with-nextjs) ·
+[Using Tanod with Next.js](#using-tanod-with-nextjs) ·
 [Configuration](#configuration) ·
-[Operating Harmost](#operating-harmost)
+[Operating Tanod](#operating-tanod)
 
 **Understanding it**
 [The problem](#the-problem) ·
-[Is Harmost for you?](#is-harmost-for-you) ·
-[What Harmost does](#what-harmost-does) ·
+[Is Tanod for you?](#is-tanod-for-you) ·
+[What Tanod does](#what-tanod-does) ·
 [Benchmarks](#benchmarks) ·
 [Design and internals](#design-and-internals)
 
@@ -151,7 +151,7 @@ faster than an autoscaler responds, and it does not stop when the burst does,
 because there is no burst — just a client that keeps walking. Bounding how much
 of that may reach the origin at once is the only mechanism left.
 
-Blocking the client is the first thing to try, and Harmost is not the tool for
+Blocking the client is the first thing to try, and Tanod is not the tool for
 it: it does not rate-limit by client, address or request rate, and a public
 deployment should still have an edge component in front that does. But some of
 this traffic is legitimate, some is distributed across enough addresses to
@@ -159,20 +159,20 @@ survive per-client limits, and some of it simply gets through. Admission
 control decides what happens to the share that does — whether it degrades the
 origin, or queues behind a ceiling and receives a defined answer.
 
-### Why Harmost exists
+### Why Tanod exists
 
 Because the useful unit to bound is *origin work*, not requests, and few
 off-the-shelf proxy configurations combine per-route work limits, a bounded
 queue, a deadline, reuse-before-admission and a defined overload response.
 
 Request collapsing is old news — Varnish, `proxy_cache_lock`, Fastly and Apache
-Traffic Server have done it for years. Harmost's argument is the other half:
+Traffic Server have done it for years. Tanod's argument is the other half:
 duplicate work is reused *first*, and whatever genuinely has to reach the origin
 then passes through admission control that can say no.
 
 #### Scope: Next.js today, framework-agnostic by design
 
-Harmost's policy contract — routes, work classes, cache keys, shareability
+Tanod's policy contract — routes, work classes, cache keys, shareability
 rules — does not assume a framework. Next.js is the first and only supported
 adapter because that is where the traffic is, not because the design depends on
 it. The Next-specific surface is request classification: the `RSC`,
@@ -185,7 +185,7 @@ plausible targets. **None are supported today.** Additional adapters land only
 once the generic contract is stable enough that adding one cannot bend it; see
 [roadmap phase 4](./docs/ROADMAP.md#4-complete-the-cache-lifecycle-and-framework-integration).
 
-## Is Harmost for you?
+## Is Tanod for you?
 
 The question is not whether you have high traffic. It is whether your peak
 concurrency can exceed your origin's render capacity, and what happens when it
@@ -216,7 +216,7 @@ only way to survive a peak is to provision for it: run enough pods for the
 worst thirty seconds and pay for them the rest of the day. Bounding origin work
 is what makes running fewer pods a considered decision rather than a gamble.
 
-### Harmost is likely to help if
+### Tanod is likely to help if
 
 - You self-host a server-rendered application on infrastructure you own or
   operate, and a slow or failing origin is your problem to fix.
@@ -226,20 +226,20 @@ is what makes running fewer pods a considered decision rather than a gamble.
   multiple of your steady-state load rather than a large one.
 - An origin overload costs you something — revenue, a launch, an on-call night.
 
-### Harmost is unlikely to help if
+### Tanod is unlikely to help if
 
 - **Your site is static or fully pre-rendered.** There is no render cost to
   govern; a CDN is the entire answer.
 - **You run on Vercel, Netlify or Cloudflare.** You do not own the origin, the
   platform already collapses duplicate requests and scales the render tier for
-  you, and Harmost has nowhere useful to sit.
+  you, and Tanod has nowhere useful to sit.
 - **Your origin is already mostly cacheable.** If ISR or a plain CDN absorbs
   your traffic, a governor is protecting capacity that was never under threat.
 - **A spike-induced outage costs you nothing.** A personal site does not need
   an additional hop, an additional configuration and an additional failure
   mode.
 
-The cost side deserves the same scrutiny. Harmost is another process in your
+The cost side deserves the same scrutiny. Tanod is another process in your
 request path, another configuration to maintain and another failure mode to
 understand, and today it is
 unproven software. For a small
@@ -249,9 +249,9 @@ better trade.
 If you want to know where you stand before installing anything, the useful
 measurements are your origin's **peak concurrent in-flight requests** and your
 **render latency** — not requests per day. Their product against your pod count
-is the number Harmost exists to bound.
+is the number Tanod exists to bound.
 
-## What Harmost does
+## What Tanod does
 
 - **Protects SSR origins from traffic spikes** with global and per-route
   concurrency limits.
@@ -276,46 +276,46 @@ absorbing bursts on public SSR pages, and enforcing predictable origin capacity
 for mixed public, private, static, and dynamic routes.
 
 > [!NOTE]
-> **Harmost is not a replacement for NGINX, Apache, Caddy or a general-purpose
+> **Tanod is not a replacement for NGINX, Apache, Caddy or a general-purpose
 > web server.** It is a specialised reverse proxy for governing SSR origin
 > work. It does not currently provide the broad feature set expected from a
 > general edge server, such as native TLS termination, full virtual-host/site
 > configuration, static file serving, redirects and rewrites, WebSocket
-> handling, authentication modules or a mature plugin ecosystem. Harmost may
+> handling, authentication modules or a mature plugin ecosystem. Tanod may
 > occupy the reverse-proxy hop in a narrow deployment, but it is not a drop-in
 > substitute. A load balancer, ingress, CDN or conventional web server can
 > remain in front of it for those responsibilities.
 
-For production today, plan to run an edge component in front of Harmost:
+For production today, plan to run an edge component in front of Tanod:
 
 ```text
-Client -> NGINX / CDN / load balancer / ingress -> Harmost -> Next.js
+Client -> NGINX / CDN / load balancer / ingress -> Tanod -> Next.js
 ```
 
 If you already use NGINX, keep it for TLS termination and general edge duties;
-Harmost adds SSR caching, request coalescing and bounded origin admission behind
+Tanod adds SSR caching, request coalescing and bounded origin admission behind
 it. NGINX is not mandatory specifically—a CDN, cloud load balancer or Kubernetes
 ingress can fill that role. For local development or a trusted private network
-using cleartext HTTP, clients can connect directly to Harmost.
+using cleartext HTTP, clients can connect directly to Tanod.
 
-### How Harmost works
+### How Tanod works
 
-![Animated diagram showing how Harmost classifies requests, reuses cached or in-flight responses, bounds cache misses, and protects the SSR origin](./assets/harmost-flow.svg)
+![Animated diagram showing how Tanod classifies requests, reuses cached or in-flight responses, bounds cache misses, and protects the SSR origin](./assets/tanod-flow.svg)
 
-Harmost resolves the route and request class before checking for a safe cached
+Tanod resolves the route and request class before checking for a safe cached
 or in-flight response. Only a genuine cache miss enters the bounded per-route
 and global admission queues. Accepted work reaches the SSR origin; excess work
 receives an eligible stale response or is shed when the queue is full or its
 deadline expires. Every origin response is checked again before it can be
 shared or stored.
 
-### Why use Harmost instead of a standard reverse-proxy cache?
+### Why use Tanod instead of a standard reverse-proxy cache?
 
 Forty lines of `nginx.conf` will collapse a thousand concurrent hits on one URL
-down to a single origin request. Harmost's intended distinction is the
+down to a single origin request. Tanod's intended distinction is the
 combination: reuse equivalent work
 before applying per-route and global render ceilings, then use bounded queues
-and stale-or-shed overload handling. Similar pieces exist elsewhere; Harmost
+and stale-or-shed overload handling. Similar pieces exist elsewhere; Tanod
 packages them around SSR work as one policy pipeline.
 
 So the demo that matters is not the cacheable one.
@@ -328,16 +328,16 @@ benchmark that demonstrates the mechanism locally.
 
 | Goal | Mechanism | Demonstrated by |
 | --- | --- | --- |
-| One Harmost process never admits more render work than its configured ceilings | Global and per-route concurrency limits with bounded queues | [`bench/demo.sh`](#admission-control-benchmark) |
+| One Tanod process never admits more render work than its configured ceilings | Global and per-route concurrency limits with bounded queues | [`bench/demo.sh`](#admission-control-benchmark) |
 | A burst on one URL costs one render, not thousands | Request coalescing on the cache lock | [`bench/coalesce.sh`](#request-coalescing-benchmark) |
 | Collapsing does not destroy streaming | Waiters attach to the in-flight write | [`bench/stream.sh`](#streaming-coalescing-benchmark) |
 | Overload degrades predictably instead of collapsing | Bounded queues, deadlines, stale-or-shed | [`bench/demo.sh`](#admission-control-benchmark) |
 | Authorization-bearing requests and `Set-Cookie` responses are never shared | Absolute request/response barriers | [`bench/safety.sh`](#private-response-safety-check) |
-| A slow client cannot make Harmost release render capacity early | Permits remain held until observed origin end-of-stream; downstream writes have a timeout | [`bench/slowclient.sh`](#slow-readers-and-render-capacity) |
+| A slow client cannot make Tanod release render capacity early | Permits remain held until observed origin end-of-stream; downstream writes have a timeout | [`bench/slowclient.sh`](#slow-readers-and-render-capacity) |
 
-What Harmost explicitly does **not** promise: lower latency. Bounding
+What Tanod explicitly does **not** promise: lower latency. Bounding
 concurrency makes a burst slower on purpose — see the wall-clock discussion in
-[Why use Harmost](#why-use-harmost-instead-of-a-standard-reverse-proxy-cache).
+[Why use Tanod](#why-use-tanod-instead-of-a-standard-reverse-proxy-cache).
 
 ## Benchmarks
 
@@ -352,11 +352,11 @@ A controlled A/B test ran against a real Next.js storefront on DigitalOcean
 App Platform. One product-detail route was temporarily changed from ISR to
 dynamic SSR, then exercised with the same repeated URL and arrival-rate profile:
 a jump to 20 requests per second for 20 seconds, surrounded by bounded baseline
-and recovery periods. The public ingress was switched between Harmost and the
+and recovery periods. The public ingress was switched between Tanod and the
 origin; the original app specification and ISR route settings were restored
 afterward.
 
-| Product SSR spike                 |         Harmost |                       Direct origin |
+| Product SSR spike                 |         Tanod |                       Direct origin |
 | --------------------------------- | --------------: | ----------------------------------: |
 | Successful requests               |             501 |                                  60 |
 | Client timeouts                   |               0 |                                  80 |
@@ -366,7 +366,7 @@ afterward.
 | Successful latency, average / p95 | 111 ms / 166 ms |                     5.48 s / 9.10 s |
 
 Both paths kept the independent health control available. The latency row
-includes successful responses only. Harmost's process used approximately 24 MiB
+includes successful responses only. Tanod's process used approximately 24 MiB
 of RAM on its separate instance, so this is evidence of origin protection and
 work reuse, not a claim of lower aggregate resource use. The result is specific
 to a repeated, publicly shareable SSR product response: it does not imply a
@@ -376,7 +376,7 @@ traffic.
 This is bounded staging evidence, not a production guarantee. In a separate
 uncached dynamic-route spike, an overly permissive route concurrency ceiling let
 the 512 MiB origin approach its memory limit and return upstream `504` responses
-before Harmost could shed work. Concurrency limits still have to be calibrated
+before Tanod could shed work. Concurrency limits still have to be calibrated
 to the capacity of the protected origin.
 
 ### Admission control benchmark
@@ -388,17 +388,17 @@ $ ./bench/demo.sh 60 1000
 nothing cacheable, nothing coalescible — admission control only
 
   direct to origin       peak=60     wall=1s
-  through harmost        peak=10     wall=6s
+  through tanod        peak=10     wall=6s
 
   configured ceiling     10
   origin peak, direct    60
-  origin peak, harmost   10
+  origin peak, tanod   10
 ```
 
 The origin reports its own peak concurrency, so the result does not depend on
 trusting the proxy's own metrics.
 
-Read the wall-clock column honestly: harmost made this workload *slower*. Sixty
+Read the wall-clock column honestly: tanod made this workload *slower*. Sixty
 renders that a healthy origin could absorb at once were served ten at a time.
 That is the trade — bounded latency growth instead of an origin driven past the
 point where it recovers. The demo fixture sleeps rather than rendering, and a
@@ -418,7 +418,7 @@ $ ./bench/coalesce.sh 100 1000
   requests served        100 / 100
   origin renders         1
 
-  X-Harmost breakdown:
+  X-Tanod breakdown:
       99 HIT
        1 MISS
 ```
@@ -461,7 +461,7 @@ $ ./bench/safety.sh 50
   distinct session ids   50
   origin renders         50
 
-  X-Harmost breakdown:
+  X-Tanod breakdown:
       50 MISS
 
 PASS: every request got its own session; nothing was shared
@@ -473,24 +473,24 @@ configuration can override a response that addresses one person.
 
 ## Quick start
 
-Harmost requires Rust 1.88 or newer.
+Tanod requires Rust 1.88 or newer.
 
 ```bash
-git clone https://github.com/akosidencio/harmost.git
-cd harmost
+git clone https://github.com/akosidencio/tanod.git
+cd tanod
 
 # Run the test suite.
 cargo test --workspace
 
 # Validate the example configuration.
-cargo run -- check --config harmost.yaml
+cargo run -- check --config tanod.yaml
 
 # Start the reverse proxy.
-cargo run -- run --config harmost.yaml
+cargo run -- run --config tanod.yaml
 ```
 
 The example listens on `0.0.0.0:8080` and forwards requests to the upstreams
-defined in [`harmost.yaml`](./harmost.yaml). Update those upstream addresses
+defined in [`tanod.yaml`](./tanod.yaml). Update those upstream addresses
 before sending production traffic.
 
 The mechanism claims in this README have local benchmark scripts. Each starts a
@@ -504,7 +504,7 @@ test origin and proxy, runs load, and tears both down:
 ./bench/safety.sh 50          # a Set-Cookie response is never shared
 ./bench/slowclient.sh         # slow-reader backpressure and the permit lifetime bound
 ./bench/reload.sh             # SIGHUP reload, including a refused one
-./bench/nextjs.sh             # one Harmost process, three real Next.js origins
+./bench/nextjs.sh             # one Tanod process, three real Next.js origins
 ./bench/nextjs-browser.sh     # the same stack, driven by Chromium
 ```
 
@@ -517,7 +517,7 @@ makes it comparable to another.
 
 The harness in [`bench/lib.sh`](./bench/lib.sh) tracks the exact pid of every
 process it starts and allocates its ports per run, so a benchmark cannot kill
-an unrelated Harmost on the same machine or measure whatever else was already
+an unrelated Tanod on the same machine or measure whatever else was already
 listening on 8080.
 
 The focused scripts measure against [`bench/slow-origin`](./bench/slow-origin),
@@ -535,20 +535,20 @@ predicts behaviour under real traffic.
 
 ## Installation
 
-Harmost is not on crates.io. It targets Linux: the published image is
+Tanod is not on crates.io. It targets Linux: the published image is
 `linux/amd64` and the release binary is `x86_64-unknown-linux-gnu`. There are
 no macOS or Windows artifacts.
 
 Choose either supported deployment form:
 
 - **One Linux server:** install the release binary, generate one
-  `/etc/harmost/harmost.yaml`, and run it under systemd. Follow the
+  `/etc/tanod/tanod.yaml`, and run it under systemd. Follow the
   [standalone server guide](./docs/STANDALONE.md).
 - **Containers:** use the published image with Docker, a managed container
   platform, or Kubernetes.
 
 Tagged releases publish a `linux/amd64` container image to GitHub Packages at
-`ghcr.io/akosidencio/harmost`, built from the repository
+`ghcr.io/akosidencio/tanod`, built from the repository
 [`Dockerfile`](./Dockerfile). The same Dockerfile builds a local image for
 testing and as a base for deployment work.
 
@@ -556,7 +556,7 @@ A release also attaches a `x86_64-unknown-linux-gnu` binary, checksums, and a
 ready-to-install systemd unit. Docker is not required.
 
 ```bash
-docker pull ghcr.io/akosidencio/harmost:<version>
+docker pull ghcr.io/akosidencio/tanod:<version>
 ```
 
 The published image is built **with** `--features tls`, because nobody can
@@ -565,8 +565,8 @@ recompile a container to turn a feature on.
 To build from source:
 
 ```bash
-git clone https://github.com/akosidencio/harmost.git
-cd harmost
+git clone https://github.com/akosidencio/tanod.git
+cd tanod
 cargo build --release
 
 # Add native TLS termination and origin TLS. rustls, so this needs no cmake,
@@ -578,22 +578,22 @@ cargo build --release --features tls
 The container image takes the same choice as a build argument:
 
 ```bash
-docker build --build-arg FEATURES=tls -t harmost:tls .
+docker build --build-arg FEATURES=tls -t tanod:tls .
 ```
 
-The binary lands at `target/release/harmost`.
+The binary lands at `target/release/tanod`.
 
 ```bash
-./target/release/harmost version
-./target/release/harmost init                           # create harmost.yaml
-./target/release/harmost check                          # validate, don't start
-./target/release/harmost run                            # start the proxy
+./target/release/tanod version
+./target/release/tanod init                           # create tanod.yaml
+./target/release/tanod check                          # validate, don't start
+./target/release/tanod run                            # start the proxy
 ```
 
-Without `--config`, Harmost checks `HARMOST_CONFIG`, the current directory,
-then `/etc/harmost/harmost.yaml`. Both `.yaml` and `.yml` are accepted.
+Without `--config`, Tanod checks `TANOD_CONFIG`, the current directory,
+then `/etc/tanod/tanod.yaml`. Both `.yaml` and `.yml` are accepted.
 
-`harmost check` exits non-zero on an invalid or unsafe configuration, so it
+`tanod check` exits non-zero on an invalid or unsafe configuration, so it
 works as a CI gate on a config change.
 
 Signals: `SIGHUP` reloads reloadable policy in place; `SIGUSR1` enters drain
@@ -606,20 +606,20 @@ configured drain window before Pingora stops its listeners. On Linux,
 `server.tls` or `origin.tls` rather than starting with a dead port.
 
 The recommended topology is still to terminate TLS at a load balancer or
-ingress in front of Harmost and keep the Harmost-to-origin network private —
+ingress in front of Tanod and keep the Tanod-to-origin network private —
 that edge is also your fail-back path. If you do that, set
 [`server.trusted_proxies`](#trusted-proxies): without it every forwarded header
 is ignored, so the origin sees your load balancer as the client and
 `X-Forwarded-Proto: http` on an HTTPS site. Ignoring them is the safe default
 and the wrong configuration.
 
-## Using Harmost with Next.js
+## Using Tanod with Next.js
 
 > **This is validated locally and in controlled managed-platform staging, not
-> through sustained production operation.** The repository runs one Harmost
+> through sustained production operation.** The repository runs one Tanod
 > process against three real Next.js 16 standalone origins and verifies
 > coalescing, origin distribution, HTML/RSC separation, `Set-Cookie` isolation,
-> mutation bypass, Draft Mode isolation and Suspense streaming. Harmost v0.1.2
+> mutation bypass, Draft Mode isolation and Suspense streaming. Tanod v0.1.2
 > also runs in front of a real Next.js storefront on DigitalOcean App Platform;
 > see [DigitalOcean staging validation](#digitalocean-staging-validation). The
 > configuration schema remains pre-1.0. See
@@ -633,11 +633,11 @@ Docker Desktop or another Docker Engine with Compose is required:
 ./bench/nextjs.sh
 ```
 
-The script builds the repository's Harmost image and one standalone Next.js
+The script builds the repository's Tanod image and one standalone Next.js
 image, then starts this private origin pool:
 
 ```text
-localhost:18080 -> Harmost -> next-1:3000
+localhost:18080 -> Tanod -> next-1:3000
                             -> next-2:3000
                             -> next-3:3000
 ```
@@ -647,12 +647,12 @@ origin render, distinct paths reach all three origins, HTML and canonical RSC
 payloads stay in separate cache entries, 16 private requests receive 16 unique
 sessions, `Next-Action` mutations bypass reuse, Draft Mode cannot contaminate a
 cached public preview, and coalesced clients receive a real Suspense shell
-before the slow region completes. All assertions use Harmost's combined origin
+before the slow region completes. All assertions use Tanod's combined origin
 counters and response contents; the stack is removed on exit.
 
 ### What you install, and where
 
-Harmost is a **standalone binary that runs as its own process**, in front of
+Tanod is a **standalone binary that runs as its own process**, in front of
 your Next.js server. It is not an npm package, not a dependency, not Next.js
 middleware, and not something you import. **Your application code does not
 change at all** — the only optional edit is adding a health endpoint, below.
@@ -663,19 +663,19 @@ What changes is the network path. Today:
 client ──▶ next start (:3000)
 ```
 
-With Harmost:
+With Tanod:
 
 ```
-client ──▶ harmost (:8080) ──▶ next start (:3000)
+client ──▶ tanod (:8080) ──▶ next start (:3000)
 ```
 
-Next.js stops being publicly reachable and listens only for Harmost. Whatever
+Next.js stops being publicly reachable and listens only for Tanod. Whatever
 used to point at Next — your load balancer, your CDN origin, your DNS record —
-now points at Harmost instead.
+now points at Tanod instead.
 
 #### Choosing the replica count
 
-Harmost's cache, request coalescing and admission limits are local to each
+Tanod's cache, request coalescing and admission limits are local to each
 process. Choose the smallest fixed replica count that meets your availability
 needs:
 
@@ -708,7 +708,7 @@ For every multi-replica deployment:
 
 #### One server
 
-Both processes on the same box. Harmost takes the public port, Next binds to
+Both processes on the same box. Tanod takes the public port, Next binds to
 loopback so nothing can reach it directly.
 
 ```yaml
@@ -723,24 +723,24 @@ origin:
 next start -p 3000 -H 127.0.0.1
 
 # terminal 2
-harmost run --config /etc/harmost/harmost.yaml
+tanod run --config /etc/tanod/tanod.yaml
 ```
 
 #### Docker Compose
 
-Harmost is the only service publishing a port; `web` is reachable only on the
-internal network. Released images live at `ghcr.io/akosidencio/harmost`; the
+Tanod is the only service publishing a port; `web` is reachable only on the
+internal network. Released images live at `ghcr.io/akosidencio/tanod`; the
 shipped [`Dockerfile`](./Dockerfile) builds the same image locally if you would
 rather tag it yourself.
 
 ```yaml
 services:
-  harmost:
-    image: ghcr.io/akosidencio/harmost:0.1.0   # or a locally built harmost:local
+  tanod:
+    image: ghcr.io/akosidencio/tanod:0.1.0   # or a locally built tanod:local
     ports: ["8080:8080"]
     volumes:
-      - ./harmost.yaml:/etc/harmost/harmost.yaml:ro
-    command: ["run", "--config", "/etc/harmost/harmost.yaml"]
+      - ./tanod.yaml:/etc/tanod/tanod.yaml:ro
+    command: ["run", "--config", "/etc/tanod/tanod.yaml"]
     depends_on: [web]
 
   web:
@@ -751,40 +751,40 @@ services:
 with `upstreams: ["web:3000"]`.
 
 The complete local example is [`compose.nextjs.yaml`](./compose.nextjs.yaml),
-with a public edge boundary in front of Harmost and private Next.js origins.
+with a public edge boundary in front of Tanod and private Next.js origins.
 The [production reference guide](./docs/NEXTJS-PRODUCTION-REFERENCE.md) covers
 route approval, staged rollout, deployment checks, and calibration.
 
 #### DigitalOcean App Platform
 
-Kubernetes is not required. Put Harmost and Next.js in the same App Platform
+Kubernetes is not required. Put Tanod and Next.js in the same App Platform
 app as two container services:
 
 ```text
-App Platform public ingress -> harmost:8080 -> nextjs:3000 (internal only)
+App Platform public ingress -> tanod:8080 -> nextjs:3000 (internal only)
 ```
 
-Pull Harmost from `ghcr.io/akosidencio/harmost` (or build this repository's
+Pull Tanod from `ghcr.io/akosidencio/tanod` (or build this repository's
 [`Dockerfile`](./Dockerfile) yourself) and push your own application image —
 the fixture's [standalone Dockerfile](./fixtures/next-storefront/Dockerfile) is
-a worked example — to DOCR, GHCR or Docker Hub. Give only Harmost a public
+a worked example — to DOCR, GHCR or Docker Hub. Give only Tanod a public
 HTTP port and route; give Next.js only internal port `3000`, make both bind
-`0.0.0.0`, and set Harmost's upstream to `nextjs:3000`. Bake or securely generate `harmost.yaml` in the
-Harmost image because App Platform does not provide Kubernetes ConfigMaps.
+`0.0.0.0`, and set Tanod's upstream to `nextjs:3000`. Bake or securely generate `tanod.yaml` in the
+Tanod image because App Platform does not provide Kubernetes ConfigMaps.
 
-Start with one fixed Harmost instance so cache, coalescing and admission state
+Start with one fixed Tanod instance so cache, coalescing and admission state
 have one owner. This topology is the intended first managed-platform staging
 test after the local release gates pass; it has not been run on DigitalOcean
 yet.
 
 #### Kubernetes
 
-Harmost is its own Deployment and Service, between the Ingress and the Next
+Tanod is its own Deployment and Service, between the Ingress and the Next
 Service. The Next Service becomes `ClusterIP` and is no longer an Ingress
 backend.
 
 ```
-Ingress ──▶ Service/harmost ──▶ Deployment/harmost (2 replicas)
+Ingress ──▶ Service/tanod ──▶ Deployment/tanod (2 replicas)
                                         │
                                         ▼
                                Service/web ──▶ Deployment/web (N pods)
@@ -803,8 +803,8 @@ for probes, draining and resource limits.
 #### Where this does not work
 
 **A normal Vercel, Netlify, or similar managed deployment.** Those platforms do
-not provide a place to run Harmost immediately beside the application origin.
-Harmost currently targets infrastructure where you control both hops — a VPS,
+not provide a place to run Tanod immediately beside the application origin.
+Tanod currently targets infrastructure where you control both hops — a VPS,
 ECS, Fly, Kubernetes or bare metal — with optional CDN/TLS termination in
 front.
 
@@ -824,7 +824,7 @@ origin:
   # in-process render cache and JIT state.
   load_balancing: hash_by_path
   concurrency:
-    max: 200                 # per Harmost process, across this upstream pool
+    max: 200                 # per Tanod process, across this upstream pool
     queue:
       max: 1000
       timeout: 2s
@@ -851,7 +851,7 @@ routes:
   #
   # `vary: [Accept]` is not optional. Next content-negotiates the output
   # format on `Accept` and answers `Vary: Accept` — the same URL returns WebP
-  # to one client and PNG to another. Without `Accept` in the key, Harmost
+  # to one client and PNG to another. Without `Accept` in the key, Tanod
   # refuses to store the response at all (`bypass_reason=unsupported_vary`)
   # rather than risk serving one format to a client that cannot read it, so
   # the route silently gets a 0% hit rate.
@@ -866,7 +866,7 @@ routes:
     weight: 4
     cache:
       # The origin already says `public, max-age=14400`, so no override is
-      # needed — this is only the ceiling Harmost will honour. The output is
+      # needed — this is only the ceiling Tanod will honour. The output is
       # immutable for a given url+w+q+format, so it can be generous.
       ttl:
         max: 1h
@@ -950,7 +950,7 @@ policy still decide whether reuse is ultimately allowed:
 ### Two things that will bite you
 
 **Next.js has no guaranteed built-in health endpoint.** The repository's
-[`harmost.yaml`](./harmost.yaml) probes `/healthz`, which a stock application
+[`tanod.yaml`](./tanod.yaml) probes `/healthz`, which a stock application
 does not automatically provide — every backend would fail its probe. Add one:
 
 ```ts
@@ -961,7 +961,7 @@ export function GET() {
 }
 ```
 
-Or omit the `health:` block entirely. Harmost still serves when nothing is
+Or omit the `health:` block entirely. Tanod still serves when nothing is
 healthy, on the grounds that refusing to pick turns a degraded origin into a
 guaranteed outage — so a misconfigured probe degrades quietly rather than
 loudly, which is exactly how it goes unnoticed.
@@ -986,22 +986,22 @@ See [`bench/websocket.sh`](./bench/websocket.sh).
 ### Verifying it is doing anything
 
 ```bash
-curl -sI localhost:8080/products/example | grep -i x-harmost   # needs debug_headers: true
+curl -sI localhost:8080/products/example | grep -i x-tanod   # needs debug_headers: true
 curl -s localhost:9090/metrics | grep -E 'reuse_eligible|origin_requests'
 ```
 
-The second pair is the ratio worth watching: `harmost_origin_requests_total`
-over `harmost_reuse_eligible_requests_total` is the share of eligible traffic
+The second pair is the ratio worth watching: `tanod_origin_requests_total`
+over `tanod_reuse_eligible_requests_total` is the share of eligible traffic
 that still reached the origin.
 
 ## Configuration
 
-Harmost uses YAML configuration for upstream servers, route matching, cache
+Tanod uses YAML configuration for upstream servers, route matching, cache
 policy, request coalescing, concurrency limits, queue deadlines, timeouts,
 health checks, and telemetry. See the documented example in
-[`harmost.yaml`](./harmost.yaml).
+[`tanod.yaml`](./tanod.yaml).
 
-`harmost check --config <file>` validates without starting the proxy, which
+`tanod check --config <file>` validates without starting the proxy, which
 makes it usable as a CI gate.
 
 Three rules govern the config surface:
@@ -1022,7 +1022,7 @@ pure Rust, actively maintained, and it reports the line and column of a bad key.
 
 TLS is behind a Cargo feature, because most deployments terminate it at a load
 balancer and an unused TLS stack is unused attack surface. rustls rather than
-boringssl or openssl: it is pure Rust, so building Harmost needs no cmake, no Go
+boringssl or openssl: it is pure Rust, so building Tanod needs no cmake, no Go
 and no system OpenSSL headers.
 
 ```bash
@@ -1037,8 +1037,8 @@ server:
   h2c: false
   tls:
     listen: "0.0.0.0:8443"   # a second listener; `listen` stays cleartext
-    cert: "/etc/harmost/fullchain.pem"
-    key: "/etc/harmost/privkey.pem"
+    cert: "/etc/tanod/fullchain.pem"
+    key: "/etc/tanod/privkey.pem"
     h2: true                 # offer h2 over ALPN, alongside http/1.1
 
 origin:
@@ -1056,15 +1056,15 @@ A binary built without `--features tls` **rejects** a config containing
 
 ### Trusted proxies
 
-`X-Forwarded-For` and `X-Forwarded-Proto` are set by whoever spoke to Harmost
+`X-Forwarded-For` and `X-Forwarded-Proto` are set by whoever spoke to Tanod
 last. On a public listener that is the client, and believing them hands out two
 things: a forged identity in the origin's logs and rate limits, and — because
 the scheme is part of the cache key — **a cache partition the client controls**,
-which is one origin render per invented scheme string. Harmost would then be
+which is one origin render per invented scheme string. Tanod would then be
 amplifying the origin work it exists to bound.
 
 So a forwarded header is read only from a peer inside a configured block.
-Nothing is trusted by default, which means an unconfigured Harmost cannot be
+Nothing is trusted by default, which means an unconfigured Tanod cannot be
 lied to.
 
 ```yaml
@@ -1094,21 +1094,21 @@ working software:
 
 Both are off by default and both are documented where their trade-offs are:
 [Slow readers and render capacity](#slow-readers-and-render-capacity) for
-`spool`, and [Using Harmost with Next.js](#using-harmost-with-nextjs) for
+`spool`, and [Using Tanod with Next.js](#using-tanod-with-nextjs) for
 `upgrade`.
 
 ### Generating configuration from a Next.js build
 
-[`@harmost/next`](./packages/harmost-next) takes from the build the two things
-Harmost cannot work out by watching traffic:
+[`@tanod/next`](./packages/tanod-next) takes from the build the two things
+Tanod cannot work out by watching traffic:
 
 ```bash
 next build
-npx harmost-next generate \
-  --policy harmost.next.yaml \
+npx tanod-next generate \
+  --policy tanod.next.yaml \
   --upstream next-1:3000 \
   --concurrency 40 \
-  --out harmost.yaml \
+  --out tanod.yaml \
   --check
 ```
 
@@ -1124,12 +1124,12 @@ generated with the `vary: [Accept]` it needs to cache at all.
 **Anything the build does not prove is shareable is generated private.** A
 prerendered route is proof — Next produced one response for everybody. A
 dynamic one is not, so it needs an exact, checked-in approval in
-`harmost.next.yaml`. The same policy drives `generate`, `inspect`, and the local
+`tanod.next.yaml`. The same policy drives `generate`, `inspect`, and the local
 `explain` command. `doctor` checks a deployed reference, and `calibrate`
 requires an explicit load flag and route allowlist. The package also routes
 `revalidateTag()` and `revalidatePath()` to the purge API below.
 
-This is the difference between Harmost inferring route policy from headers and
+This is the difference between Tanod inferring route policy from headers and
 being *told* it by the build — the gap that made hand-written route config
 necessary in the first place.
 
@@ -1142,10 +1142,10 @@ cache:
   # clock (default) or fifo.
   eviction: clock
   # Response header the origin declares tags on, comma-separated.
-  tag_header: "x-harmost-cache-tags"
+  tag_header: "x-tanod-cache-tags"
   purge:
     # Without a token the endpoint does not exist. Min 24 printable ASCII.
-    token: "${HARMOST_PURGE_TOKEN}"
+    token: "${TANOD_PURGE_TOKEN}"
 
 telemetry:
   admin:
@@ -1155,19 +1155,19 @@ telemetry:
 An origin tags a response by setting the header:
 
 ```
-X-Harmost-Cache-Tags: product-42, collection-sale
+X-Tanod-Cache-Tags: product-42, collection-sale
 ```
 
 and anything holding the token invalidates it, by tag or by path:
 
 ```bash
 # By tag.
-curl -X POST -H "Authorization: Bearer $HARMOST_PURGE_TOKEN" \
+curl -X POST -H "Authorization: Bearer $TANOD_PURGE_TOKEN" \
   "http://127.0.0.1:9091/purge?tag=product-42"
 
 # By path — one page, every variant of it: query strings, Accept, the RSC
 # payload beside the HTML. This is what revalidatePath() means by a path.
-curl -X POST -H "Authorization: Bearer $HARMOST_PURGE_TOKEN" \
+curl -X POST -H "Authorization: Bearer $TANOD_PURGE_TOKEN" \
   "http://127.0.0.1:9091/purge?path=/products/iphone"
 ```
 
@@ -1193,8 +1193,8 @@ purge endpoint is a stampede trigger anybody can pull. A misspelled parameter
 is a `400` rather than a quiet success, for the same reason unknown config keys
 are refused.
 
-**Replicated purges must reach every process.** `@harmost/next` accepts all
-admin listeners through `endpoints` or `HARMOST_PURGE_URLS` and fails if any
+**Replicated purges must reach every process.** `@tanod/next` accepts all
+admin listeners through `endpoints` or `TANOD_PURGE_URLS` and fails if any
 local cache cannot be invalidated.
 
 **Deployment rollovers need no call at all.** The cache key already carries
@@ -1205,7 +1205,7 @@ budget. A reload that does not change the id leaves the cache alone.
 **Storage stays in process, and that was measured too.** Disk and an external
 store (Redis, memcached) were both evaluated and declined: a cache hit is
 ~570 µs end to end and ~60 µs of that is the lookup, so a hit is already
-dominated by the round trip to Harmost and a second hop would roughly double it
+dominated by the round trip to Tanod and a second hop would roughly double it
 — to buy capacity a microcache with second-long TTLs does not need, and at the
 cost of the streaming partial writes that keep coalescing from destroying
 streaming. [`docs/CACHE-STORAGE-EVALUATION.md`](./docs/CACHE-STORAGE-EVALUATION.md)
@@ -1266,14 +1266,14 @@ routes:
 question, on one path, at one interval — that is what keeps it cheap, and it is
 also why it misses the failure that matters most for server rendering: an
 origin that answers `/healthz` in a millisecond while every render throws. The
-breaker watches the requests Harmost is already sending, so it needs no extra
+breaker watches the requests Tanod is already sending, so it needs no extra
 traffic to notice. `/status` and the metrics report health and ejection
 separately, because a backend that is healthy *and* ejected is not a
 contradiction — it is the entire signal.
 
 **The ejection cap stops a breaker causing the outage it exists to contain.**
 When an origin-wide dependency fails, every backend fails and every breaker
-trips. Past `max_ejected_percent`, Harmost ignores breaker state and returns to
+trips. Past `max_ejected_percent`, Tanod ignores breaker state and returns to
 health-based routing: if everything is broken, "broken" has stopped being a
 reason to prefer one backend over another. This is the same rule the health
 path already follows — a pool with nothing healthy still serves, because
@@ -1285,7 +1285,7 @@ still a doubling of load at the worst possible moment. The budget caps them as
 a percentage of the traffic actually flowing, so a total outage affords almost
 none while a single backend dying is absorbed. Two further bounds are not
 configurable, because getting them wrong is not a tuning mistake: only **safe**
-methods are retried (Harmost does not buffer request bodies and so cannot
+methods are retried (Tanod does not buffer request bodies and so cannot
 replay one), and only **before the origin has answered**.
 
 **`least_loaded` scores in-flight work multiplied by observed latency** — the
@@ -1312,7 +1312,7 @@ breaker with one upstream, `max_attempts: 1`, a priority share that rounds to a
 ceiling of zero, a `route.priority` with no tier shares set. See
 [`docs/CONFIG-SCHEMA.md`](./docs/CONFIG-SCHEMA.md).
 
-## Operating Harmost
+## Operating Tanod
 
 Full procedures — systemd and Kubernetes definitions, the restart sequences,
 the timeout arithmetic — are in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
@@ -1343,14 +1343,14 @@ readiness endpoint makes an orchestrator kill the process mid-drain.
 
 ```bash
 # Prove the new binary and config can start, before touching the running one.
-harmost run --config /etc/harmost/harmost.yaml --test
+tanod run --config /etc/tanod/tanod.yaml --test
 
 # Set this from your supervisor, a captured `$!`, or the pid file written by
 # `--daemon`. Foreground mode does not write server.graceful.pid_file.
-pid=${HARMOST_PID:?set HARMOST_PID to the running Harmost process}
+pid=${TANOD_PID:?set TANOD_PID to the running Tanod process}
 
 # Linux: hand the listening sockets over, then let the old process drain.
-harmost run --config /etc/harmost/harmost.yaml --upgrade &
+tanod run --config /etc/tanod/tanod.yaml --upgrade &
 kill -QUIT "$pid"
 
 # Anywhere: drain first so the balancer withdraws this instance, then stop.
@@ -1369,15 +1369,15 @@ shutdown timeout.
 **Budget `drain_period + shutdown_timeout` for a direct stop.** Pingora's
 shutdown waits out its timeout whether or not anything is in flight, so with
 the defaults a direct `SIGTERM` takes about fifteen seconds on an idle process.
-`harmost check` prints the number and warns when it exceeds Kubernetes'
+`tanod check` prints the number and warns when it exceeds Kubernetes'
 default grace period.
 
 ### Following a request through
 
 Correlation costs nothing and is always on. Every access log line carries a
-`trace_id` and `span_id`, and the id Harmost concluded is the one it forwards
-to the origin as `traceparent` — so a Harmost log line and an origin log line
-for the same request join, even when the origin has never heard of Harmost.
+`trace_id` and `span_id`, and the id Tanod concluded is the one it forwards
+to the origin as `traceparent` — so a Tanod log line and an origin log line
+for the same request join, even when the origin has never heard of Tanod.
 
 ```json
 {"method":"GET","path":"/products/iphone","route":"product-pages","class":"public_document",
@@ -1403,8 +1403,8 @@ telemetry:
 Inbound `traceparent` is ignored by default. `from_trusted_proxies` is an
 explicit opt-in and is safe only when every trusted proxy strips or replaces
 client-supplied `traceparent` and `tracestate`; unlike `X-Forwarded-For`, trace
-context has no hop chain Harmost can validate. Ignoring one never costs the
-request — Harmost simply starts a fresh trace.
+context has no hop chain Tanod can validate. Ignoring one never costs the
+request — Tanod simply starts a fresh trace.
 
 **Telemetry is never load-bearing.** The span queue is bounded and full means
 drop; recording is a non-blocking `try_send`; an export failure is counted and
@@ -1428,16 +1428,16 @@ Run the complete local observability demo with Docker Compose:
 docker compose -f compose.observability.yaml up --build
 ```
 
-It starts three Next.js origins, Harmost, a continuous traffic generator,
-Prometheus, and Grafana. Open <http://127.0.0.1:13000/d/harmost-overview/harmost>
+It starts three Next.js origins, Tanod, a continuous traffic generator,
+Prometheus, and Grafana. Open <http://127.0.0.1:13000/d/tanod-overview/tanod>
 to use the dashboard; no separate Grafana installation is needed for this demo.
-Prometheus is available at <http://127.0.0.1:19000> and traffic enters Harmost
+Prometheus is available at <http://127.0.0.1:19000> and traffic enters Tanod
 at <http://127.0.0.1:18080>.
 
-![Harmost dashboard showing live origin, admission, latency, queue, and cache metrics](./assets/harmost-dashboard.png)
+![Tanod dashboard showing live origin, admission, latency, queue, and cache metrics](./assets/tanod-dashboard.png)
 
 This is a capture of the running stack, not a mockup. To refresh both the
-overview above and the [full dashboard capture](./assets/harmost-dashboard-full.png),
+overview above and the [full dashboard capture](./assets/tanod-dashboard-full.png),
 leave the stack running and execute:
 
 ```bash
@@ -1455,24 +1455,24 @@ docker compose -f compose.observability.yaml down
 
 | Signal | Means |
 |---|---|
-| `harmost_admission_total{decision=~"shed_.*"}` rising | The ceiling is being hit. Harmost working, and users seeing `503`. Look at origin latency before raising it. |
-| `harmost_origin_in_flight` at `harmost_concurrency_limit` | Saturated. |
-| `harmost_upstream_healthy == 0` | No backend is passing. Harmost still serves, on `stale_if_error`. |
-| `harmost_draining == 1` for longer than a deploy | An instance drained and was never replaced. |
+| `tanod_admission_total{decision=~"shed_.*"}` rising | The ceiling is being hit. Tanod working, and users seeing `503`. Look at origin latency before raising it. |
+| `tanod_origin_in_flight` at `tanod_concurrency_limit` | Saturated. |
+| `tanod_upstream_healthy == 0` | No backend is passing. Tanod still serves, on `stale_if_error`. |
+| `tanod_draining == 1` for longer than a deploy | An instance drained and was never replaced. |
 
 With `origin.breaker` or `origin.retry` enabled, three more:
 
 | Signal | Means |
 |---|---|
-| `harmost_upstream_ejected == 1` while `harmost_upstream_healthy == 1` | The backend passes its probe and fails real requests. Read that backend's logs, not Harmost's. |
-| `harmost_upstream_breaker_trips_total` climbing steadily | Flapping — it recovers enough to pass, then fails again. Usually worse than staying down. |
-| `harmost_origin_retries_total{outcome="budget_exhausted"}` rising | Requests are failing faster than the budget absorbs. Raising the budget makes it worse. |
+| `tanod_upstream_ejected == 1` while `tanod_upstream_healthy == 1` | The backend passes its probe and fails real requests. Read that backend's logs, not Tanod's. |
+| `tanod_upstream_breaker_trips_total` climbing steadily | Flapping — it recovers enough to pass, then fails again. Usually worse than staying down. |
+| `tanod_origin_retries_total{outcome="budget_exhausted"}` rising | Requests are failing faster than the budget absorbs. Raising the budget makes it worse. |
 
 ## Design and internals
 
 ### Design principles
 
-**Uncertain means pass through.** If Harmost cannot prove a response is safe to
+**Uncertain means pass through.** If Tanod cannot prove a response is safe to
 share, it does not share it. A higher hit ratio is never worth a wrong response.
 
 **Reuse before admission.** Cache hits and coalescing waiters consume no origin
@@ -1572,7 +1572,7 @@ Each access log line records where the permit went:
 
 ### Request coalescing and microcache architecture
 
-Harmost provides a bounded in-memory implementation of `pingora-cache`'s
+Tanod provides a bounded in-memory implementation of `pingora-cache`'s
 `Storage` trait and uses Pingora's cache lock for coalescing. The
 [spike](./spike/pingora-cache/FINDINGS.md) that settled this found that a waiter
 can attach to the leader's write *in progress* and receive the first chunk
@@ -1610,7 +1610,7 @@ override — collapsing duplicate renders persists nothing and lasts one render.
 
 #### Structural cache keys
 
-Harmost builds the cache key as a *structure* — scheme, host, method, path,
+Tanod builds the cache key as a *structure* — scheme, host, method, path,
 canonicalised query, the headers that select a variant, and the deployment id —
 rather than folding those into a number early. Query parameters are sorted only
 when keys are unique; duplicate-key order and `?flag` versus `?flag=` remain
@@ -1645,7 +1645,7 @@ running.
 
 ## Security
 
-[`docs/THREAT-MODEL.md`](./docs/THREAT-MODEL.md) states what Harmost protects,
+[`docs/THREAT-MODEL.md`](./docs/THREAT-MODEL.md) states what Tanod protects,
 from whom, by which mechanism — and, at equal length, what it deliberately does
 not defend. It has not been independently reviewed.
 
@@ -1659,4 +1659,4 @@ single most valuable contribution available to this project right now.
 
 ## License
 
-Harmost is licensed under the [Apache License 2.0](./LICENSE).
+Tanod is licensed under the [Apache License 2.0](./LICENSE).

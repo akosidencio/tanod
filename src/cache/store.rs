@@ -135,7 +135,7 @@ impl Temp {
     }
 }
 
-/// Split a tag header value into tags Harmost is willing to index.
+/// Split a tag header value into tags Tanod is willing to index.
 ///
 /// Bounded on every axis: how many, how long, and what bytes. Non-ASCII and
 /// whitespace-only tags are dropped rather than normalised — a tag is an
@@ -635,7 +635,7 @@ impl Storage for BoundedStore {
                 .unwrap_or_default()
         };
         // The path travels in the key's `user_tag`, which Pingora does not
-        // hash. See `Harmost::cache_key_callback`.
+        // hash. See `Tanod::cache_key_callback`.
         let path = if transient {
             String::new()
         } else {
@@ -669,7 +669,7 @@ impl Storage for BoundedStore {
         _t: &SpanHandle,
     ) -> Result<bool> {
         // Pingora's own purge hook, reached through its cache API rather than
-        // through Harmost's endpoint. Routed into the same path so a caller
+        // through Tanod's endpoint. Routed into the same path so a caller
         // that arrives this way cannot leave the tag index pointing at an
         // entry that no longer exists.
         let hash = key.combined();
@@ -999,13 +999,13 @@ mod tests {
         let mut header = ResponseHeader::build(200, None).unwrap();
         if !tags.is_empty() {
             header
-                .insert_header("x-harmost-cache-tags", tags.join(","))
+                .insert_header("x-tanod-cache-tags", tags.join(","))
                 .unwrap();
         }
         let now = SystemTime::now();
         let meta = CacheMeta::new(now + Duration::from_secs(600), now, 0, 0, header);
         // `user_tag` carries the request path, exactly as
-        // `Harmost::cache_key_callback` sets it.
+        // `Tanod::cache_key_callback` sets it.
         let key = CacheKey::new("", path, path);
         let mut writer = store
             .get_miss_handler(&key, &meta, &Span::inactive().handle())
@@ -1294,7 +1294,7 @@ mod tests {
 
         let mut header = ResponseHeader::build(200, None).unwrap();
         header
-            .insert_header("x-harmost-cache-tags", "new-tag")
+            .insert_header("x-tanod-cache-tags", "new-tag")
             .unwrap();
         let now = SystemTime::now();
         let replacement = CacheMeta::new(now + Duration::from_secs(600), now, 0, 0, header);
@@ -1318,7 +1318,7 @@ mod tests {
         let store = store_of(1 << 20);
         let mut header = ResponseHeader::build(200, None).unwrap();
         header
-            .insert_header("x-harmost-cache-tags", "purged-tag")
+            .insert_header("x-tanod-cache-tags", "purged-tag")
             .unwrap();
         let now = SystemTime::now();
         let meta = CacheMeta::new(now + Duration::from_secs(600), now, 0, 0, header);
@@ -1382,7 +1382,7 @@ mod tests {
             .insert_header(crate::cache::TRANSIENT_HEADER, "1")
             .unwrap();
         header
-            .insert_header("x-harmost-cache-tags", "ghost")
+            .insert_header("x-tanod-cache-tags", "ghost")
             .unwrap();
         let now = SystemTime::now();
         let meta = CacheMeta::new(now + Duration::from_secs(60), now, 0, 0, header);
