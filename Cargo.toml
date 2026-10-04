@@ -54,6 +54,9 @@ tls = ["pingora-core/rustls"]
 [dev-dependencies]
 tokio = { version = "1", features = ["sync", "time", "rt", "macros", "test-util"] }
 proptest = "1"
+# Test-only: proves the hand-written OTLP JSON parses. Never linked into the
+# binary.
+serde_json = "1"
 
 # The crate contains no `unsafe`. `forbid` turns that from a fact about today
 # into an invariant: adding a block is a compile error, not a review comment.

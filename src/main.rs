@@ -435,6 +435,41 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
         None => None,
     };
 
+    // Metric push, if configured. Same reasoning as spans: a bad endpoint or
+    // a host with no CA bundle fails here, not a minute into serving.
+    let metric_exporter = match cfg.telemetry.metrics.otlp.as_ref() {
+        Some(otlp) => {
+            let mut resource = vec![
+                (
+                    "service.name".to_string(),
+                    tracing_cfg
+                        .service_name
+                        .clone()
+                        .unwrap_or_else(|| "tanod".to_string()),
+                ),
+                (
+                    "service.version".to_string(),
+                    env!("CARGO_PKG_VERSION").to_string(),
+                ),
+                (
+                    "service.instance.id".to_string(),
+                    tanod::telemetry::otlp_metrics::instance_id(),
+                ),
+            ];
+            if let Some(id) = &deployment_id {
+                resource.push(("deployment.id".to_string(), id.clone()));
+            }
+            match tanod::telemetry::otlp_metrics::build(otlp, resource) {
+                Ok(exporter) => Some(exporter),
+                Err(error) => {
+                    eprintln!("error: telemetry.metrics.otlp: {error}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        None => None,
+    };
+
     let policy = match PolicySnapshot::build(cfg, 1) {
         Ok(p) => p,
         Err(e) => {
@@ -623,6 +658,13 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
         }
         None => None,
     };
+    if let Some(exporter) = metric_exporter {
+        eprintln!("  exporting metrics to {}", exporter.endpoint().url());
+        server.add_service(pingora_core::services::background::background_service(
+            "otlp-metrics",
+            exporter,
+        ));
+    }
 
     let resolve_interval = policy.load().config.origin.resolve_interval.as_duration();
     for backend in upstreams.backends() {
@@ -983,6 +1025,13 @@ fn check(path: &str) -> ExitCode {
                     "  no telemetry.tracing.otlp: trace ids are still generated, logged and \
                      forwarded to the origin, but no spans leave this process"
                 ),
+            }
+            if let Some(otlp) = &cfg.telemetry.metrics.otlp {
+                println!(
+                    "  pushing metrics to {} every {:?}",
+                    otlp.endpoint,
+                    otlp.interval.as_duration()
+                );
             }
             if cfg.telemetry.tracing.trust_incoming
                 == tanod::config::schema::TrustIncoming::FromTrustedProxies

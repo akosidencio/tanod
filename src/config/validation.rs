@@ -88,6 +88,7 @@ pub fn validate(cfg: &Config) -> Result<()> {
     validate_graceful(cfg)?;
     validate_admin(cfg)?;
     validate_tracing(cfg)?;
+    validate_metrics_export(cfg)?;
     for upstream in &cfg.origin.upstreams {
         validate_upstream(upstream)?;
     }
@@ -491,6 +492,51 @@ fn listeners_overlap(a: std::net::SocketAddr, b: std::net::SocketAddr) -> bool {
         || (b.ip().is_unspecified() && (b.is_ipv6() || a.is_ipv4()))
 }
 
+fn validate_metrics_export(cfg: &Config) -> Result<()> {
+    let Some(otlp) = &cfg.telemetry.metrics.otlp else {
+        return Ok(());
+    };
+    crate::telemetry::transport::parse_endpoint(&otlp.endpoint, "/v1/metrics")
+        .map_err(|why| err(format!("telemetry.metrics.otlp.endpoint: {why}")))?;
+    crate::telemetry::transport::render_headers(&otlp.headers)
+        .map_err(|why| err(format!("telemetry.metrics.otlp.headers: {why}")))?;
+    let interval = otlp.interval.as_duration();
+    if interval < Duration::from_secs(1) || interval > Duration::from_secs(3600) {
+        return Err(err(
+            "telemetry.metrics.otlp.interval must be between 1s and 1h",
+        ));
+    }
+    if otlp.timeout == super::units::Dur::ZERO || otlp.timeout.as_duration() >= interval {
+        return Err(err(
+            "telemetry.metrics.otlp.timeout must be greater than zero and shorter than the              interval, or exports would overlap",
+        ));
+    }
+    for (name, value) in &otlp.labels {
+        let valid = name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && !name.starts_with("__");
+        if !valid {
+            return Err(err(format!(
+                "telemetry.metrics.otlp.labels: {name:?} is not a valid label name"
+            )));
+        }
+        if crate::telemetry::metrics::LABEL_NAMES.contains(&name.as_str()) {
+            return Err(err(format!(
+                "telemetry.metrics.otlp.labels: {name} is already a label on Tanod's own metrics"
+            )));
+        }
+        if value.chars().any(char::is_control) {
+            return Err(err(format!(
+                "telemetry.metrics.otlp.labels: the value of {name} contains a control character"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn validate_tracing(cfg: &Config) -> Result<()> {
     let t = &cfg.telemetry.tracing;
     if t.service_name.as_ref().is_some_and(|n| n.trim().is_empty()) {
@@ -511,6 +557,8 @@ fn validate_tracing(cfg: &Config) -> Result<()> {
     };
     crate::telemetry::otlp::parse_endpoint(&otlp.endpoint)
         .map_err(|why| err(format!("telemetry.tracing.otlp.endpoint: {why}")))?;
+    crate::telemetry::transport::render_headers(&otlp.headers)
+        .map_err(|why| err(format!("telemetry.tracing.otlp.headers: {why}")))?;
     if otlp.max_queue == 0 || otlp.max_batch == 0 {
         return Err(err(
             "telemetry.tracing.otlp.max_queue and max_batch must be greater than zero",
@@ -1394,12 +1442,55 @@ origin:
     }
 
     #[test]
-    fn an_https_otlp_endpoint_is_refused_rather_than_downgraded() {
-        let e = validate(&parse(&format!(
-            "{BASE}telemetry:\n  tracing:\n    otlp:\n      endpoint: \"https://collector:4318/v1/traces\"\n"
+    fn an_https_otlp_endpoint_needs_the_tls_feature_rather_than_being_downgraded() {
+        for block in ["tracing", "metrics"] {
+            let result = validate(&parse(&format!(
+                "{BASE}telemetry:\n  {block}:\n    otlp:\n      endpoint: \"https://collector/v1/x\"\n"
+            )));
+            if cfg!(feature = "tls") {
+                result.unwrap();
+            } else {
+                let e = result.unwrap_err();
+                assert!(e.0.contains("tls"), "{e}");
+            }
+        }
+    }
+
+    #[test]
+    fn metric_export_settings_are_checked() {
+        for (otlp, expected) in [
+            (
+                "endpoint: \"http://c/v1/metrics\"\n      interval: 500ms",
+                "interval",
+            ),
+            (
+                "endpoint: \"http://c/v1/metrics\"\n      timeout: 60s",
+                "timeout",
+            ),
+            (
+                "endpoint: \"http://c/v1/metrics\"\n      labels: {route: x}",
+                "already a label",
+            ),
+            (
+                "endpoint: \"http://c/v1/metrics\"\n      labels: {\"bad-name\": x}",
+                "label name",
+            ),
+            (
+                "endpoint: \"http://c/v1/metrics\"\n      headers: {Host: x}",
+                "set by Tanod",
+            ),
+            ("endpoint: \"ftp://c\"", "endpoint"),
+        ] {
+            let e = validate(&parse(&format!(
+                "{BASE}telemetry:\n  metrics:\n    otlp:\n      {otlp}\n"
+            )))
+            .unwrap_err();
+            assert!(e.0.contains(expected), "{otlp}: {e}");
+        }
+        validate(&parse(&format!(
+            "{BASE}telemetry:\n  metrics:\n    otlp:\n      endpoint: \"http://c/v1/metrics\"\n      labels: {{environment: staging}}\n"
         )))
-        .unwrap_err();
-        assert!(e.0.contains("http://"), "{e}");
+        .unwrap();
     }
 
     #[test]

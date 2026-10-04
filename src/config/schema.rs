@@ -1146,8 +1146,54 @@ pub struct Telemetry {
     /// only decides whether spans are exported anywhere.
     #[serde(default)]
     pub tracing: Tracing,
+    /// Pushing metrics, as an alternative to being scraped.
+    #[serde(default)]
+    pub metrics: MetricsExport,
     #[serde(default)]
     pub logging: Logging,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsExport {
+    #[serde(default)]
+    pub otlp: Option<OtlpMetrics>,
+}
+
+/// Push every metric over OTLP/HTTP on an interval.
+///
+/// The same series `/metrics` serves, sent instead of scraped, so a hosted
+/// backend needs no collector beside Tanod to fetch them. Counters are
+/// cumulative from process start, which is what Prometheus-compatible
+/// backends expect.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OtlpMetrics {
+    /// Full URL of the metrics endpoint, e.g.
+    /// `https://otlp-gateway-prod-eu-west-0.grafana.net/otlp/v1/metrics`.
+    pub endpoint: String,
+    /// Extra request headers, typically `Authorization`. Write secrets as
+    /// `${VAR}`.
+    #[serde(default)]
+    pub headers: std::collections::BTreeMap<String, String>,
+    /// Between exports. A minute matches how hosted backends bill (one sample
+    /// per series per minute) and every Tanod alert uses 5m windows or longer.
+    #[serde(default = "d_60s")]
+    pub interval: Dur,
+    /// Ceiling on one export attempt, connect to last byte.
+    #[serde(default = "d_10s")]
+    pub timeout: Dur,
+    /// Labels added to every data point, such as `environment: staging`.
+    ///
+    /// Resource attributes reach a Prometheus-style backend only as a
+    /// separate `target_info` series, so a label a dashboard filters on has to
+    /// travel on the points themselves.
+    #[serde(default)]
+    pub labels: std::collections::BTreeMap<String, String>,
+}
+
+fn d_60s() -> Dur {
+    Dur(std::time::Duration::from_secs(60))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -1227,6 +1273,10 @@ pub struct Otlp {
     /// Ceiling on one export attempt, connect to last byte.
     #[serde(default = "d_5s")]
     pub timeout: Dur,
+    /// Extra request headers, typically `Authorization` for a hosted
+    /// endpoint. Write secrets as `${VAR}` rather than into the file.
+    #[serde(default)]
+    pub headers: std::collections::BTreeMap<String, String>,
     /// Spans buffered between exports. Bounded, and full means *drop*: a
     /// telemetry queue that grows under load is a memory-exhaustion bug that
     /// only fires during the incident you wanted the traces for.
