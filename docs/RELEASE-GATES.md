@@ -111,8 +111,13 @@ is exactly the untrustworthy evidence this project spent a phase removing.
 
 ### 5. Artifacts
 
-- `git tag` matches the `version` in `Cargo.toml`. The release workflow
-  refuses otherwise, so this is a gate rather than a habit.
+- `git tag` matches the `version` in `Cargo.toml` and in
+  `packages/tanod-next/package.json`. The release workflow refuses otherwise,
+  so this is a gate rather than a habit.
+- `@tanod/next` at the tag's version is on npm with provenance, published
+  last by the release workflow (`NPM_TOKEN` repository secret):
+  `npm view @tanod/next@<version>` and `npm audit signatures` in a project
+  that installs it.
 - `SHA256SUMS` is present and covers every published archive.
 - The CycloneDX SBOM is attached.
 - The image's provenance attestation verifies:

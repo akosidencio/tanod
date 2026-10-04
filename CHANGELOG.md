@@ -8,15 +8,12 @@ names.
 
 ## 0.2.0 — 2026-10-04
 
-- Renamed the project from Harmost to Tanod. Apart from the overload page below, behavior is unchanged from Harmost 0.1.4.
-- Added an overload page: a shed browser navigation now gets a small page that says the site is busy and reloads itself, instead of an empty `503`. Configure it under `overload.page` (`title`, `message`, `lang`, `refresh`, or a custom HTML `file`); `enabled: false` restores the empty body. Flights, prefetches, `fetch()`, API clients and `HEAD` keep the bare status.
-- Upgrade note: every public name moved from `harmost` to `tanod`, so an existing deployment needs these updates:
-  - Binary, crate and container image: `tanod`, `ghcr.io/akosidencio/tanod`.
-  - Config file and paths: `tanod.yaml`, `/etc/tanod/`, `/run/tanod/`; systemd unit `tanod.service`.
-  - Environment variables: `HARMOST_*` → `TANOD_*` (for example `TANOD_CONFIG`, `TANOD_PURGE_TOKEN`).
-  - Headers: `X-Harmost-*` → `X-Tanod-*`, including `X-Tanod-Cache-Tags`.
-  - Metrics: `harmost_*` → `tanod_*`. Dashboards, recording rules and alerts must switch to the new names; history recorded under the old names does not carry over.
-  - Next.js adapter: `@harmost/next` → `@tanod/next`, `withHarmost` → `withTanod`, CLI `tanod-next`.
+- Renamed the project from Harmost to Tanod, continuing from Harmost 0.1.4.
+- Added a configurable overload page for browser page loads that are shed; other requests keep the bare `503`.
+- Added visitor metrics for responses by status and source, request duration, queue wait, and build info, with dashboard panels and recording rules.
+- Fixed background cache revalidations being counted as visitor requests.
+- Added npm publishing of `@tanod/next` to the release workflow; the adapter now shares Tanod's version.
+- Upgrade note: every `harmost` name is now `tanod` — binary, image, config paths, systemd unit, `TANOD_*` environment variables, `X-Tanod-*` headers, `tanod_*` metrics, and `@tanod/next`. Update dashboards and alerts; metric history does not carry over.
 
 ## 0.1.4 — 2026-09-26
 
