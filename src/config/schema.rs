@@ -903,6 +903,9 @@ pub struct Overload {
     pub status: u16,
     #[serde(default = "d_1s")]
     pub retry_after: Dur,
+    /// What a browser sees instead of an empty error.
+    #[serde(default)]
+    pub page: OverloadPage,
 }
 
 impl Default for Overload {
@@ -910,8 +913,71 @@ impl Default for Overload {
         Overload {
             status: status_503(),
             retry_after: d_1s(),
+            page: OverloadPage::default(),
         }
     }
+}
+
+/// The HTML body sent with a shed, to browser navigations only.
+///
+/// Everything else — flights, prefetches, API calls, `HEAD` — keeps the bare
+/// status: a client that parses the body would choke on HTML, and the status
+/// plus `Retry-After` is the whole contract for it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OverloadPage {
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// Plain text; HTML-escaped when rendered.
+    #[serde(default = "default_overload_title")]
+    pub title: String,
+    /// Plain text; HTML-escaped when rendered. `{{refresh}}` and
+    /// `{{retry_after}}` are replaced with seconds.
+    #[serde(default = "default_overload_message")]
+    pub message: String,
+    /// The page's `lang` attribute.
+    #[serde(default = "default_overload_lang")]
+    pub lang: String,
+    /// How long the page waits before reloading itself.
+    ///
+    /// Separate from `retry_after`, which is a machine contract and short by
+    /// default: a page that flashes and reloads every second reads as broken.
+    #[serde(default = "d_5s")]
+    pub refresh: Dur,
+    /// A complete HTML document to send instead of the built-in page. The same
+    /// placeholders are replaced in it, plus `{{title}}` and `{{message}}`.
+    #[serde(default)]
+    pub file: Option<String>,
+    /// Contents of `file`, read by [`crate::config::load`] so a reload picks
+    /// up an edit to it. Never set from YAML.
+    #[serde(skip)]
+    pub template: Option<String>,
+}
+
+impl Default for OverloadPage {
+    fn default() -> Self {
+        OverloadPage {
+            enabled: true,
+            title: default_overload_title(),
+            message: default_overload_message(),
+            lang: default_overload_lang(),
+            refresh: d_5s(),
+            file: None,
+            template: None,
+        }
+    }
+}
+
+fn default_overload_title() -> String {
+    "Hang tight, you're almost in".to_string()
+}
+fn default_overload_message() -> String {
+    "We're letting visitors in a few at a time to keep the site fast. This page \
+     will refresh by itself in {{refresh}} seconds."
+        .to_string()
+}
+fn default_overload_lang() -> String {
+    "en".to_string()
 }
 
 fn status_503() -> u16 {

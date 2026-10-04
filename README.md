@@ -736,7 +736,7 @@ rather tag it yourself.
 ```yaml
 services:
   tanod:
-    image: ghcr.io/akosidencio/tanod:0.1.0   # or a locally built tanod:local
+    image: ghcr.io/akosidencio/tanod:0.2.0   # or a locally built tanod:local
     ports: ["8080:8080"]
     volumes:
       - ./tanod.yaml:/etc/tanod/tanod.yaml:ro
@@ -1311,6 +1311,46 @@ Every one of these is refused at startup if it would silently do nothing — a
 breaker with one upstream, `max_attempts: 1`, a priority share that rounds to a
 ceiling of zero, a `route.priority` with no tier shares set. See
 [`docs/CONFIG-SCHEMA.md`](./docs/CONFIG-SCHEMA.md).
+
+### What a shed visitor sees
+
+A shed request gets `overload.status` (default `503`) with `Retry-After` and
+`Cache-Control: no-store`. When the request is a browser loading a page, the
+response also carries a small "busy" page that reloads itself, instead of
+leaving the visitor on the browser's own error screen. It is on by default:
+
+```yaml
+overload:
+  status: 503
+  retry_after: 1s          # the Retry-After header, for clients and crawlers
+  page:
+    enabled: true
+    title: "Hang tight, you're almost in"
+    message: "We're letting visitors in a few at a time to keep the site fast. This page will refresh by itself in {{refresh}} seconds."
+    lang: en
+    refresh: 5s            # how long the page waits before reloading (1s–10m)
+    # file: /etc/tanod/busy.html
+```
+
+`title` and `message` are plain text and are HTML-escaped. `{{refresh}}` and
+`{{retry_after}}` in the message become whole seconds. For your own design, set
+`file` to a complete HTML document (at most 64 KiB); `{{title}}`,
+`{{message}}`, `{{lang}}`, `{{refresh}}` and `{{retry_after}}` are filled in
+it, and it is responsible for its own reload, for example
+`<meta http-equiv="refresh" content="{{refresh}}">`. The file is read at
+startup and on every reload, so editing it takes a reload (`SIGHUP`), not a
+restart. A missing file is refused like any other invalid config.
+
+Only page loads get the HTML: a `GET` with `Sec-Fetch-Mode: navigate`, or with
+`Accept: text/html` from a client that sends no Fetch Metadata. Next.js flights
+and prefetches, `fetch()` calls, API clients and `HEAD` keep the bare status,
+because they would try to parse the page. The built-in page loads nothing and
+is sent with `Content-Security-Policy: default-src 'none'`; a custom page may
+load its own assets, so it is sent without one. Keep those assets off the
+origin you are protecting, or they will be shed too.
+
+The page does not hold a place in line. Each reload is a fresh request that is
+admitted or shed on its own, so it is a polite retry, not a waiting room.
 
 ## Operating Tanod
 

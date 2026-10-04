@@ -985,33 +985,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tanod"
-version = "0.1.4"
-dependencies = [
- "arc-swap",
- "async-trait",
- "bytes",
- "env_logger",
- "getrandom 0.3.4",
- "globset",
- "http",
- "log",
- "parking_lot",
- "percent-encoding",
- "pingora-cache",
- "pingora-core",
- "pingora-error",
- "pingora-http",
- "pingora-proxy",
- "prometheus",
- "proptest",
- "serde",
- "serde-saphyr",
- "thiserror 2.0.20",
- "tokio",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2338,6 +2311,33 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "tanod"
+version = "0.2.0"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "bytes",
+ "env_logger",
+ "getrandom 0.3.4",
+ "globset",
+ "http",
+ "log",
+ "parking_lot",
+ "percent-encoding",
+ "pingora-cache",
+ "pingora-core",
+ "pingora-error",
+ "pingora-http",
+ "pingora-proxy",
+ "prometheus",
+ "proptest",
+ "serde",
+ "serde-saphyr",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]

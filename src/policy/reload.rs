@@ -603,6 +603,29 @@ routes:
     }
 
     #[test]
+    fn an_edit_to_a_custom_overload_page_is_picked_up_on_reload() {
+        let page = tempfile_lite::TempPath::new("tanod-page");
+        std::fs::write(&page.0, "<p>{{title}}</p>").unwrap();
+        let body = format!(
+            "{BASE}overload:\n  page:\n    title: Sale\n    file: \"{}\"\n",
+            page.0
+        );
+        let (_path, reloader, policy) = setup(&body);
+        let html = |p: &Arc<ArcSwap<PolicySnapshot>>| p.load().overload_page.clone().unwrap().html;
+        assert_eq!(&html(&policy)[..], b"<p>Sale</p>");
+
+        std::fs::write(&page.0, "<b>{{title}}</b>").unwrap();
+        reloader.reload().unwrap();
+        assert_eq!(&html(&policy)[..], b"<b>Sale</b>");
+
+        // A page file that disappears is a refused reload, not a blank page.
+        std::fs::remove_file(&page.0).unwrap();
+        let error = reloader.reload().unwrap_err();
+        assert!(error.contains(&page.0), "{error}");
+        assert_eq!(&html(&policy)[..], b"<b>Sale</b>");
+    }
+
+    #[test]
     fn a_missing_file_is_refused() {
         let (path, reloader, policy) = setup(BASE);
         std::fs::remove_file(&path.0).unwrap();

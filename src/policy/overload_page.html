@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="{{lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="{{refresh}}">
+<meta name="robots" content="noindex">
+<title>{{title}}</title>
+<style>
+:root{color-scheme:light dark;--bg:#f4f6fa;--card:#fff;--fg:#0f172a;--muted:#475569;--track:#e2e8f0;--accent:#0891b2}
+@media (prefers-color-scheme:dark){:root{--bg:#0b1730;--card:#12224a;--fg:#f8fafc;--muted:#a5b4cb;--track:#1f3366;--accent:#22d3ee}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{width:100%;max-width:440px;background:var(--card);border-radius:16px;padding:36px 28px;text-align:center;box-shadow:0 1px 3px rgba(15,23,42,.08)}
+.dots{display:flex;gap:8px;justify-content:center;margin-bottom:22px}
+.dots span{width:10px;height:10px;border-radius:50%;background:var(--accent);animation:pulse 1.2s infinite ease-in-out}
+.dots span:nth-child(2){animation-delay:.2s}
+.dots span:nth-child(3){animation-delay:.4s}
+@keyframes pulse{0%,80%,100%{opacity:.25;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
+h1{font-size:1.375rem;line-height:1.3;margin:0 0 10px}
+p{margin:0;color:var(--muted)}
+.bar{height:6px;margin-top:26px;border-radius:3px;background:var(--track);overflow:hidden}
+.bar span{display:block;height:100%;background:var(--accent);transform-origin:left;animation:fill {{refresh}}s linear forwards}
+@keyframes fill{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@media (prefers-reduced-motion:reduce){.dots span,.bar span{animation:none}}
+</style>
+</head>
+<body>
+<main>
+<div class="dots" aria-hidden="true"><span></span><span></span><span></span></div>
+<h1>{{title}}</h1>
+<p>{{message}}</p>
+<div class="bar" aria-hidden="true"><span></span></div>
+</main>
+</body>
+</html>

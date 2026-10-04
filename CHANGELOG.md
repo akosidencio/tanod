@@ -3,6 +3,21 @@
 Notable changes by version. See the [roadmap](./docs/ROADMAP.md) for remaining
 work and [operations guide](./docs/OPERATIONS.md) for deployment details.
 
+Tanod was released as Harmost up to 0.1.4. Entries below 0.2.0 use the current
+names.
+
+## 0.2.0 — 2026-10-04
+
+- Renamed the project from Harmost to Tanod. Apart from the overload page below, behavior is unchanged from Harmost 0.1.4.
+- Added an overload page: a shed browser navigation now gets a small page that says the site is busy and reloads itself, instead of an empty `503`. Configure it under `overload.page` (`title`, `message`, `lang`, `refresh`, or a custom HTML `file`); `enabled: false` restores the empty body. Flights, prefetches, `fetch()`, API clients and `HEAD` keep the bare status.
+- Upgrade note: every public name moved from `harmost` to `tanod`, so an existing deployment needs these updates:
+  - Binary, crate and container image: `tanod`, `ghcr.io/akosidencio/tanod`.
+  - Config file and paths: `tanod.yaml`, `/etc/tanod/`, `/run/tanod/`; systemd unit `tanod.service`.
+  - Environment variables: `HARMOST_*` → `TANOD_*` (for example `TANOD_CONFIG`, `TANOD_PURGE_TOKEN`).
+  - Headers: `X-Harmost-*` → `X-Tanod-*`, including `X-Tanod-Cache-Tags`.
+  - Metrics: `harmost_*` → `tanod_*`. Dashboards, recording rules and alerts must switch to the new names; history recorded under the old names does not carry over.
+  - Next.js adapter: `@harmost/next` → `@tanod/next`, `withHarmost` → `withTanod`, CLI `tanod-next`.
+
 ## 0.1.4 — 2026-09-26
 
 - Security: updated `rustls` to 0.23.45 for [RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285) (TLS 1.3 handshake messages accepted across encryption-level boundaries).

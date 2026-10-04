@@ -20,12 +20,11 @@ working prototype without sustained production validation.
 
 ## 9. Improve what a shed visitor sees
 
-From the Reko storefront load tests (2026-09-26/27): a shed is a `503` with an
-empty body, so a document request lands on the browser's own error screen.
+From the Reko storefront load tests (2026-09-26/27): a shed was a `503` with an
+empty body, so a document request landed on the browser's own error screen.
 
-- Add a configurable overload body for document requests: a small page that
-  says the site is busy and reloads itself after `retry_after`. Flights, API
-  routes and other non-document requests keep the bare `503`.
+- ~~Add a configurable overload body for document requests~~ — done in 0.2.0
+  (`overload.page`).
 - Serve a stale cached copy instead of shedding, per route, when one exists
   (for example `stale_on_shed: 5m` beside `stale_if_error`). Today stale is
   served only for origin failures; a shed is deliberately excluded

@@ -140,6 +140,18 @@ timeouts:
   origin: 30s
   downstream_write: 30s
 
+# What a shed request gets. A browser loading a page also gets a small "busy"
+# page that reloads itself; flights, API calls and HEAD keep the bare status.
+overload:
+  status: 503
+  retry_after: 1s
+  page:
+    enabled: true
+    title: "Hang tight, you're almost in"
+    message: "We're letting visitors in a few at a time to keep the site fast. This page will refresh by itself in {{refresh}} seconds."
+    refresh: 5s
+    # file: /etc/tanod/busy.html   # your own HTML; same {{placeholders}}
+
 # A bounded buffer between the origin and a slow client.
 #
 # Without it, an origin permit is held until the *client* finishes reading,

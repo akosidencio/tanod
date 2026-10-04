@@ -50,13 +50,28 @@ pub fn load(path: &str) -> Result<Config, LoadError> {
         path: path.to_string(),
         source,
     })?;
-    let cfg: Config = serde_saphyr::from_str(&text).map_err(|source| LoadError::Parse {
+    let mut cfg: Config = serde_saphyr::from_str(&text).map_err(|source| LoadError::Parse {
         path: path.to_string(),
         source: Box::new(source),
     })?;
+    if let Some(file) = cfg.overload.page.file.clone() {
+        cfg.overload.page.template =
+            Some(read_overload_page(&file).map_err(|source| LoadError::Io { path: file, source })?);
+    }
     validation::validate(&cfg).map_err(|source| LoadError::Invalid {
         path: path.to_string(),
         source,
     })?;
     Ok(cfg)
+}
+
+/// Read at most one byte past the limit, so validation can refuse an
+/// oversized file without this having read all of it.
+fn read_overload_page(path: &str) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut text = String::new();
+    std::fs::File::open(path)?
+        .take(validation::MAX_OVERLOAD_PAGE_BYTES as u64 + 1)
+        .read_to_string(&mut text)?;
+    Ok(text)
 }

@@ -9,6 +9,7 @@
 //! generation — see [`crate::admission::AdmissionController`].
 
 pub mod matcher;
+pub mod overload_page;
 pub mod reload;
 
 use crate::classifier::RequestClass;
@@ -44,6 +45,8 @@ pub struct PolicySnapshot {
     /// particular process has reloaded it. Kept below 2^53 so Prometheus can
     /// represent the integer exactly in its floating-point sample format.
     pub fingerprint: u64,
+    /// The shed page for this generation, or `None` when it is turned off.
+    pub overload_page: Option<overload_page::OverloadPage>,
 }
 
 impl PolicySnapshot {
@@ -60,8 +63,10 @@ impl PolicySnapshot {
                 })
             })
             .collect::<Result<Vec<_>, MatcherError>>()?;
+        let overload_page = overload_page::render(&config.overload);
         Ok(Arc::new(PolicySnapshot {
             routes,
+            overload_page,
             config,
             generation,
             fingerprint,

@@ -45,7 +45,7 @@ use crate::config::schema::{
     LoadBalancing, LogFormat, Mode, OriginHttpVersion, Priority, RouteCache, Timeouts,
 };
 use crate::net::forwarded::{ClientFacts, ListenerScheme, TrustPolicy};
-use crate::policy::PolicySnapshot;
+use crate::policy::{PolicySnapshot, overload_page};
 use crate::proxy::spool::{Spool, SpoolBudget, SpoolOutcome};
 use crate::telemetry::logging::AccessLog;
 use crate::telemetry::metrics;
@@ -511,11 +511,27 @@ impl Tanod {
 
     async fn refuse(&self, session: &mut Session, policy: &PolicySnapshot) -> Result<()> {
         let overload = &policy.config.overload;
-        let mut resp = ResponseHeader::build(overload.status, Some(3))?;
+        let req = session.req_header();
+        let page = policy
+            .overload_page
+            .as_ref()
+            .filter(|_| overload_page::is_navigation(&req.method, &req.headers));
+        let mut resp = ResponseHeader::build(overload.status, Some(8))?;
         let retry_after = overload.retry_after.as_duration().as_secs().max(1);
         resp.insert_header("Retry-After", retry_after.to_string())?;
         // A CDN that caches this turns a brief origin blip into a long outage.
         resp.insert_header("Cache-Control", "no-store")?;
+        if let Some(page) = page {
+            resp.insert_header("Content-Type", "text/html; charset=utf-8")?;
+            resp.insert_header("Content-Length", page.html.len().to_string())?;
+            resp.insert_header("X-Content-Type-Options", "nosniff")?;
+            if page.built_in {
+                resp.insert_header(
+                    "Content-Security-Policy",
+                    "default-src 'none'; style-src 'unsafe-inline'",
+                )?;
+            }
+        }
         if policy.config.debug_headers {
             resp.insert_header("X-Tanod", "SHED")?;
         }
@@ -523,7 +539,14 @@ impl Tanod {
         // request body may still be unread, so keeping this connection alive
         // could make those bytes look like the next request.
         session.as_downstream_mut().set_keepalive(None);
-        session.write_response_header(Box::new(resp), true).await?;
+        match page {
+            Some(page) => {
+                let html = page.html.clone();
+                session.write_response_header(Box::new(resp), false).await?;
+                session.write_response_body(Some(html), true).await?;
+            }
+            None => session.write_response_header(Box::new(resp), true).await?,
+        }
         Ok(())
     }
 }

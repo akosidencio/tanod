@@ -63,6 +63,7 @@ pub fn validate(cfg: &Config) -> Result<()> {
             cfg.overload.status
         )));
     }
+    validate_overload_page(&cfg.overload.page)?;
     if cfg.deployment.id.is_some() && cfg.deployment.id_header.is_some() {
         return Err(err(
             "deployment.id and deployment.id_header are both set; pick one source of truth",
@@ -133,6 +134,47 @@ pub fn validate(cfg: &Config) -> Result<()> {
             return Err(err(format!("duplicate route id `{}`", route.id)));
         }
         check_route(route, cfg)?;
+    }
+    Ok(())
+}
+
+/// Ceiling on a custom overload page. It is held in memory and written on
+/// every shed, which happens precisely when the proxy is busiest.
+pub const MAX_OVERLOAD_PAGE_BYTES: usize = 64 * 1024;
+
+fn validate_overload_page(page: &OverloadPage) -> Result<()> {
+    let refresh = page.refresh.as_duration();
+    if refresh < Duration::from_secs(1) || refresh > Duration::from_secs(600) {
+        return Err(err(format!(
+            "overload.page.refresh is {refresh:?}; it must be between 1s and 10m, because a \
+             page that reloads faster than once a second only adds load"
+        )));
+    }
+    if page.lang.is_empty()
+        || page.lang.len() > 35
+        || !page
+            .lang
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return Err(err(format!(
+            "overload.page.lang {:?} is not a language tag such as \"en\" or \"fil-PH\"",
+            page.lang
+        )));
+    }
+    if page.title.trim().is_empty() || page.title.chars().count() > 200 {
+        return Err(err("overload.page.title must be 1 to 200 characters"));
+    }
+    if page.message.chars().count() > 2000 {
+        return Err(err("overload.page.message must be at most 2000 characters"));
+    }
+    if let (Some(file), Some(template)) = (&page.file, &page.template)
+        && template.len() > MAX_OVERLOAD_PAGE_BYTES
+    {
+        return Err(err(format!(
+            "overload.page.file {file} is larger than {} KiB",
+            MAX_OVERLOAD_PAGE_BYTES / 1024
+        )));
     }
     Ok(())
 }
@@ -925,6 +967,42 @@ origin:
     #[test]
     fn accepts_a_minimal_config() {
         validate(&parse(BASE)).unwrap();
+    }
+
+    #[test]
+    fn accepts_a_customised_overload_page() {
+        let cfg = parse(&format!(
+            "{BASE}overload:\n  page:\n    title: \"Sandali lang\"\n    message: \"Babalik ka sa loob ng {{{{refresh}}}} segundo.\"\n    lang: fil-PH\n    refresh: 10s\n"
+        ));
+        validate(&cfg).unwrap();
+    }
+
+    #[test]
+    fn rejects_an_overload_page_that_would_misbehave() {
+        for (page, expected) in [
+            ("refresh: 500ms", "refresh"),
+            ("refresh: 11m", "refresh"),
+            ("lang: \"en\\\" onload=x\"", "language tag"),
+            ("lang: \"\"", "language tag"),
+            ("title: \"  \"", "title"),
+        ] {
+            let cfg = parse(&format!("{BASE}overload:\n  page:\n    {page}\n"));
+            let error = validate(&cfg).unwrap_err();
+            assert!(error.0.contains(expected), "{page}: {error}");
+        }
+    }
+
+    #[test]
+    fn rejects_an_oversized_overload_page_file() {
+        let mut cfg = parse(&format!("{BASE}overload:\n  page:\n    file: busy.html\n"));
+        cfg.overload.page.template = Some("x".repeat(MAX_OVERLOAD_PAGE_BYTES + 1));
+        let error = validate(&cfg).unwrap_err();
+        assert!(
+            error.0.contains("busy.html is larger than 64 KiB"),
+            "{error}"
+        );
+        cfg.overload.page.template = Some("x".repeat(MAX_OVERLOAD_PAGE_BYTES));
+        validate(&cfg).unwrap();
     }
 
     #[test]
