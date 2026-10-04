@@ -47,6 +47,8 @@ pub struct PolicySnapshot {
     pub fingerprint: u64,
     /// The shed page for this generation, or `None` when it is turned off.
     pub overload_page: Option<overload_page::OverloadPage>,
+    /// The shed response's `Retry-After`, formatted once per generation.
+    pub retry_after: http::HeaderValue,
 }
 
 impl PolicySnapshot {
@@ -64,9 +66,12 @@ impl PolicySnapshot {
             })
             .collect::<Result<Vec<_>, MatcherError>>()?;
         let overload_page = overload_page::render(&config.overload);
+        let retry_after =
+            http::HeaderValue::from(config.overload.retry_after.as_duration().as_secs().max(1));
         Ok(Arc::new(PolicySnapshot {
             routes,
             overload_page,
+            retry_after,
             config,
             generation,
             fingerprint,

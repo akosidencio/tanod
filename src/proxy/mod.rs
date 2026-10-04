@@ -525,23 +525,33 @@ impl Tanod {
     async fn refuse(&self, session: &mut Session, policy: &PolicySnapshot) -> Result<()> {
         let overload = &policy.config.overload;
         let req = session.req_header();
-        let page = policy
-            .overload_page
-            .as_ref()
-            .filter(|_| overload_page::is_navigation(&req.method, &req.headers));
+        // A background revalidation copies the visitor's headers, so it can
+        // look like a navigation, but nobody will read its response.
+        let page = policy.overload_page.as_ref().filter(|_| {
+            session.subrequest_ctx.is_none()
+                && overload_page::is_navigation(&req.method, &req.headers)
+        });
         let mut resp = ResponseHeader::build(overload.status, Some(8))?;
-        let retry_after = overload.retry_after.as_duration().as_secs().max(1);
-        resp.insert_header("Retry-After", retry_after.to_string())?;
+        resp.insert_header("Retry-After", policy.retry_after.clone())?;
         // A CDN that caches this turns a brief origin blip into a long outage.
-        resp.insert_header("Cache-Control", "no-store")?;
+        //
+        // Static header values from here on: a `&str` value is copied into a
+        // fresh allocation on every insert, and this is the shed path.
+        resp.insert_header("Cache-Control", http::HeaderValue::from_static("no-store"))?;
         if let Some(page) = page {
-            resp.insert_header("Content-Type", "text/html; charset=utf-8")?;
-            resp.insert_header("Content-Length", page.html.len().to_string())?;
-            resp.insert_header("X-Content-Type-Options", "nosniff")?;
+            resp.insert_header(
+                "Content-Type",
+                http::HeaderValue::from_static("text/html; charset=utf-8"),
+            )?;
+            resp.insert_header("Content-Length", page.content_length.clone())?;
+            resp.insert_header(
+                "X-Content-Type-Options",
+                http::HeaderValue::from_static("nosniff"),
+            )?;
             if page.built_in {
                 resp.insert_header(
                     "Content-Security-Policy",
-                    "default-src 'none'; style-src 'unsafe-inline'",
+                    http::HeaderValue::from_static("default-src 'none'; style-src 'unsafe-inline'"),
                 )?;
             }
         }
@@ -574,6 +584,9 @@ impl ProxyHttp for Tanod {
     }
 
     async fn early_request_filter(&self, session: &mut Session, ctx: &mut Ctx) -> Result<()> {
+        // First, so that every path to `logging` — including one that fails
+        // before `request_filter` — knows whether a visitor is behind it.
+        ctx.background = session.subrequest_ctx.is_some();
         // Bound how long a single downstream write may block.
         //
         // This is what keeps a deliberately slow reader from occupying an
@@ -617,7 +630,6 @@ impl ProxyHttp for Tanod {
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Ctx) -> Result<bool> {
-        ctx.background = session.subrequest_ctx.is_some();
         let req = session.req_header();
         let host = request_host(req);
         let path = req.uri.path().to_string();
@@ -843,7 +855,7 @@ impl ProxyHttp for Tanod {
                 Err(reason) => {
                     ctx.shed = true;
                     metrics::UPGRADES
-                        .with_label_values(&[&route_label, &format!("shed_{}", reason.as_str())])
+                        .with_label_values(&[&route_label, reason.metric_label()])
                         .inc();
                     let policy = ctx.policy.clone();
                     self.refuse(session, &policy).await?;
@@ -925,7 +937,7 @@ impl ProxyHttp for Tanod {
                 ctx.shed = true;
                 ctx.queue_wait = Some(waited);
                 metrics::ADMISSION
-                    .with_label_values(&[&route_label, &format!("shed_{}", reason.as_str())])
+                    .with_label_values(&[&route_label, reason.metric_label()])
                     .inc();
                 self.refuse(session, &ctx.policy).await?;
                 Ok(false)
@@ -1336,9 +1348,13 @@ impl ProxyHttp for Tanod {
             metrics::RESPONSES
                 .with_label_values(&[route, status_class(status), response_source(cache, ctx)])
                 .inc();
-            metrics::REQUEST_DURATION
-                .with_label_values(&[route])
-                .observe(ctx.started.elapsed().as_secs_f64());
+            // A tunnel or an event stream lasts as long as the connection, and
+            // one of those would land in the top bucket and swamp the p95.
+            if !matches!(ctx.class, RequestClass::Upgrade | RequestClass::Streaming) {
+                metrics::REQUEST_DURATION
+                    .with_label_values(&[route])
+                    .observe(ctx.started.elapsed().as_secs_f64());
+            }
             if let Some(waited) = ctx.queue_wait {
                 metrics::QUEUE_WAIT
                     .with_label_values(&[route])
