@@ -1,5 +1,6 @@
 //! Configuration loading: parse, then refuse anything unsafe.
 
+pub mod env;
 pub mod schema;
 pub mod units;
 pub mod validation;
@@ -28,6 +29,8 @@ pub enum LoadError {
         #[source]
         source: std::io::Error,
     },
+    #[error("expanding environment variables in {path}: {message}")]
+    Env { path: String, message: String },
     #[error("parsing {path}")]
     Parse {
         path: String,
@@ -50,6 +53,11 @@ pub fn load(path: &str) -> Result<Config, LoadError> {
         path: path.to_string(),
         source,
     })?;
+    let text =
+        env::expand(&text, |name| std::env::var(name).ok()).map_err(|message| LoadError::Env {
+            path: path.to_string(),
+            message,
+        })?;
     let mut cfg: Config = serde_saphyr::from_str(&text).map_err(|source| LoadError::Parse {
         path: path.to_string(),
         source: Box::new(source),
