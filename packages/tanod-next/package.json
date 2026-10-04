@@ -13,8 +13,7 @@
     "url": "https://github.com/akosidencio/tanod/issues"
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "type": "module",
   "engines": {
@@ -32,7 +31,7 @@
     }
   },
   "bin": {
-    "tanod-next": "./src/cli.js"
+    "tanod-next": "src/cli.js"
   },
   "files": [
     "src",

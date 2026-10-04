@@ -114,7 +114,8 @@ is exactly the untrustworthy evidence this project spent a phase removing.
 - `git tag` matches the `version` in `Cargo.toml` and in
   `packages/tanod-next/package.json`. The release workflow refuses otherwise,
   so this is a gate rather than a habit.
-- `@tanod/next` at the tag's version is on npm with provenance, published
+- `@tanod/next` at the tag's version is on npm (with provenance once the
+  repository is public; npm refuses it from a private one), published
   last by the release workflow (`NPM_TOKEN` repository secret):
   `npm view @tanod/next@<version>` and `npm audit signatures` in a project
   that installs it.

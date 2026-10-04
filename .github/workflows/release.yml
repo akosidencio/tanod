@@ -467,7 +467,9 @@ jobs:
   # never republished, so it goes out only once everything else in the release
   # has. Neither package has a build step — @tanod/next ships `src` as tested,
   # and the platform package ships the binary the musl job built and smoke
-  # tested. Both carry npm provenance linking them to this workflow run.
+  # tested. From a public repository both carry npm provenance linking them to
+  # this workflow run; npm refuses provenance from a private one, so a private
+  # repository publishes without it rather than not at all.
   npm:
     name: publish npm packages
     needs: [publish, musl]
@@ -514,8 +516,17 @@ jobs:
             echo "::error::the NPM_TOKEN repository secret is not set"
             exit 1
           fi
+          if [ "${{ github.event.repository.private }}" = "false" ]; then
+            provenance=--provenance
+          else
+            provenance=--no-provenance
+            echo "::notice::the repository is private, and npm accepts provenance only from public ones; publishing without it"
+          fi
           echo "### Published to npm" >> "$GITHUB_STEP_SUMMARY"
           for dir in packages/tanod-linux-x64 packages/tanod-next; do
+            # A tag cut before this decision moved into the workflow still has
+            # it in publishConfig, which would otherwise win over the flag.
+            ( cd "$dir" && npm pkg delete publishConfig.provenance )
             name="$(node -p "require('./$dir/package.json').name")"
             version="$(node -p "require('./$dir/package.json').version")"
             # A workflow_dispatch re-cut of a tag that already reached npm
@@ -529,6 +540,6 @@ jobs:
             # plain install keeps resolving to the last stable release.
             dist_tag=latest
             case "$version" in *-*) dist_tag=next ;; esac
-            ( cd "$dir" && npm pack --dry-run && npm publish --access public --provenance --tag "$dist_tag" )
-            echo "- \`$name@$version\` (dist-tag \`$dist_tag\`)" >> "$GITHUB_STEP_SUMMARY"
+            ( cd "$dir" && npm pack --dry-run && npm publish --access public "$provenance" --tag "$dist_tag" )
+            echo "- \`$name@$version\` (dist-tag \`$dist_tag\`, $provenance)" >> "$GITHUB_STEP_SUMMARY"
           done
