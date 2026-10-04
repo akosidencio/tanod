@@ -97,6 +97,15 @@ pub struct Ctx {
     /// one outcome is recorded per attempt, decided by the response header or
     /// by whatever prevented one.
     pub outcome_recorded: bool,
+    /// A background stale-while-revalidate fetch Pingora spawned, not a
+    /// visitor request. Still origin work; never a visitor metric.
+    pub background: bool,
+    /// How long admission took, for requests that went through it.
+    pub queue_wait: Option<std::time::Duration>,
+    /// Tanod wrote this response itself (a shed or a refused upgrade).
+    pub local_response: bool,
+    /// The origin's response header arrived.
+    pub origin_responded: bool,
 
     /// The connection facts, resolved once in `early_request_filter`.
     ///
@@ -156,6 +165,10 @@ impl Ctx {
             origin_slot: None,
             attempts: 0,
             outcome_recorded: false,
+            background: false,
+            queue_wait: None,
+            local_response: false,
+            origin_responded: false,
             client: ClientFacts {
                 client_ip: None,
                 scheme: "http",
@@ -604,6 +617,7 @@ impl ProxyHttp for Tanod {
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Ctx) -> Result<bool> {
+        ctx.background = session.subrequest_ctx.is_some();
         let req = session.req_header();
         let host = request_host(req);
         let path = req.uri.path().to_string();
@@ -657,9 +671,11 @@ impl ProxyHttp for Tanod {
                 .unwrap_or(ctx.policy.config.coalesce.enabled);
 
         let route_label = ctx.route_id.as_deref().unwrap_or("-");
-        metrics::REQUESTS
-            .with_label_values(&[route_label, ctx.class.as_str()])
-            .inc();
+        if !ctx.background {
+            metrics::REQUESTS
+                .with_label_values(&[route_label, ctx.class.as_str()])
+                .inc();
+        }
 
         // Spooling is per route, defaulting to the global setting. Decided
         // here because this is the last hook that has the route in hand and
@@ -679,6 +695,7 @@ impl ProxyHttp for Tanod {
             metrics::UPGRADES
                 .with_label_values(&[route_label, "disabled"])
                 .inc();
+            ctx.local_response = true;
             let policy = ctx.policy.clone();
             self.refuse_upgrade(session, &policy).await?;
             return Ok(true);
@@ -707,8 +724,11 @@ impl ProxyHttp for Tanod {
         }
 
         // The denominator of the origin-work-avoidance ratio, counted only
-        // where reuse was genuinely possible.
-        if ctx.cache_active {
+        // where reuse was genuinely possible — and only for visitors. A
+        // background revalidation is the cache refreshing itself; counting it
+        // here inflated the denominator by one per refresh, so the ratio and
+        // `tanod_cache_total` disagreed.
+        if ctx.cache_active && !ctx.background {
             metrics::REUSE_ELIGIBLE
                 .with_label_values(&[route_label])
                 .inc();
@@ -843,10 +863,12 @@ impl ProxyHttp for Tanod {
             .route_id
             .as_deref()
             .and_then(|id| self.limiter_for(&ctx.policy, id));
+        let waiting = Instant::now();
         let outcome = self
             .admission
             .admit(ctx.class, route_limiter.as_ref(), ctx.priority, ctx.weight)
             .await;
+        let waited = waiting.elapsed();
 
         // Publish limiter state on the way through rather than from a timer:
         // these are the numbers an operator wants during an incident, and a
@@ -876,6 +898,7 @@ impl ProxyHttp for Tanod {
 
         match outcome {
             Admission::Admitted(permits) => {
+                ctx.queue_wait = Some(waited);
                 ctx.permit = Some(permits.into_inner());
                 // The spool exists to give a permit back early, so it is
                 // created only where there is a permit to give back. A class
@@ -900,6 +923,7 @@ impl ProxyHttp for Tanod {
             }
             Admission::Shed(reason) => {
                 ctx.shed = true;
+                ctx.queue_wait = Some(waited);
                 metrics::ADMISSION
                     .with_label_values(&[&route_label, &format!("shed_{}", reason.as_str())])
                     .inc();
@@ -1172,6 +1196,7 @@ impl ProxyHttp for Tanod {
         upstream: &mut ResponseHeader,
         ctx: &mut Ctx,
     ) -> Result<()> {
+        ctx.origin_responded = true;
         // Time to first byte, not total response time: it is what reflects the
         // origin's own queueing, and it does not make a backend that served a
         // large body look slow.
@@ -1300,8 +1325,26 @@ impl ProxyHttp for Tanod {
             .map(|r| r.status.as_u16())
             .unwrap_or(0);
         let route = ctx.route_id.as_deref().unwrap_or("-");
-        let cache = cache_status(session, ctx);
+        let cache = if ctx.background {
+            "revalidate"
+        } else {
+            cache_status(session, ctx)
+        };
         metrics::CACHE.with_label_values(&[route, cache]).inc();
+        // What the visitor got. A background revalidation has no visitor.
+        if !ctx.background {
+            metrics::RESPONSES
+                .with_label_values(&[route, status_class(status), response_source(cache, ctx)])
+                .inc();
+            metrics::REQUEST_DURATION
+                .with_label_values(&[route])
+                .observe(ctx.started.elapsed().as_secs_f64());
+            if let Some(waited) = ctx.queue_wait {
+                metrics::QUEUE_WAIT
+                    .with_label_values(&[route])
+                    .observe(waited.as_secs_f64());
+            }
+        }
 
         let origin_ms = match (ctx.origin_finished_ms, ctx.origin_started) {
             (Some(elapsed_ms), _) => {
@@ -1567,6 +1610,37 @@ fn cache_status(session: &Session, ctx: &Ctx) -> &'static str {
     }
 }
 
+/// The status class label: bounded, unlike the status code itself.
+fn status_class(status: u16) -> &'static str {
+    match status {
+        100..=199 => "1xx",
+        200..=299 => "2xx",
+        300..=399 => "3xx",
+        400..=499 => "4xx",
+        500..=599 => "5xx",
+        // Nothing was written: the client went away first.
+        _ => "none",
+    }
+}
+
+/// Who produced the response a visitor got.
+///
+/// Checked in this order because a shed can carry a cache phase (a coalesce
+/// wait that timed out), and a cache hit never reaches the origin.
+fn response_source(cache: &str, ctx: &Ctx) -> &'static str {
+    if ctx.shed || ctx.local_response {
+        "tanod"
+    } else if matches!(cache, "hit" | "stale") {
+        "cache"
+    } else if ctx.origin_responded {
+        "origin"
+    } else {
+        // Pingora's own error page: the origin could not be reached or did
+        // not answer in time.
+        "tanod"
+    }
+}
+
 fn joined_header_values(
     headers: &http::HeaderMap,
     name: http::header::HeaderName,
@@ -1704,5 +1778,43 @@ mod tests {
             peer.options.read_timeout,
             Some(timeouts.first_byte.as_duration())
         );
+    }
+
+    fn ctx() -> Ctx {
+        let cfg: crate::config::Config =
+            serde_saphyr::from_str("version: 1\norigin:\n  upstreams: [\"a:3000\"]\n").unwrap();
+        Ctx::new(PolicySnapshot::build(cfg, 1).unwrap())
+    }
+
+    #[test]
+    fn status_classes_are_bounded() {
+        assert_eq!(status_class(200), "2xx");
+        assert_eq!(status_class(304), "3xx");
+        assert_eq!(status_class(429), "4xx");
+        assert_eq!(status_class(503), "5xx");
+        assert_eq!(status_class(101), "1xx");
+        assert_eq!(status_class(0), "none");
+        assert_eq!(status_class(999), "none");
+    }
+
+    #[test]
+    fn a_response_is_credited_to_whoever_produced_it() {
+        let mut c = ctx();
+        // Pingora's error page: nothing answered.
+        assert_eq!(response_source("miss", &c), "tanod");
+        c.origin_responded = true;
+        assert_eq!(response_source("miss", &c), "origin");
+        // A stale copy served over an origin error is still the cache's.
+        assert_eq!(response_source("stale", &c), "cache");
+        assert_eq!(response_source("hit", &ctx()), "cache");
+
+        // A coalesce wait that timed out into a shed has a cache phase, but
+        // the visitor got Tanod's 503.
+        let mut shed = ctx();
+        shed.shed = true;
+        assert_eq!(response_source("miss", &shed), "tanod");
+        let mut refused = ctx();
+        refused.local_response = true;
+        assert_eq!(response_source("disabled", &refused), "tanod");
     }
 }

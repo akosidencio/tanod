@@ -523,13 +523,15 @@ four that matter most:
 
 | Signal | Means |
 |---|---|
-| `tanod_admission_total{decision=~"shed_.*"}` rising | The origin ceiling is being hit. Either the origin got slower or traffic grew. This is Tanod working, but it is also users seeing `503`. |
+| `tanod_admission_total{decision=~"shed_.*"}` rising | The origin ceiling is being hit. Either the origin got slower or traffic grew. This is Tanod working, but it is also users seeing `503`; `tanod_responses_total{source="tanod"}` says how many. |
 | `tanod_origin_in_flight` pinned at `tanod_concurrency_limit` | Saturated. Look at `tanod_origin_latency_seconds` before raising the ceiling — a higher ceiling against a slower origin makes it slower still. |
 | `tanod_upstream_healthy == 0` | No backend is passing its health check. Tanod is still serving, on `stale_if_error` and on whatever the origin manages. |
 | `tanod_draining == 1` for longer than a deploy | An instance drained and was never replaced. It is serving and reporting itself not-ready, so a balancer has withdrawn it and nothing is watching. |
 
-Two that are easy to miss:
+Three that are easy to miss:
 
+- `tanod_build_info` with more than one `version` outside a rollout — part of
+  the fleet did not upgrade.
 - `tanod_spans_total{outcome="dropped"}` — the trace queue is too small for
   the traffic. Costs traces, never requests.
 - `tanod_cache_bytes` at `cache.max_memory` **with a low hit ratio** — the

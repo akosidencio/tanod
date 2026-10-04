@@ -22,6 +22,24 @@ groups:
           histogram_quantile(0.95,
           sum by (job, instance, route, le) (rate(tanod_origin_latency_seconds_bucket[5m])))
 
+      # Total time as the visitor sees it, and the part of it spent queued.
+      - record: tanod:request_duration:p95_5m
+        expr: >-
+          histogram_quantile(0.95,
+          sum by (job, instance, route, le) (rate(tanod_request_duration_seconds_bucket[5m])))
+
+      - record: tanod:queue_wait:p95_5m
+        expr: >-
+          histogram_quantile(0.95,
+          sum by (job, instance, route, le) (rate(tanod_queue_wait_seconds_bucket[5m])))
+
+      # Share of visitor responses that were a 5xx, whoever produced it.
+      - record: tanod:visitor_5xx:ratio5m
+        expr: >-
+          sum by (job, instance) (rate(tanod_responses_total{code="5xx"}[5m]))
+          / clamp_min(sum by (job, instance) (rate(tanod_responses_total[5m])), 0.001)
+
+      # Background revalidations count in neither side, so this stays within 0–1.
       - record: tanod:origin_work_avoided:ratio5m
         expr: >-
           sum by (job, instance) (rate(tanod_cache_total{status=~"hit|stale"}[5m]))

@@ -235,7 +235,7 @@
       "id": 5,
       "type": "stat",
       "title": "Origin work avoided",
-      "description": "Of the requests the cache could have answered, the share it did (hit or stale). Numerator and denominator both come from tanod_cache_total, so the value stays between 0 and 100%. (tanod_reuse_eligible_requests_total is counted at a different point and can disagree with it.)",
+      "description": "Of the visitor requests the cache could have answered, the share it did (hit or stale). Background revalidations are counted separately (status=\"revalidate\") and are not in either side of the ratio.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1467,7 +1467,7 @@
       "id": 101,
       "type": "stat",
       "title": "Requests turned away",
-      "description": "Share of all requests Tanod refused (queue full, queue timeout, or a coalescing wait that ran out) over 5 minutes. Visitors receive these as an error page; on App Platform the 503 arrives as 504.",
+      "description": "Share of all visitor responses that were Tanod refusing the request (queue full, queue timeout, or a coalescing wait that ran out) over 5 minutes. A browser loading a page gets the overload page; other clients get a bare 503. On App Platform the 503 arrives as 504.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1525,7 +1525,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(tanod_cache_total{environment=~\"$environment\", status=\"shed\"}[5m])) / clamp_min(sum(rate(tanod_cache_total{environment=~\"$environment\"}[5m])), 0.001)"
+          "expr": "sum(rate(tanod_cache_total{environment=~\"$environment\", status=\"shed\"}[5m])) / clamp_min(sum(rate(tanod_responses_total{environment=~\"$environment\"}[5m])), 0.001)"
         }
       ]
     },
@@ -1591,7 +1591,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(tanod_cache_total{environment=~\"$environment\", route=\"api\", status=\"shed\"}[5m])) / clamp_min(sum(rate(tanod_cache_total{environment=~\"$environment\", route=\"api\"}[5m])), 0.001)"
+          "expr": "sum(rate(tanod_cache_total{environment=~\"$environment\", route=\"api\", status=\"shed\"}[5m])) / clamp_min(sum(rate(tanod_responses_total{environment=~\"$environment\", route=\"api\"}[5m])), 0.001)"
         }
       ]
     },
@@ -1831,6 +1831,253 @@
       }
     },
     {
+      "id": 111,
+      "type": "timeseries",
+      "title": "What visitors got",
+      "description": "Responses as sent to visitors, by status class and by who produced them: the origin, the cache, or Tanod itself (a shed, a refused upgrade, or a proxy error page when the origin could not be reached). Background revalidations are not visitor responses and are excluded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 9,
+        "x": 0,
+        "y": 51
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "pointSize": 8,
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "reqps",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (code, source) (rate(tanod_responses_total{environment=~\"$environment\"}[5m]))",
+          "legendFormat": "{{code}} {{source}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 112,
+      "type": "timeseries",
+      "title": "Visitor response time",
+      "description": "Total time per request as the visitor sees it, from the first byte Tanod read to the last it wrote, beside the time spent waiting for admission. When queue wait rises with total time, visitors are paying for the queue, not the render.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 9,
+        "x": 9,
+        "y": 51
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "pointSize": 8,
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(tanod_request_duration_seconds_bucket{environment=~\"$environment\"}[5m])))",
+          "legendFormat": "p50 total",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(tanod_request_duration_seconds_bucket{environment=~\"$environment\"}[5m])))",
+          "legendFormat": "p95 total",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(tanod_queue_wait_seconds_bucket{environment=~\"$environment\"}[5m])))",
+          "legendFormat": "p95 queue wait",
+          "range": true,
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 113,
+      "type": "stat",
+      "title": "Versions running",
+      "description": "Instances per Tanod version and configured deployment.id. More than one row outside a rollout means part of the fleet did not upgrade.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 51
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "count by (version, deployment_id) (tanod_build_info{environment=~\"$environment\"})",
+          "legendFormat": "{{version}} {{deployment_id}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "id": 107,
       "type": "row",
       "title": "Origin instances — is the work spread, and are they all healthy?",
@@ -1839,7 +2086,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 51
+        "y": 59
       },
       "panels": []
     },
@@ -1856,7 +2103,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 52
+        "y": 60
       },
       "fieldConfig": {
         "defaults": {
@@ -1911,7 +2158,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 52
+        "y": 60
       },
       "fieldConfig": {
         "defaults": {
@@ -1966,7 +2213,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 52
+        "y": 60
       },
       "fieldConfig": {
         "defaults": {
@@ -2035,7 +2282,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 60
+        "y": 68
       },
       "panels": []
     },
@@ -2052,7 +2299,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 61
+        "y": 69
       },
       "fieldConfig": {
         "defaults": {
@@ -2195,7 +2442,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 61
+        "y": 69
       },
       "fieldConfig": {
         "defaults": {

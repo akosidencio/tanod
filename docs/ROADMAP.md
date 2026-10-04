@@ -33,23 +33,22 @@ empty body, so a document request landed on the browser's own error screen.
 
 ## 10. Show what visitors experience
 
-The dashboard can show what Tanod does to the origin, but not what visitors
+The dashboard could show what Tanod does to the origin, but not what visitors
 got. From the same load tests:
 
-- Count responses by route and status class (`2xx`/`3xx`/`4xx`/`5xx`) as sent
-  to the client, including Tanod's own sheds.
-- Measure total time per request as the client sees it, split into queue wait
-  and origin time; today only origin render latency is recorded.
+- ~~Count responses by route and status class, including Tanod's own sheds~~ —
+  done in 0.2.0 (`tanod_responses_total`).
+- ~~Measure total time per request, split into queue wait and origin time~~ —
+  done in 0.2.0 (`tanod_request_duration_seconds`, `tanod_queue_wait_seconds`).
 - Estimate active visitors: distinct client addresses over the last 1 and 5
   minutes (an approximate sketch; no addresses leave the process), plus open
   downstream connections.
-- Export a build-info series (`version`, `deployment_id`) so every environment
-  shows what it runs.
-- Reconcile `tanod_reuse_eligible_requests_total` with `tanod_cache_total`.
-  Hits (and stale serves) can outnumber eligible requests, which drives the
-  `origin_work_avoided` ratio outside 0–100%. The dashboard now uses
-  `tanod_cache_total` alone; the recording rule and any alert on it should
-  follow once the counters agree.
+- ~~Export a build-info series~~ — done in 0.2.0 (`tanod_build_info`).
+- ~~Reconcile `tanod_reuse_eligible_requests_total` with `tanod_cache_total`~~ —
+  done in 0.2.0. Background stale-while-revalidate fetches were counted as
+  visitor requests; they are now `status="revalidate"` and excluded from the
+  eligible count. A per-process over-100% ratio could not be reproduced; if
+  it reappears in staging, compare per instance before summing.
 
 ## Current boundaries
 

@@ -230,6 +230,7 @@ impl Reloader {
         let snapshot = PolicySnapshot::build(cfg, next_generation).map_err(|e| e.to_string())?;
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let fingerprint = snapshot.fingerprint;
+        let deployment_id = snapshot.config.deployment.id.clone();
 
         // Resize before swapping: a request arriving on the new policy should
         // never find the old ceiling still in force.
@@ -283,6 +284,7 @@ impl Reloader {
             .set(i64::try_from(generation).unwrap_or(i64::MAX));
         crate::telemetry::metrics::CONFIG_FINGERPRINT
             .set(i64::try_from(fingerprint).unwrap_or(i64::MAX));
+        crate::telemetry::metrics::set_build_info(deployment_id.as_deref());
 
         Ok(generation)
     }

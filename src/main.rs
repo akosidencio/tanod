@@ -499,6 +499,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
     tanod::telemetry::metrics::CONFIG_GENERATION.set(1);
     tanod::telemetry::metrics::CONFIG_FINGERPRINT
         .set(i64::try_from(policy.load().fingerprint).unwrap_or(i64::MAX));
+    tanod::telemetry::metrics::set_build_info(policy.load().config.deployment.id.as_deref());
     // The ceilings the occupancy gauges are measured against. Published from
     // config rather than left for a dashboard to hardcode, so an alert cannot
     // go stale the first time somebody edits the budget.

@@ -987,12 +987,27 @@ See [`bench/websocket.sh`](./bench/websocket.sh).
 
 ```bash
 curl -sI localhost:8080/products/example | grep -i x-tanod   # needs debug_headers: true
-curl -s localhost:9090/metrics | grep -E 'reuse_eligible|origin_requests'
+curl -s localhost:9090/metrics | grep -E 'cache_total|reuse_eligible|responses_total'
 ```
 
-The second pair is the ratio worth watching: `tanod_origin_requests_total`
-over `tanod_reuse_eligible_requests_total` is the share of eligible traffic
-that still reached the origin.
+The ratio worth watching: `tanod_cache_total{status=~"hit|stale"}` over
+`tanod_reuse_eligible_requests_total` is the share of eligible visitor traffic
+the cache answered. Background stale-while-revalidate fetches are origin work,
+not visitors: they appear as `tanod_cache_total{status="revalidate"}` and in
+`tanod_origin_requests_total`, and in neither side of that ratio.
+
+What visitors experienced is in three series of its own:
+
+- `tanod_responses_total{route, code, source}` — every response sent, by status
+  class (`2xx`…`5xx`, or `none` when the client left first) and by who produced
+  it: `origin`, `cache`, or `tanod` (a shed, a refused upgrade, or a proxy error
+  page when the origin could not be reached).
+- `tanod_request_duration_seconds{route}` — total time as the visitor sees it.
+- `tanod_queue_wait_seconds{route}` — the part of it spent waiting for
+  admission, for requests that went through admission.
+
+`tanod_build_info{version, deployment_id}` is always 1 and says what each
+instance runs.
 
 ## Configuration
 
@@ -1496,6 +1511,7 @@ docker compose -f compose.observability.yaml down
 | Signal | Means |
 |---|---|
 | `tanod_admission_total{decision=~"shed_.*"}` rising | The ceiling is being hit. Tanod working, and users seeing `503`. Look at origin latency before raising it. |
+| `tanod_queue_wait_seconds` p95 close to `tanod_request_duration_seconds` p95 | Visitors are paying for the queue, not the render. A longer queue only makes them wait longer before the same answer. |
 | `tanod_origin_in_flight` at `tanod_concurrency_limit` | Saturated. |
 | `tanod_upstream_healthy == 0` | No backend is passing. Tanod still serves, on `stale_if_error`. |
 | `tanod_draining == 1` for longer than a deploy | An instance drained and was never replaced. |

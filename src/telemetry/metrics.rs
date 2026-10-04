@@ -37,7 +37,9 @@ pub static REQUESTS: LazyLock<IntCounterVec> = LazyLock::new(|| {
     .expect("metric registration")
 });
 
-/// `status` is one of hit, miss, stale, bypass, disabled.
+/// `status` is one of hit, miss, stale, bypass, shed, disabled — or
+/// revalidate, for a background stale-while-revalidate fetch, which is origin
+/// work but not a visitor request.
 pub static CACHE: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
         "tanod_cache_total",
@@ -90,6 +92,69 @@ pub static ORIGIN_LATENCY: LazyLock<HistogramVec> = LazyLock::new(|| {
     )
     .expect("metric registration")
 });
+
+/// Responses as sent to visitors.
+///
+/// `code` is the status class (`2xx`..`5xx`, or `none` when the client left
+/// before a response was written). `source` is who produced it: `origin`,
+/// `cache`, or `tanod` — a shed, a refused upgrade, or a proxy error page.
+/// Background revalidations are not visitor responses and are not counted.
+pub static RESPONSES: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "tanod_responses_total",
+        "Responses sent to clients, by route, status class and source",
+        &["route", "code", "source"]
+    )
+    .expect("metric registration")
+});
+
+/// Total time per request as the client sees it, from the first byte Tanod
+/// read to the last it wrote. Cache hits are sub-millisecond, hence the low
+/// buckets the origin histogram does not need.
+pub static REQUEST_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register_histogram_vec!(
+        "tanod_request_duration_seconds",
+        "Total time per request as the client sees it",
+        &["route"],
+        vec![
+            0.001, 0.005, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0
+        ]
+    )
+    .expect("metric registration")
+});
+
+/// Time spent waiting for an origin permit, for requests that went through
+/// admission (admitted or shed). Exempt classes never wait and are not counted.
+pub static QUEUE_WAIT: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register_histogram_vec!(
+        "tanod_queue_wait_seconds",
+        "Time a request waited for admission",
+        &["route"],
+        vec![
+            0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0
+        ]
+    )
+    .expect("metric registration")
+});
+
+/// Always 1; the labels carry what this process runs.
+pub static BUILD_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    register_int_gauge_vec!(
+        "tanod_build_info",
+        "Tanod version and configured deployment id; the value is always 1",
+        &["version", "deployment_id"]
+    )
+    .expect("metric registration")
+});
+
+/// Publish the build-info series, replacing the previous one so a changed
+/// `deployment.id` does not leave the old build exported beside the new.
+pub fn set_build_info(deployment_id: Option<&str>) {
+    BUILD_INFO.reset();
+    BUILD_INFO
+        .with_label_values(&[env!("CARGO_PKG_VERSION"), deployment_id.unwrap_or("")])
+        .set(1);
+}
 
 /// The denominator of the origin-work-avoidance ratio.
 ///
@@ -428,6 +493,10 @@ pub fn preregister() {
     LazyLock::force(&ORIGIN_REQUESTS);
     LazyLock::force(&ORIGIN_LATENCY);
     LazyLock::force(&REUSE_ELIGIBLE);
+    LazyLock::force(&RESPONSES);
+    LazyLock::force(&REQUEST_DURATION);
+    LazyLock::force(&QUEUE_WAIT);
+    LazyLock::force(&BUILD_INFO);
     LazyLock::force(&QUEUE_DEPTH);
     LazyLock::force(&LIMIT);
     LazyLock::force(&IN_FLIGHT);
@@ -479,6 +548,28 @@ mod tests {
     }
 
     #[test]
+    fn build_info_keeps_exactly_one_series() {
+        set_build_info(Some("build-a"));
+        set_build_info(Some("build-b"));
+        let family = prometheus::gather()
+            .into_iter()
+            .find(|family| family.get_name() == "tanod_build_info")
+            .unwrap();
+        assert_eq!(family.get_metric().len(), 1);
+        let labels = family.get_metric()[0].get_label();
+        assert!(
+            labels
+                .iter()
+                .any(|l| l.get_name() == "deployment_id" && l.get_value() == "build-b")
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|l| l.get_name() == "version" && l.get_value() == env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
     fn monotonic_evictions_are_exported_as_a_counter() {
         preregister();
         let family = prometheus::gather()
@@ -496,8 +587,20 @@ mod tests {
         // Guards the rule in this module's docs. `upstream` and `limiter` are
         // config-derived, like `route`.
         let allowed = [
-            "route", "class", "status", "reason", "decision", "upstream", "limiter", "outcome",
-            "kind", "scope",
+            "route",
+            "class",
+            "status",
+            "reason",
+            "decision",
+            "upstream",
+            "limiter",
+            "outcome",
+            "kind",
+            "scope",
+            "code",
+            "source",
+            "version",
+            "deployment_id",
         ];
         preregister();
         for family in prometheus::gather() {
