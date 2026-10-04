@@ -55,13 +55,21 @@ jobs:
       # The adapter is released in lockstep with the binary, and an npm version
       # can never be reused once published, so a mismatch is caught here rather
       # than as a mislabelled package nobody can take back.
-      - name: Verify the tag matches @tanod/next
+      - name: Verify the tag matches the npm packages
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
-          package="$(node -p "require('./packages/tanod-next/package.json').version")"
-          echo "tag=$tag package=$package"
-          if [ "$tag" != "v$package" ]; then
-            echo "::error::tag $tag does not match packages/tanod-next/package.json version $package"
+          for pkg in tanod-next tanod-linux-x64; do
+            version="$(node -p "require('./packages/$pkg/package.json').version")"
+            echo "tag=$tag $pkg=$version"
+            if [ "$tag" != "v$version" ]; then
+              echo "::error::tag $tag does not match packages/$pkg/package.json version $version"
+              exit 1
+            fi
+          done
+          # @tanod/next must install the binary built from this same tag.
+          pinned="$(node -p "require('./packages/tanod-next/package.json').optionalDependencies['@tanod/linux-x64']")"
+          if [ "$tag" != "v$pinned" ]; then
+            echo "::error::@tanod/next pins @tanod/linux-x64 $pinned, not ${tag#v}"
             exit 1
           fi
 
@@ -164,6 +172,72 @@ jobs:
           ( cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256" )
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  # A static musl binary: the same file runs on glibc and on Alpine, which is
+  # what npm's @tanod/linux-x64 ships so `tanod-next start` works in an
+  # Alpine-based app image. Built in an Alpine Rust container rather than with
+  # musl-tools on the runner, because aws-lc (rustls's crypto) wants a native
+  # musl C toolchain.
+  musl:
+    name: binary (x86_64-unknown-linux-musl)
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TARGET: x86_64-unknown-linux-musl
+    outputs:
+      artifact: ${{ steps.package.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Build
+        run: |
+          toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+          docker run --rm -v "$PWD":/src -w /src "rust:${toolchain}-alpine" sh -euc '
+            apk add --no-cache musl-dev cmake clang perl make linux-headers binutils git >/dev/null
+            git config --global --add safe.directory /src
+            export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
+            export RUSTFLAGS="--remap-path-prefix=/src=/tanod --remap-path-prefix=/usr/local/cargo/registry/src=/cargo/registry"
+            cargo build --release --locked --bin tanod --features tls --target x86_64-unknown-linux-musl
+            strip target/x86_64-unknown-linux-musl/release/tanod
+          '
+
+      # Static means it must run with no libc at all, on both kinds of host.
+      - name: Smoke test
+        run: |
+          bin="target/${{ env.TARGET }}/release/tanod"
+          file "$bin" | grep -q 'static' || { echo "::error::not statically linked"; file "$bin"; exit 1; }
+          "$bin" version
+          "$bin" check --config tanod.yaml
+          docker run --rm -v "$PWD/$bin:/tanod:ro" -v "$PWD/tanod.yaml:/tanod.yaml:ro" \
+            alpine:3 /tanod check --config /tanod.yaml
+
+      - name: Package
+        id: package
+        run: |
+          version="$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          name="tanod-${version}-${{ env.TARGET }}"
+          mkdir -p "dist/$name/docs"
+          cp "target/${{ env.TARGET }}/release/tanod" "dist/$name/"
+          cp packaging/systemd/tanod.service "dist/$name/"
+          cp packaging/install.sh "dist/$name/"
+          chmod 0755 "dist/$name/install.sh"
+          cp docs/STANDALONE.md "dist/$name/docs/"
+          cp LICENSE README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          ( cd "dist/$name" && shasum -a 256 tanod > "../$name.binary.sha256" )
+          ( cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256" )
+          echo "name=$name" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -291,7 +365,7 @@ jobs:
   # archive.
   publish:
     name: publish release artifacts
-    needs: [binaries, sbom, image]
+    needs: [binaries, musl, sbom, image]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -314,6 +388,12 @@ jobs:
         with:
           name: ${{ needs.binaries.outputs.artifact }}
           path: staging/binary
+
+      - name: Download the musl binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.musl.outputs.artifact }}
+          path: staging/musl
 
       - name: Download the SBOM
         uses: actions/download-artifact@v4
@@ -380,24 +460,23 @@ jobs:
             not reproducible either — verify the image through its provenance
             attestation instead.
 
-  # @tanod/next to npmjs.com, last.
+  # The npm packages, last: @tanod/linux-x64 (the musl binary) and then
+  # @tanod/next, which pins it as an optional dependency.
   #
   # After the GitHub release on purpose: an npm version can be deprecated but
   # never republished, so it goes out only once everything else in the release
-  # has. The package has no build step — `files` ships `src` as tested — and
-  # carries npm provenance linking it to this workflow run.
+  # has. Neither package has a build step — @tanod/next ships `src` as tested,
+  # and the platform package ships the binary the musl job built and smoke
+  # tested. Both carry npm provenance linking them to this workflow run.
   npm:
-    name: publish @tanod/next to npm
-    needs: publish
+    name: publish npm packages
+    needs: [publish, musl]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
       # npm provenance signs with the workflow's OIDC identity.
       id-token: write
-    defaults:
-      run:
-        working-directory: packages/tanod-next
 
     steps:
       - uses: actions/checkout@v4
@@ -409,31 +488,25 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
-      # A workflow_dispatch re-cut of a tag that already reached npm would
-      # otherwise fail here on "cannot publish over a previously published
-      # version" after every other job succeeded.
-      - name: Skip a version npm already has
-        id: check
+      - name: Download the musl binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.musl.outputs.artifact }}
+          path: staging/musl
+
+      - name: Put the binary in @tanod/linux-x64
         run: |
-          name="$(node -p "require('./package.json').name")"
-          version="$(node -p "require('./package.json').version")"
-          if npm view "$name@$version" version >/dev/null 2>&1; then
-            echo "::notice::$name@$version is already on npm; nothing to publish"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-          echo "name=$name" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          archive="$(find staging/musl -name '*.tar.gz' | head -1)"
+          mkdir -p packages/tanod-linux-x64/bin
+          tar -xzf "$archive" -C staging/musl
+          cp "$(find staging/musl -type f -name tanod | head -1)" packages/tanod-linux-x64/bin/tanod
+          chmod 0755 packages/tanod-linux-x64/bin/tanod
+          packages/tanod-linux-x64/bin/tanod version
 
-      - name: Show what will be published
-        if: steps.check.outputs.skip == 'false'
-        run: npm pack --dry-run
-
-      # A prerelease tag (v0.3.0-rc.1) goes to the `next` dist-tag, so
-      # `npm install @tanod/next` keeps resolving to the last stable release.
+      # The platform package first: @tanod/next depends on it, and an install
+      # that resolved @tanod/next before its binary existed would quietly
+      # skip the optional dependency.
       - name: Publish
-        if: steps.check.outputs.skip == 'false'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -441,11 +514,21 @@ jobs:
             echo "::error::the NPM_TOKEN repository secret is not set"
             exit 1
           fi
-          dist_tag=latest
-          case "${{ steps.check.outputs.version }}" in *-*) dist_tag=next ;; esac
-          npm publish --access public --provenance --tag "$dist_tag"
-          {
-            echo "### Published to npm"
-            echo
-            echo "\`${{ steps.check.outputs.name }}@${{ steps.check.outputs.version }}\` (dist-tag \`$dist_tag\`)"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "### Published to npm" >> "$GITHUB_STEP_SUMMARY"
+          for dir in packages/tanod-linux-x64 packages/tanod-next; do
+            name="$(node -p "require('./$dir/package.json').name")"
+            version="$(node -p "require('./$dir/package.json').version")"
+            # A workflow_dispatch re-cut of a tag that already reached npm
+            # would otherwise fail on "cannot publish over a previously
+            # published version" after every other job succeeded.
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "::notice::$name@$version is already on npm; skipping"
+              continue
+            fi
+            # A prerelease (0.3.0-rc.1) goes to the `next` dist-tag, so a
+            # plain install keeps resolving to the last stable release.
+            dist_tag=latest
+            case "$version" in *-*) dist_tag=next ;; esac
+            ( cd "$dir" && npm pack --dry-run && npm publish --access public --provenance --tag "$dist_tag" )
+            echo "- \`$name@$version\` (dist-tag \`$dist_tag\`)" >> "$GITHUB_STEP_SUMMARY"
+          done

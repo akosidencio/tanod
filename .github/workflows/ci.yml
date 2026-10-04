@@ -115,6 +115,30 @@ jobs:
       - name: Audit
         run: cargo audit -D warnings
 
+  # The static musl binary and `tanod-next start`, together, in an Alpine
+  # Node image: the deployment @tanod/linux-x64 exists for. Built here as well
+  # as at release so a change that breaks the static build fails on the pull
+  # request, not on the tag.
+  static:
+    name: static binary + tanod-next start (alpine)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Build the static binary
+        run: |
+          toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+          docker run --rm -v "$PWD":/src -w /src "rust:${toolchain}-alpine" sh -euc '
+            apk add --no-cache musl-dev cmake clang perl make linux-headers >/dev/null
+            cargo build --release --locked --bin tanod --features tls --target x86_64-unknown-linux-musl
+          '
+      - name: Run tanod-next start with it in node:22-alpine
+        run: |
+          docker run --rm -v "$PWD":/src -w /src node:22-alpine \
+            sh scripts/start-smoke.sh target/x86_64-unknown-linux-musl/release/tanod
+
   # @tanod/next, on both runtimes it claims to support.
   #
   # The Rust binary is built first on purpose: the package's headline claim is

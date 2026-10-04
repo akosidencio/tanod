@@ -39,6 +39,15 @@ impl ShedReason {
             ShedReason::QueueTimeout => "queue_timeout",
         }
     }
+
+    /// The admission metric's `decision` label. Static rather than formatted
+    /// from [`as_str`](Self::as_str), because it is written on every shed.
+    pub fn metric_label(self) -> &'static str {
+        match self {
+            ShedReason::QueueFull => "shed_queue_full",
+            ShedReason::QueueTimeout => "shed_queue_timeout",
+        }
+    }
 }
 
 /// Origin work in flight. Releasing it is what lets the next request in, so it
@@ -315,6 +324,13 @@ impl Drop for QueueSlot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shed_metric_labels_match_the_reason() {
+        for reason in [ShedReason::QueueFull, ShedReason::QueueTimeout] {
+            assert_eq!(reason.metric_label(), format!("shed_{}", reason.as_str()));
+        }
+    }
 
     fn lim(limit: usize, q: usize, t_ms: u64) -> Arc<Limiter> {
         Limiter::new("test", limit, q, Duration::from_millis(t_ms))

@@ -20,8 +20,9 @@ working prototype without sustained production validation.
 
 ## 9. Improve what a shed visitor sees
 
-From the Reko storefront load tests (2026-09-26/27): a shed was a `503` with an
-empty body, so a document request landed on the browser's own error screen.
+From staging load tests against a real Next.js storefront (2026-09-26/27): a
+shed was a `503` with an empty body, so a document request landed on the
+browser's own error screen.
 
 - ~~Add a configurable overload body for document requests~~ — done in 0.2.0
   (`overload.page`).

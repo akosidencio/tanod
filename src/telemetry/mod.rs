@@ -13,4 +13,6 @@ pub mod json;
 pub mod logging;
 pub mod metrics;
 pub mod otlp;
+pub mod otlp_metrics;
 pub mod trace;
+pub mod transport;

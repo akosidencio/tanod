@@ -131,6 +131,12 @@ coalescing value without making correctness depend on affinity. Configure
 `TANOD_PURGE_URLS`; a fan-out purge fails if any local cache cannot be
 invalidated.
 
+Running Tanod inside each app instance with `tanod-next start` is the other
+end of the same trade: no partitioning and no fan-out list, because each Tanod
+guards exactly one instance, at the cost of per-instance caches and purges that
+reach only the instance that received them. The README's
+[Choosing a topology](../README.md#choosing-a-topology) compares the two.
+
 The reference keeps static partitioning authoritative. Capacity leases and
 adaptive limits add coordination and failure modes without evidence that the
 fixed allocation is insufficient. Distributed Tanod caching and coalescing

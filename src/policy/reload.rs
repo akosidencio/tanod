@@ -97,6 +97,13 @@ impl Reloader {
         if cfg.telemetry.prometheus != current.config.telemetry.prometheus {
             return Err("telemetry.prometheus changed; that needs a restart".to_string());
         }
+        if cfg.telemetry.metrics != current.config.telemetry.metrics {
+            return Err(
+                "telemetry.metrics changed; the metric exporter is built once at startup and \
+                 that needs a restart"
+                    .to_string(),
+            );
+        }
         if cfg.cache.max_memory != current.config.cache.max_memory
             || cfg.cache.store != current.config.cache.store
             || cfg.cache.eviction != current.config.cache.eviction

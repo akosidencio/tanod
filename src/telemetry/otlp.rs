@@ -15,10 +15,10 @@
 //! roughly two hundred lines, all of them testable, and it costs no new
 //! dependency at all.
 //!
-//! What is given up is real: no gRPC, no compression, no retry with backoff,
-//! no TLS. The first three do not matter for a batch of spans going to a local
-//! collector. The fourth is refused rather than faked — see
-//! [`parse_endpoint`].
+//! What is given up is real: no gRPC, no compression, no retry with backoff.
+//! None of them matter for a batch of spans posted every few seconds. TLS is
+//! available in a binary built with the `tls` feature and refused otherwise —
+//! see [`super::transport`].
 //!
 //! # Telemetry must never be load-bearing
 //!
@@ -40,13 +40,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use pingora_core::server::ShutdownWatch;
 use pingora_core::services::background::BackgroundService;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 use super::json::{escape_into, quoted};
 use super::metrics;
 use super::trace::{SpanId, TraceId};
+use super::transport::{self, Transport};
 use crate::config::schema::Otlp;
 
 /// OTLP `SpanKind`. Only the two Tanod produces.
@@ -162,121 +161,17 @@ impl SpanSink {
     }
 }
 
-/// Where spans are posted.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Endpoint {
-    pub host: String,
-    pub port: u16,
-    pub path: String,
-    /// The `Host` header value, with brackets kept for IPv6 literals.
-    pub authority: String,
-}
+pub use super::transport::Endpoint;
 
-/// Parse `http://host[:port][/path]`.
-///
-/// `https://` is **refused**, not silently downgraded. A hand-written exporter
-/// that spoke cleartext to an endpoint someone had written as `https` would be
-/// the same class of failure as a config naming a CA that is never read: the
-/// operator has every reason to believe a protection is on. Run a collector as
-/// a local sidecar and let it terminate TLS on the way out.
+/// Parse a span endpoint; `/v1/traces` when the URL has no path.
 pub fn parse_endpoint(raw: &str) -> Result<Endpoint, String> {
-    if raw != raw.trim() {
-        return Err("the OTLP endpoint has leading or trailing whitespace".to_string());
-    }
-    if !raw.is_ascii()
-        || raw.bytes().any(|b| b <= 0x20 || b == 0x7f)
-        || raw.contains('#')
-        || raw.contains('\\')
-    {
-        return Err(
-            "the OTLP endpoint contains whitespace, control characters, a fragment, or a backslash"
-                .to_string(),
-        );
-    }
-    if let Some(rest) = raw.strip_prefix("https://") {
-        let _ = rest;
-        return Err(
-            "OTLP endpoints must be `http://`. This exporter is deliberately plaintext-only: \
-             run an OpenTelemetry Collector alongside Tanod and let it speak TLS onward, \
-             rather than have Tanod claim a transport it does not implement"
-                .to_string(),
-        );
-    }
-    let rest = raw
-        .strip_prefix("http://")
-        .ok_or_else(|| format!("`{raw}` is not an http:// URL"))?;
-    if rest.is_empty() {
-        return Err("the OTLP endpoint has no host".to_string());
-    }
-
-    let (authority, path) = match rest.find('/') {
-        Some(i) => {
-            let (a, p) = rest.split_at(i);
-            (a, p)
-        }
-        None => (rest, ""),
-    };
-    if authority.is_empty() {
-        return Err("the OTLP endpoint has no host".to_string());
-    }
-    if authority.contains('@') {
-        return Err("the OTLP endpoint must not carry userinfo".to_string());
-    }
-    if authority.contains('?') {
-        return Err("the OTLP endpoint authority contains a query".to_string());
-    }
-
-    // IPv6 literals are bracketed and contain the colons that would otherwise
-    // be read as a port separator.
-    let (host, port) = if let Some(close) = authority.strip_prefix('[') {
-        let (inside, after) = close
-            .split_once(']')
-            .ok_or_else(|| format!("unterminated IPv6 literal in `{authority}`"))?;
-        let port = match after.strip_prefix(':') {
-            Some(p) => parse_port(p)?,
-            None if after.is_empty() => 4318,
-            None => return Err(format!("unexpected `{after}` after the IPv6 literal")),
-        };
-        (inside.to_string(), port)
-    } else {
-        match authority.rsplit_once(':') {
-            Some((h, p)) => (h.to_string(), parse_port(p)?),
-            None => (authority.to_string(), 4318),
-        }
-    };
-    if host.is_empty() {
-        return Err("the OTLP endpoint has no host".to_string());
-    }
-
-    Ok(Endpoint {
-        host,
-        port,
-        // OTLP/HTTP's default path for traces.
-        path: if path.is_empty() {
-            "/v1/traces".to_string()
-        } else {
-            path.to_string()
-        },
-        authority: authority.to_string(),
-    })
-}
-
-fn parse_port(raw: &str) -> Result<u16, String> {
-    raw.parse::<u16>()
-        .map_err(|_| format!("`{raw}` is not a TCP port"))
-        .and_then(|p| {
-            if p == 0 {
-                Err("port 0 is not a destination".to_string())
-            } else {
-                Ok(p)
-            }
-        })
+    transport::parse_endpoint(raw, "/v1/traces")
 }
 
 /// The batching exporter, run as a Pingora background service so it shares the
 /// server's runtime and shutdown signal.
 pub struct OtlpExporter {
-    endpoint: Endpoint,
+    transport: Transport,
     timeout: Duration,
     max_batch: usize,
     interval: Duration,
@@ -295,7 +190,11 @@ pub fn build(
     cfg: &Otlp,
     resource: Vec<(String, String)>,
 ) -> Result<(SpanSink, OtlpExporter), String> {
-    let endpoint = parse_endpoint(&cfg.endpoint)?;
+    let transport = Transport::new(
+        parse_endpoint(&cfg.endpoint)?,
+        &cfg.headers,
+        cfg.timeout.as_duration(),
+    )?;
     let (tx, rx) = mpsc::channel(cfg.max_queue.max(1));
     let dropped = Arc::new(AtomicU64::new(0));
     let sink = SpanSink {
@@ -303,7 +202,7 @@ pub fn build(
         dropped: dropped.clone(),
     };
     let exporter = OtlpExporter {
-        endpoint,
+        transport,
         timeout: cfg.timeout.as_duration(),
         max_batch: cfg.max_batch.max(1),
         interval: cfg.interval.as_duration(),
@@ -316,7 +215,7 @@ pub fn build(
 
 impl OtlpExporter {
     pub fn endpoint(&self) -> &Endpoint {
-        &self.endpoint
+        self.transport.endpoint()
     }
 
     async fn flush(&self, batch: &mut Vec<SpanRecord>) {
@@ -351,64 +250,8 @@ impl OtlpExporter {
         log::debug!("OTLP shutdown deadline dropped {count} queued span(s)");
     }
 
-    /// One `POST`, one connection, no keep-alive.
-    ///
-    /// A pooled connection would save a handshake every `interval` — a cost
-    /// measured in microseconds every couple of seconds — in exchange for
-    /// owning connection state, half-open detection and a reconnect policy. It
-    /// is not worth it for a background exporter.
     async fn post(&self, body: &str) -> Result<(), String> {
-        let attempt = async {
-            let mut stream = TcpStream::connect((self.endpoint.host.as_str(), self.endpoint.port))
-                .await
-                .map_err(|e| format!("connect: {e}"))?;
-            let head = format!(
-                "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\n\
-                 Content-Length: {}\r\nUser-Agent: tanod/{}\r\nConnection: close\r\n\r\n",
-                self.endpoint.path,
-                self.endpoint.authority,
-                body.len(),
-                env!("CARGO_PKG_VERSION"),
-            );
-            stream
-                .write_all(head.as_bytes())
-                .await
-                .map_err(|e| format!("write headers: {e}"))?;
-            stream
-                .write_all(body.as_bytes())
-                .await
-                .map_err(|e| format!("write body: {e}"))?;
-
-            // Read only far enough to see the status line. The response body
-            // is a partial-success report nobody acts on, and reading it
-            // unbounded would let a misbehaving collector feed this process.
-            let mut buf = [0u8; 256];
-            let mut seen = Vec::with_capacity(64);
-            loop {
-                let n = stream
-                    .read(&mut buf)
-                    .await
-                    .map_err(|e| format!("read: {e}"))?;
-                if n == 0 {
-                    break;
-                }
-                seen.extend_from_slice(buf.get(..n).unwrap_or_default());
-                if seen.windows(2).any(|w| w == b"\r\n") || seen.len() >= 512 {
-                    break;
-                }
-            }
-            let line = String::from_utf8_lossy(&seen);
-            let status = line.split_whitespace().nth(1).unwrap_or("");
-            if status.starts_with('2') {
-                Ok(())
-            } else {
-                Err(format!("collector answered `{}`", line.trim_end()))
-            }
-        };
-        match tokio::time::timeout(self.timeout, attempt).await {
-            Ok(result) => result,
-            Err(_) => Err(format!("timed out after {:?}", self.timeout)),
-        }
+        self.transport.post_json(body).await
     }
 }
 
@@ -419,11 +262,7 @@ impl BackgroundService for OtlpExporter {
             log::error!("the OTLP exporter was started twice; the second start does nothing");
             return;
         };
-        log::info!(
-            "exporting spans to http://{}{}",
-            self.endpoint.authority,
-            self.endpoint.path
-        );
+        log::info!("exporting spans to {}", self.endpoint().url());
         let mut batch: Vec<SpanRecord> = Vec::with_capacity(self.max_batch);
         let mut ticker = tokio::time::interval(self.interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -554,6 +393,7 @@ fn encode_span(s: &mut String, span: &SpanRecord) {
 mod tests {
     use super::*;
     use crate::config::units::Dur;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn span() -> SpanRecord {
         SpanRecord {
@@ -577,6 +417,7 @@ mod tests {
         Otlp {
             endpoint: endpoint.to_string(),
             timeout: Dur(Duration::from_secs(5)),
+            headers: Default::default(),
             max_queue: 16,
             max_batch: 8,
             interval: Dur(Duration::from_secs(1)),
@@ -615,12 +456,16 @@ mod tests {
     }
 
     #[test]
-    fn https_is_refused_rather_than_downgraded() {
+    fn https_is_refused_rather_than_downgraded_without_tls() {
         // The failure this prevents: a config that says https, an exporter
         // that speaks cleartext, and no way to tell from the outside.
-        let err = parse_endpoint("https://collector:4318/v1/traces").unwrap_err();
-        assert!(err.contains("http://"), "{err}");
-        assert!(err.contains("Collector"), "{err}");
+        let result = parse_endpoint("https://collector:4318/v1/traces");
+        if cfg!(feature = "tls") {
+            assert!(result.unwrap().tls);
+        } else {
+            let err = result.unwrap_err();
+            assert!(err.contains("tls"), "{err}");
+        }
     }
 
     #[test]

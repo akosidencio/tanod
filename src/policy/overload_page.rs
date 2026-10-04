@@ -6,7 +6,7 @@
 
 use crate::config::schema::Overload;
 use bytes::Bytes;
-use http::{HeaderMap, Method};
+use http::{HeaderMap, HeaderValue, Method};
 
 /// A rendered page and whether it is the built-in one.
 ///
@@ -16,6 +16,8 @@ use http::{HeaderMap, Method};
 #[derive(Debug, Clone)]
 pub struct OverloadPage {
     pub html: Bytes,
+    /// `Content-Length`, formatted once rather than on every shed.
+    pub content_length: HeaderValue,
     pub built_in: bool,
 }
 
@@ -48,6 +50,7 @@ pub fn render(overload: &Overload) -> Option<OverloadPage> {
         .replace("{{refresh}}", &refresh)
         .replace("{{retry_after}}", &retry_after);
     Some(OverloadPage {
+        content_length: HeaderValue::from(html.len()),
         html: Bytes::from(html),
         built_in,
     })
@@ -68,13 +71,19 @@ pub fn is_navigation(method: &Method, headers: &HeaderMap) -> bool {
     {
         return false;
     }
-    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
     // Every current browser sends this, and it is the one signal that means
     // "a person is loading a page" rather than "a script asked for HTML".
-    if let Some(mode) = header("sec-fetch-mode") {
-        return mode.eq_ignore_ascii_case("navigate");
+    if let Some(mode) = headers.get("sec-fetch-mode") {
+        return mode.as_bytes().eq_ignore_ascii_case(b"navigate");
     }
-    header("accept").is_some_and(|accept| accept.to_ascii_lowercase().contains("text/html"))
+    // Compared in place: this runs on every shed, when the proxy is busiest,
+    // and lowercasing a copy of the header first would allocate each time.
+    headers.get("accept").is_some_and(|accept| {
+        accept
+            .as_bytes()
+            .windows(b"text/html".len())
+            .any(|w| w.eq_ignore_ascii_case(b"text/html"))
+    })
 }
 
 fn escape(text: &str) -> String {
@@ -122,6 +131,7 @@ mod tests {
         assert!(html.contains(r#"<meta http-equiv="refresh" content="5">"#));
         assert!(html.contains("refresh by itself in 5 seconds"));
         assert!(html.contains(r#"<html lang="en">"#));
+        assert_eq!(page.content_length, page.html.len().to_string().as_str());
     }
 
     #[test]

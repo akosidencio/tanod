@@ -28,6 +28,25 @@ use prometheus::{
 };
 use std::sync::LazyLock;
 
+/// Every label name Tanod's own metrics use. A test holds the registry to
+/// this list, and pushed-metric labels from config may not reuse a name.
+pub const LABEL_NAMES: &[&str] = &[
+    "route",
+    "class",
+    "status",
+    "reason",
+    "decision",
+    "upstream",
+    "limiter",
+    "outcome",
+    "kind",
+    "scope",
+    "code",
+    "source",
+    "version",
+    "deployment_id",
+];
+
 pub static REQUESTS: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
         "tanod_requests_total",
@@ -155,6 +174,16 @@ pub fn set_build_info(deployment_id: Option<&str>) {
         .with_label_values(&[env!("CARGO_PKG_VERSION"), deployment_id.unwrap_or("")])
         .set(1);
 }
+
+/// `outcome` is exported or failed, one per OTLP metric export attempt.
+pub static METRIC_EXPORTS: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "tanod_metric_exports_total",
+        "OTLP metric export attempts, by outcome",
+        &["outcome"]
+    )
+    .expect("metric registration")
+});
 
 /// The denominator of the origin-work-avoidance ratio.
 ///
@@ -497,6 +526,7 @@ pub fn preregister() {
     LazyLock::force(&REQUEST_DURATION);
     LazyLock::force(&QUEUE_WAIT);
     LazyLock::force(&BUILD_INFO);
+    LazyLock::force(&METRIC_EXPORTS);
     LazyLock::force(&QUEUE_DEPTH);
     LazyLock::force(&LIMIT);
     LazyLock::force(&IN_FLIGHT);
@@ -586,22 +616,7 @@ mod tests {
     fn no_metric_is_labelled_by_anything_client_controlled() {
         // Guards the rule in this module's docs. `upstream` and `limiter` are
         // config-derived, like `route`.
-        let allowed = [
-            "route",
-            "class",
-            "status",
-            "reason",
-            "decision",
-            "upstream",
-            "limiter",
-            "outcome",
-            "kind",
-            "scope",
-            "code",
-            "source",
-            "version",
-            "deployment_id",
-        ];
+        let allowed = LABEL_NAMES;
         preregister();
         for family in prometheus::gather() {
             for metric in family.get_metric() {
