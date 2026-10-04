@@ -1467,7 +1467,7 @@
       "id": 101,
       "type": "stat",
       "title": "Requests turned away",
-      "description": "Share of all visitor responses that were Tanod refusing the request (queue full, queue timeout, or a coalescing wait that ran out) over 5 minutes. A browser loading a page gets the overload page; other clients get a bare 503. On App Platform the 503 arrives as 504.",
+      "description": "Share of all visitor responses that were Tanod refusing the request (queue full, queue timeout, or a coalescing wait that ran out) over 5 minutes. A browser loading a page gets the overload page; other clients get a bare 503, which some platform load balancers rewrite as 504.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1532,8 +1532,8 @@
     {
       "id": 102,
       "type": "stat",
-      "title": "Site API calls turned away",
-      "description": "The same share for the `api` route only: session, cart, wishlist and other calls the pages make. When these fail, signed-in pages break even if the page itself loaded.",
+      "title": "Turned away, selected routes",
+      "description": "The same share for the routes chosen in the Route picker. Pick the ones whose failure breaks pages even when the page itself loaded, such as the API calls a page makes for session or personal data.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1591,7 +1591,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(tanod_cache_total{environment=~\"$environment\", route=\"api\", status=\"shed\"}[5m])) / clamp_min(sum(rate(tanod_responses_total{environment=~\"$environment\", route=\"api\"}[5m])), 0.001)"
+          "expr": "sum(rate(tanod_cache_total{environment=~\"$environment\", route=~\"$route\", status=\"shed\"}[5m])) / clamp_min(sum(rate(tanod_responses_total{environment=~\"$environment\", route=~\"$route\"}[5m])), 0.001)"
         }
       ]
     },
@@ -1599,7 +1599,7 @@
       "id": 103,
       "type": "stat",
       "title": "Purges (last hour)",
-      "description": "Invalidations received on the admin listener in the last hour. Content edits in the CMS should show up here; zero during a day of edits means the storefront’s /api/revalidate is not reaching Tanod.",
+      "description": "Invalidations received on the admin listener in the last hour. Content changes in your CMS should show up here; none during a day of edits means the app's revalidation hook is not reaching Tanod.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -2612,6 +2612,33 @@
         },
         "options": [],
         "description": "The environment label the collector stamps on every series (staging, production)."
+      },
+      {
+        "name": "route",
+        "label": "Route",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(tanod_responses_total{environment=~\"$environment\"}, route)",
+          "refId": "route"
+        },
+        "definition": "label_values(tanod_responses_total{environment=~\"$environment\"}, route)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "sort": 1,
+        "hide": 0,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "description": "Routes for the \"Turned away, selected routes\" panel: pick the ones whose failure breaks pages, such as the API the pages call."
       }
     ]
   },
