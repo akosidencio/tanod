@@ -535,17 +535,21 @@ predicts behaviour under real traffic.
 
 ## Installation
 
-Tanod is not on crates.io. It targets Linux: the published image is
-`linux/amd64` and the release binary is `x86_64-unknown-linux-gnu`. There are
-no macOS or Windows artifacts.
+Tanod is not on crates.io. It targets Linux x64: the published image is
+`linux/amd64`, and a release attaches an `x86_64-unknown-linux-gnu` binary and
+a static `x86_64-unknown-linux-musl` one that runs on any Linux, Alpine
+included. There are no macOS or Windows artifacts.
 
-Choose either supported deployment form:
+Choose the deployment form that fits:
 
+- **Inside your app's container:** install `@tanod/next` with your package
+  manager and start the app with `tanod-next start`. One container, no
+  separate proxy image. See [Run Tanod inside your app](#run-tanod-inside-your-app).
 - **One Linux server:** install the release binary, generate one
   `/etc/tanod/tanod.yaml`, and run it under systemd. Follow the
   [standalone server guide](./docs/STANDALONE.md).
-- **Containers:** use the published image with Docker, a managed container
-  platform, or Kubernetes.
+- **A separate container:** use the published image with Docker, a managed
+  container platform, or Kubernetes.
 
 Tagged releases publish a `linux/amd64` container image to GitHub Packages at
 `ghcr.io/akosidencio/tanod`, built from the repository
@@ -613,6 +617,61 @@ is ignored, so the origin sees your load balancer as the client and
 `X-Forwarded-Proto: http` on an HTTPS site. Ignoring them is the safe default
 and the wrong configuration.
 
+### Run Tanod inside your app
+
+`tanod-next start` runs your server and Tanod in front of it as one process
+tree, so a deployment is your app's own container and nothing else:
+
+```bash
+npm install @tanod/next     # also installs @tanod/linux-x64, the binary
+```
+
+```json
+"scripts": {
+  "start": "tanod-next start"
+}
+```
+
+It starts the origin on `127.0.0.1:3000`, waits until that port accepts
+connections, then starts Tanod, so a platform health check on Tanod's port
+passes only when the app can serve. `SIGTERM` drains Tanod first and stops the
+origin after; `SIGHUP` reloads Tanod's config. If either process exits, the
+other is stopped and the exit code is passed on, so the platform restarts the
+pair.
+
+The origin is any command that serves HTTP, so this is not specific to
+Next.js — with no command it runs `next start`, and anything after `--`
+replaces it:
+
+```bash
+tanod-next start -- node server.js                    # Next standalone output
+tanod-next start -- node .output/server/index.mjs     # Nuxt
+tanod-next start -- node build                        # SvelteKit (adapter-node)
+```
+
+The origin is given `PORT` and `HOSTNAME=127.0.0.1`; Tanod keeps the
+environment it was started with, so its config can take the platform's port:
+
+```yaml
+server:
+  listen: "0.0.0.0:${PORT:-8080}"
+origin:
+  upstreams: ["127.0.0.1:3000"]
+cache:
+  purge:
+    token: "${TANOD_PURGE_TOKEN}"
+```
+
+`@tanod/linux-x64` is a static binary, so the same package works in glibc and
+Alpine images. On other platforms, or to use your own build, set `TANOD_BIN`.
+With Next's standalone output, the traced `node_modules` does not include
+`@tanod`, so copy it into the runner stage:
+`COPY --from=deps /app/node_modules/@tanod ./node_modules/@tanod`.
+
+Every instance gets its own Tanod, so its concurrency limit is simply that
+instance's capacity and no replica partitioning is needed. The cost is that the
+cache and coalescing are per instance too.
+
 ## Using Tanod with Next.js
 
 > **This is validated locally and in controlled managed-platform staging, not
@@ -653,9 +712,12 @@ counters and response contents; the stack is removed on exit.
 ### What you install, and where
 
 Tanod is a **standalone binary that runs as its own process**, in front of
-your Next.js server. It is not an npm package, not a dependency, not Next.js
-middleware, and not something you import. **Your application code does not
-change at all** — the only optional edit is adding a health endpoint, below.
+your Next.js server. It is not Next.js middleware and not something you import.
+You can run it as its own container or service, or install it with npm and
+start it beside your server with `tanod-next start`
+([Run Tanod inside your app](#run-tanod-inside-your-app)) — either way it is a
+separate process. **Your application code does not change at all** — the only
+optional edit is adding a health endpoint, below.
 
 What changes is the network path. Today:
 
@@ -1032,6 +1094,61 @@ Three rules govern the config surface:
 
 Configuration is parsed with [`serde-saphyr`](https://crates.io/crates/serde-saphyr):
 pure Rust, actively maintained, and it reports the line and column of a bad key.
+
+### Secrets and settings from the environment
+
+Any value can be written as `${NAME}` and is read from the environment when the
+config is loaded, so a secret never has to be in a file or an image:
+
+```yaml
+cache:
+  purge:
+    token: "${TANOD_PURGE_TOKEN}"
+telemetry:
+  metrics:
+    otlp:
+      labels:
+        environment: "${DEPLOY_ENV:-unset}"
+```
+
+An unset variable is a startup error naming it and its line; `${NAME:-default}`
+makes one optional, and `$${` is a literal `${`. Values may not contain
+whitespace, quotes, backslashes, `#` or control characters, because the
+expansion happens before the YAML is parsed and a value must not be able to
+change its structure. Nothing inside a YAML comment is expanded.
+
+### Pushing metrics over OTLP
+
+Instead of, or as well as, being scraped on `telemetry.prometheus`, Tanod can
+push the same metrics to an OTLP/HTTP endpoint, such as Grafana Cloud's OTLP
+gateway, with no collector beside it:
+
+```yaml
+telemetry:
+  metrics:
+    otlp:
+      endpoint: "https://otlp-gateway-prod-ap-southeast-1.grafana.net/otlp/v1/metrics"
+      headers:
+        Authorization: "Basic ${GRAFANA_OTLP_CREDENTIALS}"
+      interval: 60s          # one sample per series per minute
+      labels:
+        environment: "${DEPLOY_ENV:-unset}"
+```
+
+Counters are sent as cumulative sums and histograms as cumulative OTLP
+histograms, so a Prometheus-compatible backend shows the same series names
+`/metrics` would. `labels` go on every data point: resource attributes reach
+such a backend only as a separate `target_info` series, so a label a dashboard
+filters on has to travel on the points. Each process reports its hostname as
+`service.instance.id`, which keeps replicas apart.
+
+`https://` endpoints need a binary built with the `tls` feature (the release
+binaries, the image and `@tanod/linux-x64` all have it) and are verified
+against the system CA store; a binary without it refuses `https://` rather
+than sending in cleartext. Span export (`telemetry.tracing.otlp`) takes the
+same `headers` and `https://`. A failed export is counted in
+`tanod_metric_exports_total{outcome="failed"}`, logged once when it starts,
+and never retried into a backlog.
 
 ### Listeners, TLS and HTTP/2
 

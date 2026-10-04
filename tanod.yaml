@@ -125,7 +125,9 @@ cache:
     # does not exist: purging makes an origin re-render on demand, so an open
     # one is a stampede anybody can trigger. At least 24 printable ASCII
     # characters.
-    token: "replace-me-with-a-real-secret-32ch"
+    # Read from the environment at load, so the secret is never in this file.
+    # An unset variable is a startup error; ${NAME:-default} makes one optional.
+    token: "${TANOD_PURGE_TOKEN:-replace-me-with-a-real-secret-32ch}"
 
 coalesce:
   enabled: true
@@ -239,6 +241,17 @@ routes:
 telemetry:
   prometheus:
     listen: "127.0.0.1:9090"
+
+  # Or push the same metrics to an OTLP endpoint, with no collector beside
+  # Tanod. https:// needs a binary built with the `tls` feature.
+  # metrics:
+  #   otlp:
+  #     endpoint: "https://otlp-gateway-prod-ap-southeast-1.grafana.net/otlp/v1/metrics"
+  #     headers:
+  #       Authorization: "Basic ${GRAFANA_OTLP_CREDENTIALS}"
+  #     interval: 60s
+  #     labels:
+  #       environment: "${DEPLOY_ENV:-unset}"
 
   # Readiness, liveness and status, on a listener of their own.
   #

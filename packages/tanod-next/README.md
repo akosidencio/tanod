@@ -29,6 +29,29 @@ npm install --save-dev @tanod/next   # or: bun add -d @tanod/next
 
 ---
 
+
+## Running the app and Tanod together
+
+`tanod-next start` runs your server and Tanod in front of it in one container.
+Install `@tanod/next` as a regular dependency for this (it brings the
+`@tanod/linux-x64` binary as an optional dependency), then:
+
+```json
+"scripts": { "start": "tanod-next start" }
+```
+
+The origin starts on `127.0.0.1:3000` (`--origin-port`), Tanod starts once the
+origin accepts connections, `SIGTERM` drains Tanod before stopping the origin,
+and either process exiting stops both. The origin can be any HTTP server:
+
+```bash
+tanod-next start -- node server.js                  # Next standalone output
+tanod-next start -- node .output/server/index.mjs   # Nuxt
+```
+
+See `tanod-next start --help` and the main README's
+[Run Tanod inside your app](https://github.com/akosidencio/tanod#run-tanod-inside-your-app).
+
 ## Generating configuration
 
 ```bash

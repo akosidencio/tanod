@@ -10,10 +10,12 @@ import { readPolicy } from './policy.js';
 import { generateConfig } from './routes.js';
 import { VERIFIED_NEXT_RELEASES } from './compat.js';
 import { calibrate, doctor, explainRequest, formatInspection } from './workflows.js';
+import { START_USAGE, start } from './start.js';
 
 const USAGE = `tanod-next — generate Tanod configuration from a Next.js build
 
 USAGE
+  tanod-next start    [OPTIONS] [-- <origin command...>]   (see: tanod-next start --help)
   tanod-next generate [OPTIONS]
   tanod-next inspect  [--dist-dir DIR] [--policy FILE] [--json]
   tanod-next explain  --url URL [--method METHOD] [--header 'Name: value']
@@ -236,6 +238,13 @@ export async function main(argv) {
   if (!command || command === 'help' || command === '--help' || command === '-h') {
     process.stdout.write(USAGE);
     return 0;
+  }
+  if (command === 'start') {
+    if (rest[0] === '--help' || rest[0] === '-h') {
+      process.stdout.write(START_USAGE);
+      return 0;
+    }
+    return start(rest);
   }
   if (!['generate', 'inspect', 'explain', 'doctor', 'calibrate'].includes(command)) {
     process.stderr.write(`tanod-next: unknown command \`${command}\`\n\n${USAGE}`);

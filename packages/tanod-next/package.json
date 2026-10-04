@@ -52,6 +52,9 @@
       "optional": true
     }
   },
+  "optionalDependencies": {
+    "@tanod/linux-x64": "0.2.0"
+  },
   "keywords": [
     "tanod",
     "nextjs",

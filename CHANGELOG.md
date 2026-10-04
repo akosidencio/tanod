@@ -12,7 +12,10 @@ names.
 - Added a configurable overload page for browser page loads that are shed; other requests keep the bare `503`.
 - Added visitor metrics for responses by status and source, request duration, queue wait, and build info, with dashboard panels and recording rules.
 - Fixed background cache revalidations being counted as visitor requests.
-- Added npm publishing of `@tanod/next` to the release workflow; the adapter now shares Tanod's version.
+- Added `tanod-next start` to run the app and Tanod as one process tree, with the binary shipped through npm as `@tanod/linux-x64` (static, glibc and Alpine); any HTTP server can be the origin.
+- Added `${VAR}` environment references in the config, for secrets and per-environment values.
+- Added OTLP metric push (`telemetry.metrics.otlp`) and `https://` with custom headers for OTLP export in TLS builds, so no collector is needed beside Tanod.
+- Added a static musl binary to releases, and npm publishing of `@tanod/next` and `@tanod/linux-x64`; both share Tanod's version.
 - Upgrade note: every `harmost` name is now `tanod` — binary, image, config paths, systemd unit, `TANOD_*` environment variables, `X-Tanod-*` headers, `tanod_*` metrics, and `@tanod/next`. Update dashboards and alerts; metric history does not carry over.
 
 ## 0.1.4 — 2026-09-26
