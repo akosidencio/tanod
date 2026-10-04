@@ -670,7 +670,9 @@ With Next's standalone output, the traced `node_modules` does not include
 
 Every instance gets its own Tanod, so its concurrency limit is simply that
 instance's capacity and no replica partitioning is needed. The cost is that the
-cache and coalescing are per instance too.
+cache, coalescing and purges are per instance too; see
+[Choosing a topology](#choosing-a-topology) for when a separate Tanod tier
+serves better.
 
 ## Using Tanod with Next.js
 
@@ -734,6 +736,44 @@ client ──▶ tanod (:8080) ──▶ next start (:3000)
 Next.js stops being publicly reachable and listens only for Tanod. Whatever
 used to point at Next — your load balancer, your CDN origin, your DNS record —
 now points at Tanod instead.
+
+#### Choosing a topology
+
+There are two ways to put Tanod in front of an app, and they answer different
+questions. The deciding factors are how many app instances you run and how
+much of your traffic is the same pages at the same moment, more than how much
+traffic there is in total.
+
+```text
+In the app (tanod-next start)          A separate tier
+                                       
+client ─▶ LB ─┬─▶ [tanod ▶ app]         client ─▶ LB ─▶ tanod ×1–3 ─┬─▶ app
+              ├─▶ [tanod ▶ app]                                     ├─▶ app
+              └─▶ [tanod ▶ app]                                     └─▶ app
+```
+
+| | In the app | Separate tier |
+| --- | --- | --- |
+| **Admission** | Each instance guards its own capacity, so autoscaling needs no coordination: a new instance arrives with its own ceiling | One budget for the whole origin pool, split across Tanod replicas; scaling Tanod out means regenerating the split |
+| **Cache and coalescing** | Per instance: a hot page renders once *per instance*, and the hit ratio falls as instances are added | Shared by every origin behind a Tanod: a hot page renders once *per Tanod replica*, however many origins there are |
+| **Purges** | Reach only the instance that receives them unless every instance is addressed; with several instances, rely on short TTLs | A fixed list of one admin endpoint per Tanod replica, fanned out by `@tanod/next` |
+| **When one origin fails** | Its Tanod has no other origin to send to; the load balancer routes around the instance | Load-aware balancing, the breaker and retries move work to healthy origins |
+| **Moving parts** | None added: no extra hop, no extra service | One more hop and one more service to run, keep available and monitor |
+
+**Run it in the app** for one to a few instances, for autoscaled apps where
+per-instance overload protection is the point, and on managed platforms where
+an extra service costs money or is awkward to run. Microcache TTLs of a few
+seconds keep the per-instance purge limit harmless.
+
+**Run a separate tier** when there are many origin instances, when reuse is
+the point — launches, flash sales and other moments when thousands of visitors
+hit the same few pages — when the site leans on cache tags and purges, or when
+work should fail over between origins. Larger sites usually also put a CDN in
+front of the tier for static assets.
+
+Moving from one to the other is a deployment change, not a config rewrite:
+the same `tanod.yaml` works in both, with `origin.upstreams` pointing at
+`127.0.0.1:3000` in the app or at the origin service in a tier.
 
 #### Choosing the replica count
 
@@ -835,9 +875,12 @@ HTTP port and route; give Next.js only internal port `3000`, make both bind
 Tanod image because App Platform does not provide Kubernetes ConfigMaps.
 
 Start with one fixed Tanod instance so cache, coalescing and admission state
-have one owner. This topology is the intended first managed-platform staging
-test after the local release gates pass; it has not been run on DigitalOcean
-yet.
+have one owner. This is the topology of the
+[DigitalOcean staging validation](#digitalocean-staging-validation), run as
+Harmost 0.1.x. For a single app instance, running Tanod inside the app's own
+container with `tanod-next start` ([Run Tanod inside your app](#run-tanod-inside-your-app))
+does the same job with one component instead of two; App Platform sets `PORT`,
+which the config can read as `${PORT}`.
 
 #### Kubernetes
 
