@@ -468,7 +468,7 @@ routes:
         );
         let mut writer = store
             .get_miss_handler(
-                &CacheKey::new("", "/page", ""),
+                &CacheKey::new("/page", ""),
                 &meta,
                 &Span::inactive().handle(),
             )

@@ -143,7 +143,7 @@ pub fn encode(
     s.push_str("\"},\"metrics\":[");
     let mut first = true;
     for family in families {
-        let kind = match family.get_field_type() {
+        let kind = match family.type_() {
             MetricType::COUNTER => "sum",
             MetricType::GAUGE => "gauge",
             MetricType::HISTOGRAM => "histogram",
@@ -151,7 +151,7 @@ pub fn encode(
             // need a mapping of its own rather than a guess.
             _ => continue,
         };
-        if family.get_metric().is_empty() {
+        if family.metric.is_empty() {
             continue;
         }
         if !first {
@@ -159,9 +159,9 @@ pub fn encode(
         }
         first = false;
         s.push_str("{\"name\":");
-        quoted(&mut s, family.get_name());
+        quoted(&mut s, family.name());
         s.push_str(",\"description\":");
-        quoted(&mut s, family.get_help());
+        quoted(&mut s, family.help());
         s.push_str(",\"");
         s.push_str(kind);
         s.push_str("\":{");
@@ -174,10 +174,10 @@ pub fn encode(
         }
         s.push_str("\"dataPoints\":[");
         let mut first_point = true;
-        for metric in family.get_metric() {
-            let value = match family.get_field_type() {
-                MetricType::COUNTER => metric.get_counter().get_value(),
-                MetricType::GAUGE => metric.get_gauge().get_value(),
+        for metric in &family.metric {
+            let value = match family.type_() {
+                MetricType::COUNTER => metric.counter.value(),
+                MetricType::GAUGE => metric.gauge.value(),
                 _ => 0.0,
             };
             if !value.is_finite() {
@@ -193,7 +193,7 @@ pub fn encode(
                 metric
                     .get_label()
                     .iter()
-                    .map(|l| (l.get_name(), l.get_value()))
+                    .map(|l| (l.name(), l.value()))
                     .chain(labels.iter().map(|(k, v)| (k.as_str(), v.as_str()))),
             );
             s.push(']');
@@ -202,7 +202,7 @@ pub fn encode(
             }
             s.push_str(&format!(",\"timeUnixNano\":\"{now_unix_nano}\""));
             if kind == "histogram" {
-                histogram_point(&mut s, metric.get_histogram());
+                histogram_point(&mut s, &metric.histogram);
             } else {
                 s.push_str(&format!(",\"asDouble\":{value}"));
             }
@@ -216,20 +216,20 @@ pub fn encode(
 
 fn histogram_point(s: &mut String, h: &prometheus::proto::Histogram) {
     let buckets: Vec<_> = h
-        .get_bucket()
+        .bucket
         .iter()
-        .filter(|b| b.get_upper_bound().is_finite())
+        .filter(|b| b.upper_bound().is_finite())
         .collect();
-    let total = h.get_sample_count();
+    let total = h.sample_count();
     s.push_str(&format!(",\"count\":\"{total}\""));
-    let sum = h.get_sample_sum();
+    let sum = h.sample_sum();
     if sum.is_finite() {
         s.push_str(&format!(",\"sum\":{sum}"));
     }
     s.push_str(",\"bucketCounts\":[");
     let mut below = 0u64;
     for bucket in &buckets {
-        let cumulative = bucket.get_cumulative_count();
+        let cumulative = bucket.cumulative_count();
         s.push_str(&format!("\"{}\",", cumulative.saturating_sub(below)));
         below = cumulative;
     }
@@ -242,7 +242,7 @@ fn histogram_point(s: &mut String, h: &prometheus::proto::Histogram) {
         if i > 0 {
             s.push(',');
         }
-        s.push_str(&format!("{}", bucket.get_upper_bound()));
+        s.push_str(&format!("{}", bucket.upper_bound()));
     }
     s.push(']');
 }

@@ -799,7 +799,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
     server.add_service(service);
 
     if let Some(addr) = &prometheus_listen {
-        let mut metrics = pingora_core::services::listening::Service::prometheus_http_service();
+        let mut metrics = pingora_prometheus::prometheus_http_service();
         metrics.add_tcp(addr);
         server.add_service(metrics);
         eprintln!("tanod metrics on {addr}/metrics");
@@ -1114,7 +1114,11 @@ fn check(path: &str) -> ExitCode {
             let shutdown_timeout = std::time::Duration::from_secs(pingora_seconds(
                 cfg.server.graceful.shutdown_timeout.as_duration(),
             ));
-            let stop_budget = drain_period.saturating_add(shutdown_timeout);
+            // Plus the one-second runtime teardown that follows the window in
+            // which in-flight requests finish.
+            let stop_budget = drain_period
+                .saturating_add(shutdown_timeout)
+                .saturating_add(std::time::Duration::from_secs(1));
             println!(
                 "  graceful restart: pid {}, socket {}",
                 cfg.server.graceful.pid_file, cfg.server.graceful.upgrade_socket,
@@ -1125,7 +1129,8 @@ fn check(path: &str) -> ExitCode {
             // idle process. See the note on `Graceful` in the schema.
             println!(
                 "    a SIGTERM takes about {stop_budget:?} ({drain_period:?} drain + \
-                 {shutdown_timeout:?} shutdown), on an idle process too",
+                 {shutdown_timeout:?} for in-flight requests + 1s teardown), on an idle \
+                 process too",
             );
             if stop_budget > std::time::Duration::from_secs(30) {
                 println!(

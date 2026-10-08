@@ -8,11 +8,11 @@ publish = false
 # trait and cache lock instead of building its own store and coalescer?
 
 [dependencies]
-pingora-cache = "0.8"
-pingora-core = "0.8"
+pingora-cache = "0.9"
+pingora-core = "0.9"
 tokio = { version = "1", features = ["sync", "time", "rt-multi-thread", "macros"] }
 async-trait = "0.1"
 bytes = "1"
 parking_lot = "0.12"
-pingora-http = "0.8"
-pingora-error = "0.8"
+pingora-http = "0.9"
+pingora-error = "0.9"

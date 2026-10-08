@@ -16,10 +16,10 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use parking_lot::RwLock;
 use pingora_cache::CacheMeta;
-use pingora_cache::key::{CacheHashKey, CacheKey, CompactCacheKey};
+use pingora_cache::key::{CacheHashKey, CacheKey};
 use pingora_cache::storage::{
-    HandleHit, HandleMiss, HitHandler, MissFinishType, MissHandler, PurgeType, Storage,
-    streaming_write::U64WriteId,
+    HandleHit, HandleMiss, HitHandler, MissFinishType, MissHandler, PurgeOutcome, PurgeTarget,
+    PurgeType, Storage, streaming_write::U64WriteId,
 };
 use pingora_cache::trace::SpanHandle;
 use pingora_error::{Error, ErrorType, Result};
@@ -230,17 +230,21 @@ impl Storage for BoundedStore {
 
     async fn purge(
         &'static self,
-        key: &CompactCacheKey,
+        target: PurgeTarget<'_>,
         _p: PurgeType,
         _t: &SpanHandle,
-    ) -> Result<bool> {
-        let hash = key.combined();
+    ) -> Result<PurgeOutcome> {
+        let hash = target.key().combined();
         let removed = self.cached.write().remove(&hash);
         if let Some(v) = &removed {
             self.used.fetch_sub(v.body.len(), Ordering::Relaxed);
             self.order.write().retain(|k| k != &hash);
         }
-        Ok(removed.is_some())
+        Ok(if removed.is_some() {
+            PurgeOutcome::Purged(None)
+        } else {
+            PurgeOutcome::NotFound
+        })
     }
 
     async fn update_meta(

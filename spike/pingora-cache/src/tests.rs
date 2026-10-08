@@ -7,7 +7,7 @@ use pingora_http::ResponseHeader;
 use std::time::{Duration, SystemTime};
 
 fn key(path: &str) -> CacheKey {
-    CacheKey::new("", path, "")
+    CacheKey::new(path, "")
 }
 
 /// `fresh_until` in the future: an ordinary cacheable response.

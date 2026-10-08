@@ -573,7 +573,7 @@ mod tests {
         assert!(
             prometheus::gather()
                 .iter()
-                .any(|family| family.get_name() == "tanod_cache_bypass_reason_total")
+                .any(|family| family.name() == "tanod_cache_bypass_reason_total")
         );
     }
 
@@ -583,19 +583,19 @@ mod tests {
         set_build_info(Some("build-b"));
         let family = prometheus::gather()
             .into_iter()
-            .find(|family| family.get_name() == "tanod_build_info")
+            .find(|family| family.name() == "tanod_build_info")
             .unwrap();
-        assert_eq!(family.get_metric().len(), 1);
-        let labels = family.get_metric()[0].get_label();
+        assert_eq!(family.metric.len(), 1);
+        let labels = family.metric[0].get_label();
         assert!(
             labels
                 .iter()
-                .any(|l| l.get_name() == "deployment_id" && l.get_value() == "build-b")
+                .any(|l| l.name() == "deployment_id" && l.value() == "build-b")
         );
         assert!(
             labels
                 .iter()
-                .any(|l| l.get_name() == "version" && l.get_value() == env!("CARGO_PKG_VERSION"))
+                .any(|l| l.name() == "version" && l.value() == env!("CARGO_PKG_VERSION"))
         );
     }
 
@@ -604,12 +604,9 @@ mod tests {
         preregister();
         let family = prometheus::gather()
             .into_iter()
-            .find(|family| family.get_name() == "tanod_cache_evicted_total")
+            .find(|family| family.name() == "tanod_cache_evicted_total")
             .unwrap();
-        assert_eq!(
-            family.get_field_type(),
-            prometheus::proto::MetricType::COUNTER
-        );
+        assert_eq!(family.type_(), prometheus::proto::MetricType::COUNTER);
     }
 
     #[test]
@@ -619,13 +616,13 @@ mod tests {
         let allowed = LABEL_NAMES;
         preregister();
         for family in prometheus::gather() {
-            for metric in family.get_metric() {
-                for label in metric.get_label() {
+            for metric in &family.metric {
+                for label in &metric.label {
                     assert!(
-                        allowed.contains(&label.get_name()),
+                        allowed.contains(&label.name()),
                         "metric {} carries unexpected label `{}`",
-                        family.get_name(),
-                        label.get_name()
+                        family.name(),
+                        label.name()
                     );
                 }
             }

@@ -810,7 +810,6 @@ impl ProxyHttp for Tanod {
         // cannot change what is shared with whom. `cache::key` remains the
         // sole authority on that, which the test below pins.
         Ok(PingoraCacheKey::new(
-            "",
             key.canonical_string(),
             purgeable_path(&path),
         ))
