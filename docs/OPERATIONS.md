@@ -136,23 +136,28 @@ The one genuinely surprising thing in this document, and it is measured rather
 than assumed — see the `shutdown_seconds` result in
 [`bench/upgrade.sh`](../bench/upgrade.sh).
 
-Pingora ends a shutdown with `Runtime::shutdown_timeout` on each service's
-runtime and deliberately keeps the final timeout window open. The wait
-therefore runs to completion **whether or not anything is still in flight**:
+After the drain, Pingora closes the listeners and gives requests already in
+flight `shutdown_timeout` to finish; then a one-second teardown cancels
+whatever is left. Pingora has no early exit from that window, so it runs to
+completion **whether or not anything is still in flight**:
 
 ```
-time from SIGTERM to exit  ≈  drain_period + shutdown_timeout
+time from SIGTERM to exit  ≈  drain_period + shutdown_timeout + 1s
 ```
 
-on a completely idle process. Two things follow:
+on a completely idle process. (Before 0.3.0 the window went to the teardown
+instead, which cancelled every in-flight request the moment the drain ended.)
+With `origin.command`, the origin is stopped only after this, so a request in
+flight reaches it to the end. Two things follow:
 
 - **Your supervisor's stop timeout must exceed that sum.** The defaults —
-  `drain_period: 5s`, `shutdown_timeout: 10s` — total 15 seconds, which fits
+  `drain_period: 5s`, `shutdown_timeout: 10s` — total about 16 seconds, which fits
   inside Kubernetes' default `terminationGracePeriodSeconds: 30` and systemd's
   default `TimeoutStopSec=90`. Raise these two and you must raise those, or the
   supervisor `SIGKILL`s Tanod mid-drain.
-- **There is no point setting `shutdown_timeout` far above your slowest
-  response.** It buys nothing and every restart pays it. `tanod check` prints
+- **Set `shutdown_timeout` just above your slowest response.** Requests
+  longer than it are cut at the teardown, and a larger value buys nothing
+  else: every restart pays it in full. `tanod check` prints
   the total and warns above 30 seconds.
 
 If `SIGUSR1` already started draining, the two windows overlap: `SIGTERM` waits

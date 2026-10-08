@@ -542,9 +542,9 @@ included. There are no macOS or Windows artifacts.
 
 Choose the deployment form that fits:
 
-- **Inside your app's container:** install `@tanod/next` with your package
-  manager and start the app with `tanod-next start`. One container, no
-  separate proxy image. See [Run Tanod inside your app](#run-tanod-inside-your-app).
+- **Inside your app's container:** Tanod starts your server itself
+  (`origin.command`) and is the container's command. One container, no
+  separate proxy image, any framework. See [Run Tanod inside your app](#run-tanod-inside-your-app).
 - **One Linux server:** install the release binary, generate one
   `/etc/tanod/tanod.yaml`, and run it under systemd. Follow the
   [standalone server guide](./docs/STANDALONE.md).
@@ -623,54 +623,63 @@ and the wrong configuration.
 
 ### Run Tanod inside your app
 
-`tanod-next start` runs your server and Tanod in front of it as one process
-tree, so a deployment is your app's own container and nothing else:
-
-```bash
-npm install @tanod/next     # also installs @tanod/linux-x64, the binary
-```
-
-```json
-"scripts": {
-  "start": "tanod-next start"
-}
-```
-
-It starts the origin on `127.0.0.1:3000`, waits until that port accepts
-connections, then starts Tanod, so a platform health check on Tanod's port
-passes only when the app can serve. `SIGTERM` drains Tanod first and stops the
-origin after; `SIGHUP` reloads Tanod's config. If either process exits, the
-other is stopped and the exit code is passed on, so the platform restarts the
-pair.
-
-The origin is any command that serves HTTP, so this is not specific to
-Next.js — with no command it runs `next start`, and anything after `--`
-replaces it:
-
-```bash
-tanod-next start -- node server.js                    # Next standalone output
-tanod-next start -- node .output/server/index.mjs     # Nuxt
-tanod-next start -- node build                        # SvelteKit (adapter-node)
-```
-
-The origin is given `PORT` and `HOSTNAME=127.0.0.1`; Tanod keeps the
-environment it was started with, so its config can take the platform's port:
+Tanod can start your server itself and sit in front of it, so a deployment is
+your app's container (or one systemd unit) and nothing else:
 
 ```yaml
 server:
-  listen: "0.0.0.0:${PORT:-8080}"
+  listen: "0.0.0.0:${PORT:-8080}"     # the platform's port
 origin:
-  upstreams: ["127.0.0.1:3000"]
+  upstreams: ["127.0.0.1:3001"]
+  command:
+    args: ["node", "server.js"]       # any server; not run through a shell
 cache:
   purge:
     token: "${TANOD_PURGE_TOKEN}"
 ```
 
-`@tanod/linux-x64` is a static binary, so the same package works in glibc and
-Alpine images. On other platforms, or to use your own build, set `TANOD_BIN`.
-With Next's standalone output, the traced `node_modules` does not include
-`@tanod`, so copy it into the runner stage:
-`COPY --from=deps /app/node_modules/@tanod ./node_modules/@tanod`.
+```dockerfile
+ENTRYPOINT ["dumb-init", "--"]        # or tini, or `docker run --init`
+CMD ["tanod", "run", "--config", "/app/tanod.yaml"]
+```
+
+Keep a small init as PID 1: Tanod reaps the app it starts, but not processes
+the app itself spawns and abandons. An init that signals the whole process
+group is fine, because the app has a group of its own.
+
+Tanod starts the command, waits until `127.0.0.1:3001` accepts connections, and
+only then serves, so a platform health check on its port passes only when the
+app can serve. On `SIGTERM` it drains, lets in-flight requests finish, and only
+then stops the app (`SIGTERM`, then `SIGKILL` after `stop_timeout`); if the app
+exits on its own, Tanod exits with the app's code so the platform restarts both.
+`SIGHUP` reloads Tanod's config without touching the app.
+
+Nothing here is specific to a framework:
+
+```yaml
+args: ["node", "server.js"]                   # Next.js standalone output
+args: ["node", ".output/server/index.mjs"]    # Nuxt
+args: ["node", "build"]                       # SvelteKit (adapter-node)
+args: ["bun", "server.js"]                    # any of them under Bun
+```
+
+The app gets `PORT` and `HOSTNAME` from the upstream (here `3001` and
+`127.0.0.1`), which most server frameworks read, plus anything in
+`origin.command.env`; it does not inherit the platform's `PORT`, which is
+Tanod's. It runs in its own process group, so a signal sent to the whole group
+(an init, or Ctrl+C) reaches only Tanod, which stops the app at the right
+moment. A supervised origin must be the single loopback upstream, and
+`--upgrade`, `--daemon` and a changed `command` on reload are refused: each
+would leave two Tanods or none responsible for the one app.
+
+**Getting the binary into the image.** Copy it from the published image —
+`COPY --from=ghcr.io/akosidencio/tanod:0.3 /usr/local/bin/tanod /usr/local/bin/tanod`
+— or, in a JavaScript project, install `@tanod/linux-x64` (a static build that
+runs on glibc and Alpine alike) and use `node_modules/@tanod/linux-x64/bin/tanod`.
+
+`tanod-next start` from `@tanod/next` does the same job from Node or Bun for
+setups that cannot change the container command; it costs an extra runtime
+process (around 45 MB) that `origin.command` does not.
 
 Every instance gets its own Tanod, so its concurrency limit is simply that
 instance's capacity and no replica partitioning is needed. The cost is that the
@@ -719,8 +728,8 @@ counters and response contents; the stack is removed on exit.
 
 Tanod is a **standalone binary that runs as its own process**, in front of
 your Next.js server. It is not Next.js middleware and not something you import.
-You can run it as its own container or service, or install it with npm and
-start it beside your server with `tanod-next start`
+You can run it as its own container or service, or have it start your server
+itself inside the same container
 ([Run Tanod inside your app](#run-tanod-inside-your-app)) — either way it is a
 separate process. **Your application code does not change at all** — the only
 optional edit is adding a health endpoint, below.
@@ -749,7 +758,7 @@ much of your traffic is the same pages at the same moment, more than how much
 traffic there is in total.
 
 ```text
-In the app (tanod-next start)          A separate tier
+In the app (origin.command)            A separate tier
                                        
 client ─▶ LB ─┬─▶ [tanod ▶ app]         client ─▶ LB ─▶ tanod ×1–3 ─┬─▶ app
               ├─▶ [tanod ▶ app]                                     ├─▶ app
@@ -842,7 +851,7 @@ rather tag it yourself.
 ```yaml
 services:
   tanod:
-    image: ghcr.io/akosidencio/tanod:0.2.0   # or a locally built tanod:local
+    image: ghcr.io/akosidencio/tanod:0.3.0   # or a locally built tanod:local
     ports: ["8080:8080"]
     volumes:
       - ./tanod.yaml:/etc/tanod/tanod.yaml:ro
@@ -882,7 +891,7 @@ Start with one fixed Tanod instance so cache, coalescing and admission state
 have one owner. This is the topology of the
 [DigitalOcean staging validation](#digitalocean-staging-validation), run as
 Harmost 0.1.x. For a single app instance, running Tanod inside the app's own
-container with `tanod-next start` ([Run Tanod inside your app](#run-tanod-inside-your-app))
+container with `origin.command` ([Run Tanod inside your app](#run-tanod-inside-your-app))
 does the same job with one component instead of two; App Platform sets `PORT`,
 which the config can read as `${PORT}`.
 

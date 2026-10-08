@@ -32,7 +32,14 @@ npm install --save-dev @tanod/next   # or: bun add -d @tanod/next
 
 ## Running the app and Tanod together
 
-`tanod-next start` runs your server and Tanod in front of it in one container.
+The lightest way is to let Tanod start your server itself with
+`origin.command` in `tanod.yaml`, and make `tanod run` the container command:
+no Node or Bun process sits between them. See the main README's
+[Run Tanod inside your app](https://github.com/akosidencio/tanod#run-tanod-inside-your-app).
+
+Where you cannot change the container command, `tanod-next start` runs your
+server and Tanod in front of it from Node or Bun, at the cost of that extra
+runtime process.
 Install `@tanod/next` as a regular dependency for this (it brings the
 `@tanod/linux-x64` binary as an optional dependency), then:
 

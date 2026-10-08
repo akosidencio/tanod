@@ -6,6 +6,12 @@ work and [operations guide](./docs/OPERATIONS.md) for deployment details.
 Tanod was released as Harmost up to 0.1.4. Entries below 0.2.0 use the current
 names.
 
+## 0.3.0 — 2026-10-08
+
+- Added `origin.command`: Tanod starts and supervises the app server, so one container or systemd unit runs both with no runner process, for any framework.
+- Fixed graceful shutdown cancelling in-flight requests the moment the drain ended; they now get `server.graceful.shutdown_timeout` to finish.
+- Upgraded to Pingora 0.9 (HTTP request-smuggling hardening, bounded HTTP/2 limits, hop-by-hop header sanitizing) and `prometheus` 0.14, which removes three ignored advisories and the `aws-lc` C dependency.
+
 ## 0.2.0 — 2026-10-04
 
 - Renamed the project from Harmost to Tanod, continuing from Harmost 0.1.4.
