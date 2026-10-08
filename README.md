@@ -504,6 +504,7 @@ test origin and proxy, runs load, and tears both down:
 ./bench/safety.sh 50          # a Set-Cookie response is never shared
 ./bench/slowclient.sh         # slow-reader backpressure and the permit lifetime bound
 ./bench/reload.sh             # SIGHUP reload, including a refused one
+./bench/supervise.sh          # in-flight requests on SIGTERM; origin.command lifecycle
 ./bench/nextjs.sh             # one Tanod process, three real Next.js origins
 ./bench/nextjs-browser.sh     # the same stack, driven by Chromium
 ```
