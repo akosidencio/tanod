@@ -537,6 +537,32 @@ routes:
     }
 
     #[test]
+    fn changing_the_supervised_origin_command_is_refused() {
+        let supervised = r#"version: 1
+server:
+  listen: "127.0.0.1:8080"
+origin:
+  upstreams: ["127.0.0.1:3001"]
+  command:
+    args: ["node", "server.js"]
+"#;
+        let (path, reloader, policy) = setup(supervised);
+        for changed in [
+            supervised.replace("server.js", "other.js"),
+            supervised.replace(
+                "    args: [\"node\", \"server.js\"]\n",
+                "    args: [\"node\", \"server.js\"]\n    env: {A: b}\n",
+            ),
+            supervised.replace("  command:\n    args: [\"node\", \"server.js\"]\n", ""),
+        ] {
+            std::fs::write(&path.0, &changed).unwrap();
+            let err = reloader.reload().unwrap_err();
+            assert!(err.contains("origin.command changed"), "{err}");
+            assert_eq!(policy.load().generation, 1, "a refused reload was applied");
+        }
+    }
+
+    #[test]
     fn changing_startup_bound_runtime_components_is_refused() {
         for changed in [
             BASE.replace(

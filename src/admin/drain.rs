@@ -288,6 +288,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn with_a_supervised_origin_sigquit_drains_and_stops_instead_of_upgrading() {
+        let state = Arc::new(DrainState::new());
+        let watcher = DrainShutdownSignalWatch::new(state.clone(), Duration::from_millis(50))
+            .with_supervised_origin();
+        let signal = watcher.prepare(ShutdownSignal::GracefulUpgrade).await;
+        assert!(matches!(signal, ShutdownSignal::GracefulTerminate));
+        assert!(state.is_draining(), "the converted stop skipped the drain");
+    }
+
+    #[tokio::test]
+    async fn without_a_supervised_origin_sigquit_is_still_an_upgrade() {
+        let state = Arc::new(DrainState::new());
+        let watcher = DrainShutdownSignalWatch::new(state.clone(), Duration::from_secs(30));
+        let started = Instant::now();
+        let signal = watcher.prepare(ShutdownSignal::GracefulUpgrade).await;
+        assert!(matches!(signal, ShutdownSignal::GracefulUpgrade));
+        assert!(!state.is_draining());
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
     async fn fast_shutdown_is_not_delayed_or_reported_as_a_drain() {
         let state = Arc::new(DrainState::new());
         let watcher = DrainShutdownSignalWatch::new(state.clone(), Duration::from_secs(30));

@@ -38,6 +38,29 @@ pub fn is_loopback(host: &str) -> bool {
             .is_ok_and(|ip| ip.is_loopback())
 }
 
+/// Where `program` would be found: as given if it contains a `/`, otherwise
+/// the first executable match on `PATH`, as the exec call will search.
+pub fn find_program(program: &str) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = |path: &std::path::Path| {
+        path.metadata()
+            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    };
+    if program.contains('/') {
+        let path = std::path::PathBuf::from(program);
+        return executable(&path).then_some(path);
+    }
+    std::env::var_os("PATH")?
+        .to_str()?
+        .split(':')
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| std::path::Path::new(dir).join(program))
+        .find(|path| executable(path))
+}
+
+/// The error [`start`] returns when `interrupted` asked it to stop.
+pub const INTERRUPTED: &str = "stopped while waiting for the origin to start";
+
 /// The exit code to report for a child: its own, or 128 + the signal.
 pub fn exit_code(status: ExitStatus) -> i32 {
     status
@@ -65,12 +88,18 @@ pub struct Supervisor {
 
 /// Start the origin and wait until `upstream` accepts connections.
 ///
+/// `interrupted` is polled while waiting: when it returns true (Tanod was
+/// asked to stop before it started serving) the origin is stopped and an
+/// error returned, rather than Tanod dying with the origin still running in
+/// its own process group.
+///
 /// `on_unexpected_exit` runs on a background thread if the child exits after
 /// it became ready and before [`Supervisor::stop`]; Tanod's binary exits the
 /// process from it.
 pub fn start(
     cfg: &OriginCommand,
     upstream: &str,
+    interrupted: impl FnMut() -> bool,
     on_unexpected_exit: impl FnOnce(ExitStatus) + Send + 'static,
 ) -> Result<Supervisor, String> {
     let (host, port) =
@@ -98,7 +127,7 @@ pub fn start(
     let state = Arc::new(AtomicU8::new(STARTING));
     let (tx, exited) = mpsc::sync_channel(1);
     let waiter_state = state.clone();
-    std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name("origin-wait".to_string())
         .spawn(move || {
             let status = match child.wait() {
@@ -113,8 +142,12 @@ pub fn start(
             if before == RUNNING {
                 on_unexpected_exit(status);
             }
-        })
-        .map_err(|e| format!("could not start the origin watcher: {e}"))?;
+        });
+    if let Err(e) = spawned {
+        // Nothing would ever wait for or stop the child: do not leave it.
+        let _ = kill(Pid::from_raw(-pid.as_raw()), Signal::SIGKILL);
+        return Err(format!("could not start the origin watcher: {e}"));
+    }
 
     let supervisor = Supervisor {
         pid,
@@ -122,7 +155,7 @@ pub fn start(
         exited,
         stop_timeout: cfg.stop_timeout.as_duration(),
     };
-    supervisor.wait_ready(&host, port, cfg.ready_timeout.as_duration())?;
+    supervisor.wait_ready(&host, port, cfg.ready_timeout.as_duration(), interrupted)?;
     Ok(supervisor)
 }
 
@@ -131,11 +164,21 @@ impl Supervisor {
         self.pid.as_raw().unsigned_abs()
     }
 
-    fn wait_ready(&self, host: &str, port: u16, timeout: Duration) -> Result<(), String> {
+    fn wait_ready(
+        &self,
+        host: &str,
+        port: u16,
+        timeout: Duration,
+        mut interrupted: impl FnMut() -> bool,
+    ) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
         loop {
             if self.state.load(Ordering::SeqCst) == EXITED {
                 return Err(self.exited_early());
+            }
+            if interrupted() {
+                self.stop();
+                return Err(INTERRUPTED.to_string());
             }
             if accepts(host, port) {
                 // Ready, unless it exited in the meantime: the swap decides
@@ -174,7 +217,9 @@ impl Supervisor {
     /// `stop_timeout`. Returns how it exited, if it did.
     pub fn stop(&self) -> Option<ExitStatus> {
         if self.state.swap(STOPPING, Ordering::SeqCst) == EXITED {
-            return self.exited.try_recv().ok();
+            // The watcher marks the exit before it sends the status, so wait
+            // for the send rather than racing it.
+            return self.exited.recv_timeout(Duration::from_secs(1)).ok();
         }
         // The group, not just the leader: a server that forks workers must
         // not leave them behind.
@@ -241,11 +286,20 @@ mod tests {
     }
 
     #[test]
+    fn programs_are_found_the_way_exec_finds_them() {
+        assert!(find_program("sh").is_some_and(|p| p.ends_with("sh")));
+        assert!(find_program("/bin/sh").is_some());
+        assert!(find_program("definitely-not-a-program-tanod").is_none());
+        assert!(find_program("/etc/hostname").is_none(), "not executable");
+    }
+
+    #[test]
     fn a_ready_origin_is_stopped_with_sigterm() {
         let (_listener, port) = listening_port();
         let sup = start(
             &command(&["sh", "-c", "exec sleep 30"], 5, 5),
             &format!("127.0.0.1:{port}"),
+            || false,
             |_| panic!("a stop must not count as an unexpected exit"),
         )
         .unwrap();
@@ -264,7 +318,7 @@ mod tests {
         );
         let mut cmd = command(&["sh", "-c", &script], 5, 5);
         cmd.env.insert("EXTRA".into(), "yes".into());
-        let sup = start(&cmd, &format!("127.0.0.1:{port}"), |_| {}).unwrap();
+        let sup = start(&cmd, &format!("127.0.0.1:{port}"), || false, |_| {}).unwrap();
         // This test's own listener makes the child "ready" before its first
         // line has run, so wait for the file rather than racing it.
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -287,6 +341,7 @@ mod tests {
         let err = start(
             &command(&["sh", "-c", "exit 7"], 5, 5),
             &format!("127.0.0.1:{port}"),
+            || false,
             |_| panic!("not ready yet, so not unexpected"),
         )
         .err()
@@ -302,6 +357,7 @@ mod tests {
         let err = start(
             &command(&["sh", "-c", "exec sleep 30"], 1, 2),
             &format!("127.0.0.1:{port}"),
+            || false,
             |_| panic!("stopped by us"),
         )
         .err()
@@ -322,6 +378,7 @@ mod tests {
         let sup = start(
             &command(&["sh", "-c", &script], 5, 1),
             &format!("127.0.0.1:{port}"),
+            || false,
             |_| {},
         )
         .unwrap();
@@ -347,11 +404,134 @@ mod tests {
         let _sup = start(
             &command(&["sh", "-c", "sleep 0.5; exit 3"], 5, 5),
             &format!("127.0.0.1:{port}"),
+            || false,
             move |status| {
                 let _ = tx.send(exit_code(status));
             },
         )
         .unwrap();
         assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), 3);
+    }
+
+    fn temp_file(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("tanod-supervise-{name}-{}", std::process::id()))
+    }
+
+    fn wait_for_file(path: &std::path::Path) -> String {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Ok(s) = std::fs::read_to_string(path)
+                && s.ends_with('\n')
+            {
+                return s;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{} never appeared",
+                path.display()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn being_stopped_while_waiting_stops_the_origin_instead_of_orphaning_it() {
+        let port = listening_port().1; // nothing will ever accept here
+        let pidfile = temp_file("interrupted");
+        let script = format!("echo $$ > {}; exec sleep 30", pidfile.display());
+        let mut polls = 0;
+        let started = Instant::now();
+        let err = start(
+            &command(&["sh", "-c", &script], 30, 5),
+            &format!("127.0.0.1:{port}"),
+            move || {
+                polls += 1;
+                polls > 5
+            },
+            |_| panic!("an interrupted start is not an unexpected exit"),
+        )
+        .err()
+        .unwrap();
+        assert!(err.contains("stopped while waiting"), "{err}");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the wait was not cut short"
+        );
+        let pid: i32 = wait_for_file(&pidfile).trim().parse().unwrap();
+        let _ = std::fs::remove_file(&pidfile);
+        // Reaped by the watcher, so the pid no longer exists at all.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            assert!(
+                Instant::now() < deadline,
+                "the origin outlived an interrupted start"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn stop_after_an_unexpected_exit_still_reports_how_it_exited() {
+        let (_listener, port) = listening_port();
+        let (tx, rx) = mpsc::channel();
+        let sup = start(
+            &command(&["sh", "-c", "sleep 0.3; exit 5"], 5, 5),
+            &format!("127.0.0.1:{port}"),
+            || false,
+            move |status| {
+                let _ = tx.send(exit_code(status));
+            },
+        )
+        .unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), 5);
+        let status = sup.stop().expect("the status of the earlier exit");
+        assert_eq!(status.code(), Some(5));
+    }
+
+    #[test]
+    fn configured_env_overrides_the_derived_port_and_hostname() {
+        let (_listener, port) = listening_port();
+        let out = temp_file("override");
+        let script = format!(
+            "echo \"$PORT $HOSTNAME\" > {}; exec sleep 30",
+            out.display()
+        );
+        let mut cmd = command(&["sh", "-c", &script], 5, 5);
+        cmd.env.insert("PORT".into(), "9999".into());
+        cmd.env.insert("HOSTNAME".into(), "0.0.0.0".into());
+        let sup = start(&cmd, &format!("127.0.0.1:{port}"), || false, |_| {}).unwrap();
+        let written = wait_for_file(&out);
+        sup.stop();
+        let _ = std::fs::remove_file(&out);
+        assert_eq!(written.trim(), "9999 0.0.0.0");
+    }
+
+    #[test]
+    fn the_origin_runs_in_a_process_group_of_its_own() {
+        let (_listener, port) = listening_port();
+        let out = temp_file("pgid");
+        // Fields 1 and 5 of /proc/self/stat are the pid and the process group.
+        let script = format!(
+            "awk '{{print $1, $5}}' /proc/$$/stat > {}; exec sleep 30",
+            out.display()
+        );
+        let sup = start(
+            &command(&["sh", "-c", &script], 5, 5),
+            &format!("127.0.0.1:{port}"),
+            || false,
+            |_| {},
+        )
+        .unwrap();
+        let written = wait_for_file(&out);
+        sup.stop();
+        let _ = std::fs::remove_file(&out);
+        let mut fields = written.split_whitespace();
+        let (pid, pgid) = (fields.next().unwrap(), fields.next().unwrap());
+        assert_eq!(pid, pgid, "the origin should lead its own group");
+        assert_ne!(
+            pgid,
+            nix::unistd::getpgrp().as_raw().to_string(),
+            "the origin shares Tanod's group, so a group signal would stop it mid-drain"
+        );
     }
 }

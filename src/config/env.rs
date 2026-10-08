@@ -43,10 +43,13 @@ fn expand_line(
         match b {
             b'\'' if !double => single = !single,
             b'"' if !single => double = !double,
-            // Escaped characters inside a double-quoted scalar.
+            // An escaped character inside a double-quoted scalar: copy the
+            // backslash and the whole character after it, which may be more
+            // than one byte.
             b'\\' if double && i + 1 < bytes.len() => {
-                out.push_str(&line[i..i + 2]);
-                i += 2;
+                let width = line[i + 1..].chars().next().map_or(1, char::len_utf8);
+                out.push_str(&line[i..i + 1 + width]);
+                i += 1 + width;
                 continue;
             }
             // A comment starts at `#` outside quotes, at the start of the line
@@ -215,8 +218,46 @@ mod tests {
     }
 
     #[test]
+    fn a_backslash_before_a_multibyte_character_does_not_panic() {
+        // Not a valid YAML escape, but load must reject it as a parse error
+        // later rather than panic here on a split UTF-8 character.
+        let text = "title: \"caf\\é ${A:-x}\"\nmore: \"\\🙂\"\n";
+        assert_eq!(
+            expand(text, env(&[])).unwrap(),
+            "title: \"caf\\é x\"\nmore: \"\\🙂\"\n"
+        );
+    }
+
+    #[test]
     fn text_without_references_is_unchanged() {
         let text = "version: 1\nname: \"Sandali lang po — ñ\"\n";
         assert_eq!(expand(text, env(&[])).unwrap(), text);
+    }
+
+    proptest::proptest! {
+        /// Whatever the file holds, expansion returns or refuses; it never
+        /// panics (the slicing above is byte-indexed over UTF-8).
+        #[test]
+        fn expansion_never_panics(text in "\\PC{0,200}") {
+            let _ = expand(&text, |name| (name.len() % 2 == 0).then(|| "v".to_string()));
+        }
+
+        /// Text with no `$` at all is returned byte for byte.
+        #[test]
+        fn text_without_a_dollar_is_unchanged(text in "[^$]{0,200}") {
+            proptest::prop_assert_eq!(expand(&text, |_| None).unwrap(), text);
+        }
+
+        /// A reference resolves to the value, and only the reference changes.
+        #[test]
+        fn a_reference_is_replaced_and_nothing_else(
+            before in "[a-z :]{0,20}",
+            after in "[a-z :]{0,20}",
+            value in "[A-Za-z0-9_./-]{1,30}",
+        ) {
+            let text = format!("{before}${{NAME}}{after}");
+            let out = expand(&text, |_| Some(value.clone())).unwrap();
+            proptest::prop_assert_eq!(out, format!("{before}{value}{after}"));
+        }
     }
 }

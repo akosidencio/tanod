@@ -1180,6 +1180,82 @@ mod tests {
         assert_eq!(store.tags(), 0, "a path purge left the tag behind");
     }
 
+    /// Pingora 0.9's purge hook, reached through its own cache API rather
+    /// than Tanod's endpoint: both kinds of target must remove the entry and
+    /// its tag index, and a second purge must say there was nothing there.
+    #[tokio::test]
+    async fn pingoras_purge_hook_removes_an_entry_for_either_kind_of_target() {
+        use pingora_cache::CacheEntryKey;
+        let store = store_of(1 << 20);
+        let span = Span::inactive().handle();
+
+        fill(store, "/active", &["tag-a"], 16).await;
+        let active = CacheKey::new("/active", "/active").to_compact();
+        let outcome = store
+            .purge(PurgeTarget::Active(&active), PurgeType::Invalidation, &span)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, PurgeOutcome::Purged(None)), "{outcome:?}");
+        assert!(!is_cached(store, "/active").await);
+        assert_eq!(store.tags(), 0, "the tag index outlived the entry");
+        let again = store
+            .purge(PurgeTarget::Active(&active), PurgeType::Invalidation, &span)
+            .await
+            .unwrap();
+        assert!(matches!(again, PurgeOutcome::NotFound), "{again:?}");
+
+        fill(store, "/exact", &[], 16).await;
+        let exact = CacheEntryKey::key_only(CacheKey::new("/exact", "/exact").to_compact());
+        let outcome = store
+            .purge(PurgeTarget::Exact(&exact), PurgeType::Eviction, &span)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, PurgeOutcome::Purged(None)), "{outcome:?}");
+        assert!(!is_cached(store, "/exact").await);
+    }
+
+    /// A fill still being written when Pingora purges it must not be admitted
+    /// afterwards: the hook reports it as purged and the finish is dropped.
+    #[tokio::test]
+    async fn pingoras_purge_hook_invalidates_a_fill_in_progress() {
+        let store = store_of(1 << 20);
+        let span = Span::inactive().handle();
+        let now = SystemTime::now();
+        let meta = CacheMeta::new(
+            now + Duration::from_secs(600),
+            now,
+            0,
+            0,
+            ResponseHeader::build(200, None).unwrap(),
+        );
+        let key = CacheKey::new("/filling", "/filling");
+        let mut writer = store.get_miss_handler(&key, &meta, &span).await.unwrap();
+        writer
+            .write_body(Bytes::from_static(b"partial"), false)
+            .await
+            .unwrap();
+
+        let outcome = store
+            .purge(
+                PurgeTarget::Active(&key.to_compact()),
+                PurgeType::Invalidation,
+                &span,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(outcome, PurgeOutcome::Purged(None)), "{outcome:?}");
+
+        writer
+            .write_body(Bytes::from_static(b" rest"), true)
+            .await
+            .unwrap();
+        let _ = writer.finish().await;
+        assert!(
+            !is_cached(store, "/filling").await,
+            "a purged fill was admitted when it finished"
+        );
+    }
+
     // ----------------------------------------------------------- cache tags
 
     #[tokio::test]

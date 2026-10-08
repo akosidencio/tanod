@@ -832,7 +832,46 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
                 command.ready_timeout.as_duration(),
                 origin_upstream
             );
-            match tanod::supervise::start(command, &origin_upstream, |status| {
+            // Until Pingora runs, nothing handles SIGTERM or SIGINT, and the
+            // default action would kill Tanod and leave the origin running in
+            // its own process group. Listen for both while waiting, on a
+            // runtime of their own that ends once the origin is up.
+            let signals = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .and_then(|rt| {
+                    let streams = rt.block_on(async {
+                        use tokio::signal::unix::{SignalKind, signal};
+                        Ok::<_, std::io::Error>((
+                            signal(SignalKind::terminate())?,
+                            signal(SignalKind::interrupt())?,
+                        ))
+                    })?;
+                    Ok((rt, streams))
+                });
+            let mut signals = match signals {
+                Ok(signals) => signals,
+                Err(error) => {
+                    eprintln!("error: origin.command: listening for signals: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            // A signal is only read when the runtime waits on its driver, so
+            // each poll waits briefly rather than checking and returning.
+            let interrupted = || {
+                let (rt, (term, int)) = &mut signals;
+                rt.block_on(async {
+                    tokio::time::timeout(std::time::Duration::from_millis(20), async {
+                        tokio::select! {
+                            Some(()) = term.recv() => {}
+                            Some(()) = int.recv() => {}
+                        }
+                    })
+                    .await
+                    .is_ok()
+                })
+            };
+            match tanod::supervise::start(command, &origin_upstream, interrupted, |status| {
                 // Nothing behind Tanod any more: exit so the platform restarts
                 // the pair, with the origin's code (never 0, since it should
                 // not have stopped).
@@ -843,6 +882,12 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
                 Ok(supervisor) => {
                     eprintln!("  origin is up (pid {})", supervisor.pid());
                     Some(supervisor)
+                }
+                Err(error) if error == tanod::supervise::INTERRUPTED => {
+                    // Asked to stop before serving: the origin is stopped,
+                    // and that is a clean exit, not a failed start.
+                    eprintln!("  {error}");
+                    return ExitCode::SUCCESS;
                 }
                 Err(error) => {
                     eprintln!("error: origin.command: {error}");
@@ -946,6 +991,16 @@ fn check(path: &str) -> ExitCode {
                     command.ready_timeout.as_duration(),
                     command.stop_timeout.as_duration()
                 );
+                // A warning, not an error: `check` often runs on a build host
+                // that does not have the app's runtime installed.
+                if let Some(program) = command.args.first()
+                    && tanod::supervise::find_program(program).is_none()
+                {
+                    println!(
+                        "    WARNING: `{program}` is not on this machine's PATH; the origin will \
+                         not start unless it is where Tanod runs"
+                    );
+                }
             }
             match cfg.mode {
                 tanod::config::schema::Mode::Observe => println!(
@@ -1116,9 +1171,16 @@ fn check(path: &str) -> ExitCode {
             ));
             // Plus the one-second runtime teardown that follows the window in
             // which in-flight requests finish.
+            // With a supervised origin, stopping it comes after all of that.
+            let origin_stop = cfg
+                .origin
+                .command
+                .as_ref()
+                .map_or(std::time::Duration::ZERO, |c| c.stop_timeout.as_duration());
             let stop_budget = drain_period
                 .saturating_add(shutdown_timeout)
-                .saturating_add(std::time::Duration::from_secs(1));
+                .saturating_add(std::time::Duration::from_secs(1))
+                .saturating_add(origin_stop);
             println!(
                 "  graceful restart: pid {}, socket {}",
                 cfg.server.graceful.pid_file, cfg.server.graceful.upgrade_socket,
@@ -1129,8 +1191,13 @@ fn check(path: &str) -> ExitCode {
             // idle process. See the note on `Graceful` in the schema.
             println!(
                 "    a SIGTERM takes about {stop_budget:?} ({drain_period:?} drain + \
-                 {shutdown_timeout:?} for in-flight requests + 1s teardown), on an idle \
+                 {shutdown_timeout:?} for in-flight requests + 1s teardown{}), on an idle \
                  process too",
+                if origin_stop.is_zero() {
+                    String::new()
+                } else {
+                    format!(" + up to {origin_stop:?} for the origin to stop")
+                }
             );
             if stop_budget > std::time::Duration::from_secs(30) {
                 println!(
