@@ -21,10 +21,10 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use parking_lot::{Mutex, RwLock};
 use pingora_cache::CacheMeta;
-use pingora_cache::key::{CacheHashKey, CacheKey, CompactCacheKey};
+use pingora_cache::key::{CacheHashKey, CacheKey};
 use pingora_cache::storage::{
-    HandleHit, HandleMiss, HitHandler, MissFinishType, MissHandler, PurgeType, Storage,
-    streaming_write::U64WriteId,
+    HandleHit, HandleMiss, HitHandler, MissFinishType, MissHandler, PurgeOutcome, PurgeTarget,
+    PurgeType, Storage, streaming_write::U64WriteId,
 };
 use pingora_cache::trace::SpanHandle;
 use pingora_error::{Error, ErrorType, Result};
@@ -664,10 +664,13 @@ impl Storage for BoundedStore {
 
     async fn purge(
         &'static self,
-        key: &CompactCacheKey,
+        target: PurgeTarget<'_>,
         _p: PurgeType,
         _t: &SpanHandle,
-    ) -> Result<bool> {
+    ) -> Result<PurgeOutcome> {
+        // This store keeps one entry per key and assigns no entry IDs, so an
+        // active and an exact target name the same entry.
+        let key = target.key();
         // Pingora's own purge hook, reached through its cache API rather than
         // through Tanod's endpoint. Routed into the same path so a caller
         // that arrives this way cannot leave the tag index pointing at an
@@ -681,7 +684,11 @@ impl Storage for BoundedStore {
             !writes.is_empty()
         });
         let completed = self.purge_matching_locked(|key, _| key == hash).entries > 0;
-        Ok(temp_invalidated || completed)
+        Ok(if temp_invalidated || completed {
+            PurgeOutcome::Purged(None)
+        } else {
+            PurgeOutcome::NotFound
+        })
     }
 
     async fn update_meta(
@@ -1006,7 +1013,7 @@ mod tests {
         let meta = CacheMeta::new(now + Duration::from_secs(600), now, 0, 0, header);
         // `user_tag` carries the request path, exactly as
         // `Tanod::cache_key_callback` sets it.
-        let key = CacheKey::new("", path, path);
+        let key = CacheKey::new(path, path);
         let mut writer = store
             .get_miss_handler(&key, &meta, &Span::inactive().handle())
             .await
@@ -1030,11 +1037,7 @@ mod tests {
             ResponseHeader::build(200, None).unwrap(),
         );
         let mut writer = store
-            .get_miss_handler(
-                &CacheKey::new("", key, path),
-                &meta,
-                &Span::inactive().handle(),
-            )
+            .get_miss_handler(&CacheKey::new(key, path), &meta, &Span::inactive().handle())
             .await
             .unwrap();
         writer
@@ -1050,7 +1053,7 @@ mod tests {
 
     async fn is_key_cached(store: &'static BoundedStore, key: &str) -> bool {
         store
-            .lookup(&CacheKey::new("", key, ""), &Span::inactive().handle())
+            .lookup(&CacheKey::new(key, ""), &Span::inactive().handle())
             .await
             .unwrap()
             .is_some()
@@ -1068,8 +1071,8 @@ mod tests {
     #[test]
     fn carrying_the_path_does_not_change_the_cache_key() {
         use pingora_cache::key::CacheHashKey;
-        let bare = CacheKey::new("", "/canonical-string", "");
-        let tagged = CacheKey::new("", "/canonical-string", "/products/iphone");
+        let bare = CacheKey::new("/canonical-string", "");
+        let tagged = CacheKey::new("/canonical-string", "/products/iphone");
         assert_eq!(bare.combined(), tagged.combined());
         assert_eq!(bare.primary(), tagged.primary());
     }
@@ -1127,7 +1130,7 @@ mod tests {
     #[tokio::test]
     async fn a_path_purge_prevents_a_matching_in_progress_fill_from_being_admitted() {
         let store = store_of(1 << 20);
-        let key = CacheKey::new("", "path-fill", "/purged-path");
+        let key = CacheKey::new("path-fill", "/purged-path");
         let mut writer = store
             .get_miss_handler(&key, &meta(), &Span::inactive().handle())
             .await
@@ -1175,6 +1178,82 @@ mod tests {
         assert_eq!(store.tags(), 1);
         store.purge_paths(["/page"]);
         assert_eq!(store.tags(), 0, "a path purge left the tag behind");
+    }
+
+    /// Pingora 0.9's purge hook, reached through its own cache API rather
+    /// than Tanod's endpoint: both kinds of target must remove the entry and
+    /// its tag index, and a second purge must say there was nothing there.
+    #[tokio::test]
+    async fn pingoras_purge_hook_removes_an_entry_for_either_kind_of_target() {
+        use pingora_cache::CacheEntryKey;
+        let store = store_of(1 << 20);
+        let span = Span::inactive().handle();
+
+        fill(store, "/active", &["tag-a"], 16).await;
+        let active = CacheKey::new("/active", "/active").to_compact();
+        let outcome = store
+            .purge(PurgeTarget::Active(&active), PurgeType::Invalidation, &span)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, PurgeOutcome::Purged(None)), "{outcome:?}");
+        assert!(!is_cached(store, "/active").await);
+        assert_eq!(store.tags(), 0, "the tag index outlived the entry");
+        let again = store
+            .purge(PurgeTarget::Active(&active), PurgeType::Invalidation, &span)
+            .await
+            .unwrap();
+        assert!(matches!(again, PurgeOutcome::NotFound), "{again:?}");
+
+        fill(store, "/exact", &[], 16).await;
+        let exact = CacheEntryKey::key_only(CacheKey::new("/exact", "/exact").to_compact());
+        let outcome = store
+            .purge(PurgeTarget::Exact(&exact), PurgeType::Eviction, &span)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, PurgeOutcome::Purged(None)), "{outcome:?}");
+        assert!(!is_cached(store, "/exact").await);
+    }
+
+    /// A fill still being written when Pingora purges it must not be admitted
+    /// afterwards: the hook reports it as purged and the finish is dropped.
+    #[tokio::test]
+    async fn pingoras_purge_hook_invalidates_a_fill_in_progress() {
+        let store = store_of(1 << 20);
+        let span = Span::inactive().handle();
+        let now = SystemTime::now();
+        let meta = CacheMeta::new(
+            now + Duration::from_secs(600),
+            now,
+            0,
+            0,
+            ResponseHeader::build(200, None).unwrap(),
+        );
+        let key = CacheKey::new("/filling", "/filling");
+        let mut writer = store.get_miss_handler(&key, &meta, &span).await.unwrap();
+        writer
+            .write_body(Bytes::from_static(b"partial"), false)
+            .await
+            .unwrap();
+
+        let outcome = store
+            .purge(
+                PurgeTarget::Active(&key.to_compact()),
+                PurgeType::Invalidation,
+                &span,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(outcome, PurgeOutcome::Purged(None)), "{outcome:?}");
+
+        writer
+            .write_body(Bytes::from_static(b" rest"), true)
+            .await
+            .unwrap();
+        let _ = writer.finish().await;
+        assert!(
+            !is_cached(store, "/filling").await,
+            "a purged fill was admitted when it finished"
+        );
     }
 
     // ----------------------------------------------------------- cache tags
@@ -1301,7 +1380,7 @@ mod tests {
         assert!(
             store
                 .update_meta(
-                    &CacheKey::new("", "/p/1", ""),
+                    &CacheKey::new("/p/1", ""),
                     &replacement,
                     &Span::inactive().handle(),
                 )
@@ -1322,7 +1401,7 @@ mod tests {
             .unwrap();
         let now = SystemTime::now();
         let meta = CacheMeta::new(now + Duration::from_secs(600), now, 0, 0, header);
-        let key = CacheKey::new("", "/in-progress", "/in-progress");
+        let key = CacheKey::new("/in-progress", "/in-progress");
         let mut writer = store
             .get_miss_handler(&key, &meta, &Span::inactive().handle())
             .await
@@ -1343,7 +1422,7 @@ mod tests {
     #[tokio::test]
     async fn purge_all_prevents_old_deployment_fills_from_being_admitted_late() {
         let store = store_of(1 << 20);
-        let key = CacheKey::new("", "/old-build", "/old-build");
+        let key = CacheKey::new("/old-build", "/old-build");
         let mut writer = store
             .get_miss_handler(&key, &meta(), &Span::inactive().handle())
             .await
@@ -1384,7 +1463,7 @@ mod tests {
         header.insert_header("x-tanod-cache-tags", "ghost").unwrap();
         let now = SystemTime::now();
         let meta = CacheMeta::new(now + Duration::from_secs(60), now, 0, 0, header);
-        let key = CacheKey::new("", "/transient", "");
+        let key = CacheKey::new("/transient", "");
         let mut writer = store
             .get_miss_handler(&key, &meta, &Span::inactive().handle())
             .await
@@ -1592,7 +1671,7 @@ mod tests {
         // waiter miss and go to the origin — request collapsing failing
         // silently on exactly the streaming responses it matters most for.
         let store = store_of(1 << 20);
-        let key = CacheKey::new("", "/streaming", "");
+        let key = CacheKey::new("/streaming", "");
 
         let mut leader = store
             .get_miss_handler(&key, &meta(), &Span::inactive().handle())
@@ -1615,7 +1694,7 @@ mod tests {
     #[tokio::test]
     async fn lookup_prefers_a_finished_entry_over_a_new_write() {
         let store = store_of(1 << 20);
-        let key = CacheKey::new("", "/revalidating", "");
+        let key = CacheKey::new("/revalidating", "");
 
         let mut first = store
             .get_miss_handler(&key, &meta(), &Span::inactive().handle())
@@ -1652,7 +1731,7 @@ mod tests {
     #[tokio::test]
     async fn lookup_still_misses_when_there_is_nothing_at_all() {
         let store = store_of(1 << 20);
-        let key = CacheKey::new("", "/absent", "");
+        let key = CacheKey::new("/absent", "");
         assert!(
             store
                 .lookup(&key, &Span::inactive().handle())
@@ -1665,7 +1744,7 @@ mod tests {
     #[tokio::test]
     async fn dropping_an_incomplete_fill_releases_memory_and_removes_the_temp_entry() {
         let store = store_of(1 << 20);
-        let key = CacheKey::new("", "/abandoned", "");
+        let key = CacheKey::new("/abandoned", "");
         let mut writer = store
             .get_miss_handler(&key, &meta(), &Span::inactive().handle())
             .await
@@ -1691,7 +1770,7 @@ mod tests {
     #[tokio::test]
     async fn a_streaming_tag_never_falls_back_to_an_unrelated_entry() {
         let store = store_of(1 << 20);
-        let key = CacheKey::new("", "/tag", "");
+        let key = CacheKey::new("/tag", "");
         let mut writer = store
             .get_miss_handler(&key, &meta(), &Span::inactive().handle())
             .await
@@ -1715,7 +1794,7 @@ mod tests {
     #[tokio::test]
     async fn transient_fills_exist_only_for_the_follower_handoff() {
         let store = store_of(1 << 20);
-        let key = CacheKey::new("", "/transient", "");
+        let key = CacheKey::new("/transient", "");
         let now = SystemTime::now();
         let mut header = ResponseHeader::build(200, None).unwrap();
         header
@@ -1753,8 +1832,8 @@ mod tests {
     #[tokio::test]
     async fn in_progress_fills_count_toward_the_global_budget() {
         let store = store_of(4096);
-        let first = CacheKey::new("", "/one", "");
-        let second = CacheKey::new("", "/two", "");
+        let first = CacheKey::new("/one", "");
+        let second = CacheKey::new("/two", "");
         let mut a = store
             .get_miss_handler(&first, &meta(), &Span::inactive().handle())
             .await

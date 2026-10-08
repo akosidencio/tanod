@@ -77,6 +77,7 @@ run adversarial.sh "${ADVERSARIAL_SECONDS:-20}"
 # docs/RELEASE-GATES.md.
 run admin.sh
 run upgrade.sh "${UPGRADE_SECONDS:-6}"
+run supervise.sh "${SUPERVISE_RENDER_MS:-2500}"
 run tracing.sh
 run soak.sh "${SOAK_SECONDS:-45}" "${SOAK_WORKERS:-10}"
 run memory.sh "${MEMORY_ROUNDS:-6}" "${MEMORY_SLOW_READERS:-12}"

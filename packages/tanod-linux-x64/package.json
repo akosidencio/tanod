@@ -1,6 +1,6 @@
 {
   "name": "@tanod/linux-x64",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The Tanod binary for Linux x64: statically linked, so it runs on glibc and musl (Alpine) alike",
   "license": "Apache-2.0",
   "homepage": "https://github.com/akosidencio/tanod#readme",

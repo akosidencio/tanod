@@ -270,6 +270,36 @@ pub struct Origin {
     /// How much of the global ceiling each route priority may occupy.
     #[serde(default)]
     pub priorities: Priorities,
+    /// Start and supervise the origin server as a child process.
+    #[serde(default)]
+    pub command: Option<OriginCommand>,
+}
+
+/// The origin server, started and supervised by Tanod.
+///
+/// Tanod starts it, waits until the single loopback upstream accepts
+/// connections, and only then serves. On shutdown it stops it after its own
+/// drain, so requests already admitted finish first; if it exits on its own,
+/// Tanod exits with its code so the platform restarts both. That makes one
+/// container or one systemd unit the whole deployment, with no runner process
+/// beside the two.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OriginCommand {
+    /// Program and arguments, e.g. `["node", "server.js"]`. Not run through a
+    /// shell.
+    pub args: Vec<String>,
+    /// Added to the environment Tanod was started with. `PORT` and `HOSTNAME`
+    /// default to the upstream's port and host, because most server
+    /// frameworks read them and the inherited `PORT` is usually Tanod's own.
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+    /// How long the origin may take to accept connections.
+    #[serde(default = "d_60s")]
+    pub ready_timeout: Dur,
+    /// How long it gets to exit after `SIGTERM` before `SIGKILL`.
+    #[serde(default = "d_10s")]
+    pub stop_timeout: Dur,
 }
 
 /// Reserved capacity, expressed as what each priority is *allowed* rather

@@ -88,6 +88,13 @@ impl Reloader {
                     .to_string(),
             );
         }
+        if cfg.origin.command != current.config.origin.command {
+            return Err(
+                "origin.command changed; the origin process is started once with Tanod, so \
+                 that needs a restart"
+                    .to_string(),
+            );
+        }
         if cfg.origin.load_balancing != current.config.origin.load_balancing {
             return Err("origin.load_balancing changed; that needs a restart".to_string());
         }
@@ -461,7 +468,7 @@ routes:
         );
         let mut writer = store
             .get_miss_handler(
-                &CacheKey::new("", "/page", ""),
+                &CacheKey::new("/page", ""),
                 &meta,
                 &Span::inactive().handle(),
             )
@@ -527,6 +534,32 @@ routes:
         .unwrap();
         let err = reloader.reload().unwrap_err();
         assert!(err.contains("needs a restart"), "{err}");
+    }
+
+    #[test]
+    fn changing_the_supervised_origin_command_is_refused() {
+        let supervised = r#"version: 1
+server:
+  listen: "127.0.0.1:8080"
+origin:
+  upstreams: ["127.0.0.1:3001"]
+  command:
+    args: ["node", "server.js"]
+"#;
+        let (path, reloader, policy) = setup(supervised);
+        for changed in [
+            supervised.replace("server.js", "other.js"),
+            supervised.replace(
+                "    args: [\"node\", \"server.js\"]\n",
+                "    args: [\"node\", \"server.js\"]\n    env: {A: b}\n",
+            ),
+            supervised.replace("  command:\n    args: [\"node\", \"server.js\"]\n", ""),
+        ] {
+            std::fs::write(&path.0, &changed).unwrap();
+            let err = reloader.reload().unwrap_err();
+            assert!(err.contains("origin.command changed"), "{err}");
+            assert_eq!(policy.load().generation, 1, "a refused reload was applied");
+        }
     }
 
     #[test]

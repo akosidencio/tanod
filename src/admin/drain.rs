@@ -158,6 +158,7 @@ pub struct DrainShutdownSignalWatch {
     inner: UnixShutdownSignalWatch,
     state: Arc<DrainState>,
     drain_period: Duration,
+    supervised_origin: bool,
 }
 
 impl DrainShutdownSignalWatch {
@@ -166,10 +167,30 @@ impl DrainShutdownSignalWatch {
             inner: UnixShutdownSignalWatch,
             state,
             drain_period,
+            supervised_origin: false,
         }
     }
 
+    /// This process supervises its origin (`origin.command`). A graceful
+    /// upgrade hands the listeners to a new process, which would start a
+    /// second origin on the same port while this one still runs, so `SIGQUIT`
+    /// becomes a drain and stop instead.
+    pub fn with_supervised_origin(mut self) -> Self {
+        self.supervised_origin = true;
+        self
+    }
+
     async fn prepare(&self, signal: ShutdownSignal) -> ShutdownSignal {
+        let signal = if self.supervised_origin && matches!(&signal, ShutdownSignal::GracefulUpgrade)
+        {
+            log::warn!(
+                "graceful upgrade (SIGQUIT) cannot hand over a supervised origin; draining and \
+                 stopping instead"
+            );
+            ShutdownSignal::GracefulTerminate
+        } else {
+            signal
+        };
         if !matches!(&signal, ShutdownSignal::GracefulTerminate) {
             return signal;
         }
@@ -264,6 +285,27 @@ mod tests {
             "the drain window was skipped: {:?}",
             started.elapsed()
         );
+    }
+
+    #[tokio::test]
+    async fn with_a_supervised_origin_sigquit_drains_and_stops_instead_of_upgrading() {
+        let state = Arc::new(DrainState::new());
+        let watcher = DrainShutdownSignalWatch::new(state.clone(), Duration::from_millis(50))
+            .with_supervised_origin();
+        let signal = watcher.prepare(ShutdownSignal::GracefulUpgrade).await;
+        assert!(matches!(signal, ShutdownSignal::GracefulTerminate));
+        assert!(state.is_draining(), "the converted stop skipped the drain");
+    }
+
+    #[tokio::test]
+    async fn without_a_supervised_origin_sigquit_is_still_an_upgrade() {
+        let state = Arc::new(DrainState::new());
+        let watcher = DrainShutdownSignalWatch::new(state.clone(), Duration::from_secs(30));
+        let started = Instant::now();
+        let signal = watcher.prepare(ShutdownSignal::GracefulUpgrade).await;
+        assert!(matches!(signal, ShutdownSignal::GracefulUpgrade));
+        assert!(!state.is_draining());
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[tokio::test]

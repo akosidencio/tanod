@@ -52,6 +52,14 @@ origin:
   upstreams:
     - "next-1:3000"
     - "next-2:3000"
+  # Or have Tanod start the app itself, in the same container or unit, with
+  # one loopback upstream. It serves once the app accepts connections, stops
+  # it after its own drain, and exits with the app's code if the app exits.
+  #   upstreams: ["127.0.0.1:3001"]
+  #   command:
+  #     args: ["node", "server.js"]   # gets PORT=3001 and HOSTNAME=127.0.0.1
+  #     ready_timeout: 60s
+  #     stop_timeout: 10s
   # round_robin (default), hash_by_path, or least_loaded.
   #
   # Hashing by path also warms the origin's own render cache and JIT state.
