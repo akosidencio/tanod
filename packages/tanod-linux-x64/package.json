@@ -13,8 +13,7 @@
     "url": "https://github.com/akosidencio/tanod/issues"
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "os": [
     "linux"
