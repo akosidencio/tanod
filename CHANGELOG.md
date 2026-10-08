@@ -10,6 +10,7 @@ names.
 
 - Added `origin.command`: Tanod starts and supervises the app server, so one container or systemd unit runs both with no runner process, for any framework.
 - Fixed graceful shutdown cancelling in-flight requests the moment the drain ended; they now get `server.graceful.shutdown_timeout` to finish.
+- Fixed a crash at config load when a quoted value had a backslash before a non-ASCII character.
 - Upgraded to Pingora 0.9 (HTTP request-smuggling hardening, bounded HTTP/2 limits, hop-by-hop header sanitizing) and `prometheus` 0.14, which removes three ignored advisories and the `aws-lc` C dependency.
 
 ## 0.2.0 — 2026-10-04
