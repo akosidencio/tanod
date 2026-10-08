@@ -1,65 +1,42 @@
 # Roadmap
 
-Tanod protects expensive SSR and dynamic origin workloads. It remains a
-working prototype without sustained production validation.
+Remaining work for Tanod's SSR and dynamic origin protection. Tanod is pre-1.0; sustained production validation remains open. Release history belongs in the [changelog](../CHANGELOG.md).
 
-## 6. Complete replica validation
+## Validate deployments
 
-- Validate the static partition and path-stable reference in production-shaped staging.
-- Revisit capacity leases, adaptive limits, and distributed reuse only if fixed partitions prove insufficient.
+Before relying on Tanod in production:
 
-## 7. Complete standalone distribution
+- Validate static replica budgets and path-stable ingress in production-shaped staging
+- Exercise release binaries, generated configuration, systemd, domain setup, upgrades, and rollback on a clean server
+- Obtain an independent cache-key and response-shareability review
+- Record sustained production behavior under representative traffic
 
-- Validate the binary, generated config, systemd unit, and domain guide on a clean server.
-- Add Linux ARM64 and package-manager installation when demand justifies them.
+See the [production reference](./NEXTJS-PRODUCTION-REFERENCE.md), [standalone guide](./STANDALONE.md), and [release gates](./RELEASE-GATES.md) for validation requirements.
 
-## 8. Expand framework support
+## Improve overload handling and visibility
 
-- After phases 5–6, extract a versioned adapter contract and shared conformance tests.
-- Choose the next framework based on demonstrated self-hosting demand.
+The next visitor-facing improvements are:
 
-## 9. Improve what a shed visitor sees
+- Add opt-in, per-route stale responses when admission sheds a request; currently stale content is served during revalidation or upstream failure, not overload shedding
+- Estimate distinct client addresses over one- and five-minute windows without exporting addresses, and report open downstream connections
 
-From staging load tests against a real Next.js storefront (2026-09-26/27): a
-shed was a `503` with an empty body, so a document request landed on the
-browser's own error screen.
+## Expand integrations and distribution
 
-- ~~Add a configurable overload body for document requests~~ — done in 0.2.0
-  (`overload.page`).
-- Serve a stale cached copy instead of shedding, per route, when one exists
-  (for example `stale_on_shed: 5m` beside `stale_if_error`). Today stale is
-  served only for origin failures; a shed is deliberately excluded
-  (`should_serve_stale`), so an overloaded public page fails even when a
-  minutes-old copy is in the cache.
+After replica validation, expand support based on demonstrated self-hosting demand:
 
-## 10. Show what visitors experience
+- Define a versioned framework-adapter contract and shared conformance tests
+- Choose and implement the next framework integration
+- Add Linux ARM64 artifacts and package-manager installation when demand justifies them
 
-The dashboard could show what Tanod does to the origin, but not what visitors
-got. From the same load tests:
-
-- ~~Count responses by route and status class, including Tanod's own sheds~~ —
-  done in 0.2.0 (`tanod_responses_total`).
-- ~~Measure total time per request, split into queue wait and origin time~~ —
-  done in 0.2.0 (`tanod_request_duration_seconds`, `tanod_queue_wait_seconds`).
-- Estimate active visitors: distinct client addresses over the last 1 and 5
-  minutes (an approximate sketch; no addresses leave the process), plus open
-  downstream connections.
-- ~~Export a build-info series~~ — done in 0.2.0 (`tanod_build_info`).
-- ~~Reconcile `tanod_reuse_eligible_requests_total` with `tanod_cache_total`~~ —
-  done in 0.2.0. Background stale-while-revalidate fetches were counted as
-  visitor requests; they are now `status="revalidate"` and excluded from the
-  eligible count. A per-process over-100% ratio could not be reproduced; if
-  it reappears in staging, compare per instance before summing.
+Revisit capacity leases, adaptive limits, and distributed reuse only if staging or production evidence shows fixed partitions and local reuse are insufficient.
 
 ## Current boundaries
 
-- Cache and coalescing remain local to each process; replica limits are statically partitioned and purges must reach every admin endpoint.
-- Path purges match exact paths; dynamic route-pattern invalidation is not implemented.
-- Slow readers can hold origin capacity unless response spooling is enabled, which sacrifices progressive rendering.
-- Disk and external cache storage were [evaluated and declined](./CACHE-STORAGE-EVALUATION.md).
-- Tanod does not replace an edge server, CDN, authentication, or client rate limiting.
+Account for these limits when deploying:
 
-See the [changelog](../CHANGELOG.md) for release history, the
-[Next.js production reference](./NEXTJS-PRODUCTION-REFERENCE.md), and
-[operations](./OPERATIONS.md) and [release gates](./RELEASE-GATES.md) for
-deployment requirements.
+- Cache and coalescing are local; replica capacity is statically partitioned, and purges must reach every cache-holding instance
+- Path purges match exact paths, without dynamic route-pattern invalidation
+- Slow readers can retain origin capacity; bounded response spooling trades progressive rendering for earlier capacity release
+- An edge server, CDN, authentication, and client rate limiting remain separate responsibilities
+
+See [operations](./OPERATIONS.md) for deployment and monitoring guidance.
