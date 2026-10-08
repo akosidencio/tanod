@@ -23,6 +23,7 @@ pub mod config;
 pub mod net;
 pub mod policy;
 pub mod proxy;
+pub mod supervise;
 pub mod telemetry;
 pub mod upstream;
 

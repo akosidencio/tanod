@@ -390,6 +390,8 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
     tanod::telemetry::metrics::preregister();
 
     let listen = cfg.server.listen.clone();
+    let origin_command = cfg.origin.command.clone();
+    let origin_upstream = cfg.origin.upstreams.first().cloned().unwrap_or_default();
     let h2c = cfg.server.h2c;
     let tls = cfg.server.tls.clone();
     let prometheus_listen = cfg.telemetry.prometheus.as_ref().map(|p| p.listen.clone());
@@ -557,22 +559,37 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
         upgrade_sock: graceful.upgrade_socket.clone(),
         daemon: flags.daemon,
         max_retries: max_attempts,
-        graceful_shutdown_timeout_seconds: Some(pingora_seconds(
-            graceful.shutdown_timeout.as_duration(),
-        )),
+        // Teardown only. Pingora cancels every task still running when this
+        // starts and then sleeps it out regardless, so it is kept short; the
+        // time requests get to finish is the grace period below.
+        graceful_shutdown_timeout_seconds: Some(1),
         ..Default::default()
     };
     // Tanod's signal watcher spends the load-balancer drain window before it
-    // returns SIGTERM to Pingora. Once Pingora receives it, every listener
-    // stops accepting immediately, so repeating the drain here would only add
-    // a second silent wait after the useful window had already ended.
-    pingora_conf.grace_period_seconds = Some(0);
+    // returns SIGTERM to Pingora, so new connections have stopped arriving by
+    // then. Pingora's grace period is what follows: listeners are closed, and
+    // requests already in flight keep running until it ends. It used to be 0,
+    // with server.graceful.shutdown_timeout spent on the teardown instead —
+    // which cancelled every in-flight request the moment the drain ended and
+    // then waited the full timeout with nothing left to finish.
+    pingora_conf.grace_period_seconds =
+        Some(pingora_seconds(graceful.shutdown_timeout.as_duration()));
     // Pingora's socket handover is Linux-only: on every other platform
     // `get_fds_from` logs "Upgrade is not currently supported" and returns
     // `ECONNREFUSED`, which reads exactly like "no old process is listening"
     // and sends an operator looking for a problem that is not there. Refuse
     // up front and name the real reason, and point at the drain-based restart
     // that does work everywhere.
+    // A supervised origin belongs to exactly one Tanod process: --upgrade would
+    // start a second origin on the same port while the first still runs, and
+    // --daemon forks away from the child it just started.
+    if origin_command.is_some() && (flags.upgrade || flags.daemon) {
+        eprintln!(
+            "error: --upgrade and --daemon cannot be used with origin.command. Restart instead: \
+             SIGTERM drains Tanod, then stops the origin."
+        );
+        return ExitCode::FAILURE;
+    }
     if flags.upgrade && !cfg!(target_os = "linux") {
         eprintln!(
             "error: --upgrade is not supported on this platform. Pingora can only pass \n\
@@ -800,13 +817,56 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
 
     eprintln!("tanod listening on {listen}");
     eprintln!("  origin concurrency ceiling: {}", concurrency.max);
+    let mut shutdown_signal =
+        DrainShutdownSignalWatch::new(drain, graceful.drain_period.as_duration());
+
+    // The origin, if Tanod supervises it: started last, once everything above
+    // has been built, so a bad config never leaves an orphaned server behind;
+    // and only served once it accepts connections.
+    let supervisor = match &origin_command {
+        Some(command) => {
+            shutdown_signal = shutdown_signal.with_supervised_origin();
+            eprintln!(
+                "  starting origin: {} (waiting up to {:?} for {})",
+                command.args.join(" "),
+                command.ready_timeout.as_duration(),
+                origin_upstream
+            );
+            match tanod::supervise::start(command, &origin_upstream, |status| {
+                // Nothing behind Tanod any more: exit so the platform restarts
+                // the pair, with the origin's code (never 0, since it should
+                // not have stopped).
+                log::error!("the origin exited ({status}); stopping tanod");
+                let code = tanod::supervise::exit_code(status);
+                std::process::exit(if code == 0 { 1 } else { code });
+            }) {
+                Ok(supervisor) => {
+                    eprintln!("  origin is up (pid {})", supervisor.pid());
+                    Some(supervisor)
+                }
+                Err(error) => {
+                    eprintln!("error: origin.command: {error}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        None => None,
+    };
+
     let run_args = pingora_core::server::RunArgs {
-        shutdown_signal: Box::new(DrainShutdownSignalWatch::new(
-            drain,
-            graceful.drain_period.as_duration(),
-        )),
+        shutdown_signal: Box::new(shutdown_signal),
     };
     server.run(run_args);
+
+    // Pingora has drained and finished every in-flight request; only now is
+    // it safe to stop the origin those requests were going to.
+    if let Some(supervisor) = supervisor {
+        log::info!("stopping the origin (pid {})", supervisor.pid());
+        match supervisor.stop() {
+            Some(status) => log::info!("the origin exited ({status})"),
+            None => log::warn!("the origin did not report an exit status"),
+        }
+    }
     ExitCode::SUCCESS
 }
 
@@ -879,6 +939,14 @@ fn check(path: &str) -> ExitCode {
                 env!("CARGO_PKG_VERSION")
             );
             println!("  {upstreams} upstream(s), {routes} route(s)");
+            if let Some(command) = &cfg.origin.command {
+                println!(
+                    "  supervising origin: {} (ready within {:?}, stopped {:?} after SIGTERM)",
+                    command.args.join(" "),
+                    command.ready_timeout.as_duration(),
+                    command.stop_timeout.as_duration()
+                );
+            }
             match cfg.mode {
                 tanod::config::schema::Mode::Observe => println!(
                     "  mode: observe — classification and telemetry only; admission, cache, coalescing, and spooling are disabled"

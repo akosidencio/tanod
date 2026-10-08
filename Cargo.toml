@@ -34,6 +34,10 @@ log = "0.4"
 # because it is already in this tree transitively, so making it direct costs
 # no new code at all.
 getrandom = "0.3"
+# Sending SIGTERM to a supervised origin (`origin.command`); the standard
+# library can only SIGKILL a child. Already in the tree through Pingora, so
+# this adds no crate.
+nix = { version = "0.24", default-features = false, features = ["signal"] }
 
 [features]
 # Exposes the internal parsers the fuzz targets drive. Not part of the public

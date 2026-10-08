@@ -2338,6 +2338,7 @@ dependencies = [
  "globset",
  "http",
  "log",
+ "nix",
  "parking_lot",
  "percent-encoding",
  "pingora-cache",

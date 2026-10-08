@@ -88,6 +88,13 @@ impl Reloader {
                     .to_string(),
             );
         }
+        if cfg.origin.command != current.config.origin.command {
+            return Err(
+                "origin.command changed; the origin process is started once with Tanod, so \
+                 that needs a restart"
+                    .to_string(),
+            );
+        }
         if cfg.origin.load_balancing != current.config.origin.load_balancing {
             return Err("origin.load_balancing changed; that needs a restart".to_string());
         }

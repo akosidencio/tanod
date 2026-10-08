@@ -158,6 +158,7 @@ pub struct DrainShutdownSignalWatch {
     inner: UnixShutdownSignalWatch,
     state: Arc<DrainState>,
     drain_period: Duration,
+    supervised_origin: bool,
 }
 
 impl DrainShutdownSignalWatch {
@@ -166,10 +167,30 @@ impl DrainShutdownSignalWatch {
             inner: UnixShutdownSignalWatch,
             state,
             drain_period,
+            supervised_origin: false,
         }
     }
 
+    /// This process supervises its origin (`origin.command`). A graceful
+    /// upgrade hands the listeners to a new process, which would start a
+    /// second origin on the same port while this one still runs, so `SIGQUIT`
+    /// becomes a drain and stop instead.
+    pub fn with_supervised_origin(mut self) -> Self {
+        self.supervised_origin = true;
+        self
+    }
+
     async fn prepare(&self, signal: ShutdownSignal) -> ShutdownSignal {
+        let signal = if self.supervised_origin && matches!(&signal, ShutdownSignal::GracefulUpgrade)
+        {
+            log::warn!(
+                "graceful upgrade (SIGQUIT) cannot hand over a supervised origin; draining and \
+                 stopping instead"
+            );
+            ShutdownSignal::GracefulTerminate
+        } else {
+            signal
+        };
         if !matches!(&signal, ShutdownSignal::GracefulTerminate) {
             return signal;
         }

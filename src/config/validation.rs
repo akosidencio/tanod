@@ -64,6 +64,7 @@ pub fn validate(cfg: &Config) -> Result<()> {
         )));
     }
     validate_overload_page(&cfg.overload.page)?;
+    validate_origin_command(&cfg.origin)?;
     if cfg.deployment.id.is_some() && cfg.deployment.id_header.is_some() {
         return Err(err(
             "deployment.id and deployment.id_header are both set; pick one source of truth",
@@ -135,6 +136,56 @@ pub fn validate(cfg: &Config) -> Result<()> {
             return Err(err(format!("duplicate route id `{}`", route.id)));
         }
         check_route(route, cfg)?;
+    }
+    Ok(())
+}
+
+fn validate_origin_command(origin: &Origin) -> Result<()> {
+    let Some(command) = &origin.command else {
+        return Ok(());
+    };
+    if command.args.is_empty() || command.args[0].trim().is_empty() {
+        return Err(err("origin.command.args is empty; give the program to run"));
+    }
+    // A supervised origin is the process beside Tanod. Several upstreams, or
+    // a remote one, would mean supervising one thing and proxying to another.
+    let [upstream] = origin.upstreams.as_slice() else {
+        return Err(err(
+            "origin.command needs exactly one upstream: the address the command listens on",
+        ));
+    };
+    let Some((host, port)) = crate::supervise::split_upstream(upstream) else {
+        return Err(err(format!(
+            "origin.command: upstream {upstream} is not host:port"
+        )));
+    };
+    if !crate::supervise::is_loopback(&host) {
+        return Err(err(format!(
+            "origin.command: upstream {upstream} is not a loopback address; a supervised \
+             origin runs beside Tanod, so use 127.0.0.1:{port}"
+        )));
+    }
+    for name in command.env.keys() {
+        let valid = name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !valid {
+            return Err(err(format!(
+                "origin.command.env: {name:?} is not a valid environment variable name"
+            )));
+        }
+    }
+    let ready = command.ready_timeout.as_duration();
+    if ready < Duration::from_secs(1) || ready > Duration::from_secs(600) {
+        return Err(err(
+            "origin.command.ready_timeout must be between 1s and 10m",
+        ));
+    }
+    let stop = command.stop_timeout.as_duration();
+    if stop < Duration::from_secs(1) || stop > Duration::from_secs(300) {
+        return Err(err("origin.command.stop_timeout must be between 1s and 5m"));
     }
     Ok(())
 }
@@ -1015,6 +1066,44 @@ origin:
     #[test]
     fn accepts_a_minimal_config() {
         validate(&parse(BASE)).unwrap();
+    }
+
+    #[test]
+    fn accepts_a_supervised_origin_on_loopback() {
+        let cfg = parse(
+            "version: 1\norigin:\n  upstreams: [\"127.0.0.1:3001\"]\n  command:\n    args: [node, server.js]\n    env: {NODE_ENV: production}\n",
+        );
+        validate(&cfg).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_supervised_origin_that_cannot_be_the_upstream() {
+        for (origin, expected) in [
+            (
+                "upstreams: [\"web:3000\"]\n  command: {args: [node, s.js]}",
+                "loopback",
+            ),
+            (
+                "upstreams: [\"127.0.0.1:3001\", \"127.0.0.1:3002\"]\n  command: {args: [node, s.js]}",
+                "exactly one upstream",
+            ),
+            (
+                "upstreams: [\"127.0.0.1:3001\"]\n  command: {args: []}",
+                "args is empty",
+            ),
+            (
+                "upstreams: [\"127.0.0.1:3001\"]\n  command: {args: [node], env: {\"BAD-NAME\": x}}",
+                "environment variable name",
+            ),
+            (
+                "upstreams: [\"127.0.0.1:3001\"]\n  command: {args: [node], ready_timeout: 500ms}",
+                "ready_timeout",
+            ),
+        ] {
+            let cfg = parse(&format!("version: 1\norigin:\n  {origin}\n"));
+            let error = validate(&cfg).unwrap_err();
+            assert!(error.0.contains(expected), "{origin}: {error}");
+        }
     }
 
     #[test]
