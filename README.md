@@ -1,7 +1,7 @@
 # Tanod: Rust reverse proxy for SSR origin protection
 
 [![CI](https://github.com/akosidencio/tanod/actions/workflows/ci.yml/badge.svg)](https://github.com/akosidencio/tanod/actions/workflows/ci.yml)
-[![Version 0.3.0](https://img.shields.io/badge/version-0.3.0-blue)](https://github.com/akosidencio/tanod/releases/tag/v0.3.0)
+[![Version 0.3.1](https://img.shields.io/badge/version-0.3.1-blue)](https://github.com/akosidencio/tanod/releases/tag/v0.3.1)
 [![Apache 2.0 license](https://img.shields.io/badge/license-Apache%202.0-green)](./LICENSE)
 [![Rust 1.88 or newer](https://img.shields.io/badge/Rust-1.88%2B-orange)](./Cargo.toml)
 [![Linux x64](https://img.shields.io/badge/platform-Linux%20x64-informational)](#installation)
@@ -14,7 +14,7 @@ Tanod is an open-source Rust reverse proxy that protects self-hosted server-side
 **Stop traffic spikes from becoming render spikes.**
 
 > [!IMPORTANT]
-> Tanod is pre-1.0. The current source version is **0.3.0**. Repository tests and bounded staging tests support its mechanisms, but sustained production validation and an independent cache-safety review remain open. Configuration and behavior may change between releases.
+> Tanod is pre-1.0. The current source version is **0.3.1**. Repository tests and bounded staging tests support its mechanisms, but sustained production validation and an independent cache-safety review remain open. Configuration and behavior may change between releases.
 
 [Get started](#getting-started) · [Next.js integration](#using-tanod-with-nextjs) · [Standalone server](./docs/STANDALONE.md) · [Operations](./docs/OPERATIONS.md) · [Roadmap](./docs/ROADMAP.md) · [Changelog](./CHANGELOG.md)
 
@@ -144,7 +144,7 @@ curl -fsS http://127.0.0.1:9091/health/live
 curl -fsS http://127.0.0.1:9091/status
 ```
 
-This example admits up to 16 concurrent origin work units and allows up to 32 queued requests, with a two-second queue deadline. Those values are starting points, not measured capacity for your application. Caching and coalescing are disabled by the private catch-all route.
+This example admits up to 16 concurrent origin work units and allows up to 16 queued requests, with a one-second queue deadline. A queue as deep as the ceiling costs about one render time when it is full; see [sizing the queue](./docs/OPERATIONS.md#sizing-the-queue). Those values are starting points, not measured capacity for your application. Caching and coalescing are disabled by the private catch-all route.
 
 ### Installation
 
@@ -182,7 +182,7 @@ Both an app-local proxy and a separate proxy tier are supported deployment patte
 | One Tanod in front of several origins | Its global limit covers the origin pool it protects | One process owns the Tanod cache and purge endpoint |
 | Several Tanod replicas sharing an origin pool | Statically partition the total budget across the declared replicas | Cache and coalescing stay local; purges must reach every replica |
 
-Copying the full origin concurrency budget to every proxy replica multiplies the allowed work. Use `capacity` and reviewed replica allocations, or the Next.js generator's `--global-concurrency` and `--replicas` options. The [Next.js production reference](./docs/NEXTJS-PRODUCTION-REFERENCE.md) includes path-stable ingress and purge fan-out examples.
+Copying the full origin concurrency budget to every proxy replica multiplies the allowed work. Use `capacity` and reviewed replica allocations, or the Next.js generator's `--global-concurrency` and `--replicas` options. The [Next.js production reference](./docs/NEXTJS-PRODUCTION-REFERENCE.md) includes path-stable ingress and purge fan-out examples. The [deployment guide](./docs/DEPLOYMENT-GUIDE.md) recommends a setup for each scenario, including Kubernetes with autoscaling, and explains how to measure the ceiling.
 
 ### Run Tanod inside your app
 
@@ -356,7 +356,7 @@ That result is a workload-specific observation, not a general speed claim. Separ
 
 ## Project status and roadmap
 
-Tanod 0.3.0 implements the core proxy, admission controls, local cache, request coalescing, telemetry, and application supervision. The [changelog](./CHANGELOG.md) records release history; the [roadmap](./docs/ROADMAP.md) tracks remaining work.
+Tanod 0.3.1 implements the core proxy, admission controls, local cache, request coalescing, telemetry, and application supervision. The [changelog](./CHANGELOG.md) records release history; the [roadmap](./docs/ROADMAP.md) tracks remaining work.
 
 Current boundaries and validation gaps include:
 
@@ -379,6 +379,7 @@ Use these guides for the next step:
 | Guide | What it covers |
 | --- | --- |
 | [Standalone server](./docs/STANDALONE.md) | Release binary, systemd, local origin, and public domain |
+| [Deployment guide](./docs/DEPLOYMENT-GUIDE.md) | Choosing a setup, finding the origin ceiling, autoscaling, and recommended configs |
 | [Operations](./docs/OPERATIONS.md) | Health, deployment, reload, restart, purge, and monitoring |
 | [Annotated configuration](./tanod.yaml) | Listeners, origin budgets, routes, cache, resilience, and telemetry |
 | [Configuration schema](./docs/CONFIG-SCHEMA.md) | Version compatibility, migration rules, and rejected combinations |

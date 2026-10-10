@@ -6,6 +6,15 @@ work and [operations guide](./docs/OPERATIONS.md) for deployment details.
 Tanod was released as Harmost up to 0.1.4. Entries below 0.2.0 use the current
 names.
 
+## 0.3.1 — 2026-10-11
+
+- Changed `tanod init` to generate a queue as deep as the concurrency ceiling with a `1s` deadline, down from twice the ceiling and `2s`. Under sustained overload a deep queue never empties and adds its whole wait to every admitted request without adding throughput. Existing configs are unchanged.
+- Resized the sample `tanod.yaml` queues the same way.
+- Added [sizing the queue](./docs/OPERATIONS.md#sizing-the-queue) to the operations guide: the wait estimate, where it stops holding, and the metrics that show a standing queue.
+- Added a [deployment guide](./docs/DEPLOYMENT-GUIDE.md): where Tanod sits beside a CDN and the framework cache, a recommended setup per scenario, finding the origin ceiling, and running with an autoscaler (HPA or KEDA) without the two blocking each other.
+- Verified `@tanod/next` against Next 16.4.0 and 16.3.8 (same manifest versions as 16.3.3).
+- Security: moved the Next.js storefront fixture to Next 16.4.0 (pulling in sharp 0.35.5 and source-map-js 1.2.2) and the browser bench to Playwright 1.55.1, closing all 11 Dependabot alerts. Both are test-only; nothing Tanod ships depended on the affected versions.
+
 ## 0.3.0 — 2026-10-08
 
 - Added `origin.command`: Tanod starts and supervises the app server, so one container or systemd unit runs both with no runner process, for any framework.
