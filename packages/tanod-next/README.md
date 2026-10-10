@@ -287,6 +287,7 @@ a format nobody verified is how a cache ends up sharing what it should not.
 
 | Next | Router | `routes-manifest` | `prerender-manifest` | Status |
 |---|---|---|---|---|
+| 16.4.0 | App + Pages | v3 | v4 | Verified |
 | 16.3.8 | App + Pages | v3 | v4 | Verified |
 | 16.3.3 | App + Pages | v3 | v4 | Verified |
 
