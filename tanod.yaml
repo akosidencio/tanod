@@ -72,11 +72,15 @@ origin:
   #   sni: "origin.internal"    # required; no SNI means no hostname check
   #   verify_cert: true
   #   verify_hostname: true
+  # A full queue waits about queue.max / max render times before reaching the
+  # origin, so a queue as deep as the ceiling costs about one render time.
+  # Under sustained overload a deeper queue never empties and adds that wait
+  # to every admitted request without adding throughput.
   concurrency:
     max: 500
     queue:
-      max: 1000
-      timeout: 2s
+      max: 500
+      timeout: 1s
   # Reserved capacity, stated as what each priority may occupy rather than
   # what it is promised. Leaving `low` at 50 keeps half the origin ceiling
   # away from low-priority routes however many of them arrive. Every tier
@@ -213,8 +217,8 @@ routes:
     concurrency:
       max: 100
       queue:
-        max: 300
-        timeout: 1500ms
+        max: 100
+        timeout: 1s
 
   - id: search
     match: "/search"
@@ -230,7 +234,7 @@ routes:
     concurrency:
       max: 50
       queue:
-        max: 100
+        max: 50
         timeout: 1s
 
   - id: account
@@ -243,7 +247,7 @@ routes:
     concurrency:
       max: 40
       queue:
-        max: 100
+        max: 40
         timeout: 1s
 
 telemetry:

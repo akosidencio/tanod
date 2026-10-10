@@ -14,6 +14,7 @@ is named.
 - [systemd](#systemd)
 - [Kubernetes](#kubernetes)
 - [Reloading configuration](#reloading-configuration)
+- [Sizing the queue](#sizing-the-queue)
 - [Tracing and correlation](#tracing-and-correlation)
 - [What to alert on](#what-to-alert-on)
 
@@ -471,6 +472,48 @@ purging on every `SIGHUP` would turn a routine config change into a stampede.
 | `tanod_cache_purged_total{scope="all"}` rising | Somebody is purging everything, repeatedly. That is a stampede generator, not an invalidation strategy. |
 | `tanod_cache_evicted_total` rising while `tanod_cache_bytes` sits at its ceiling | The working set does not fit. More memory, a shorter TTL, or a narrower key. |
 | `tanod_cache_tags` growing without bound | The origin mints a tag per revision. The index is bounded by the entries pointing at it, but a tag per render means a tag index the size of the cache. |
+
+---
+
+## Sizing the queue
+
+A request that cannot get an origin slot waits in a bounded queue, oldest
+first, until a slot frees or `queue.timeout` passes. A full queue refuses new
+arrivals immediately (`shed_queue_full`).
+
+Under sustained overload the queue never empties, so every admitted request
+waits roughly
+
+```
+queue.max × render time ÷ concurrency.max
+```
+
+before its render starts, or `queue.timeout` if that is shorter. That wait buys
+no throughput — the origin is already at its ceiling — it only delays the
+response, often past the point where the visitor is still waiting for it.
+
+**Start with `queue.max` equal to `concurrency.max`**, about one render time
+when full, and a `queue.timeout` you would accept on top of a render. This is
+what `tanod init` generates. A deeper queue absorbs short bursts; it does
+nothing for overload that lasts.
+
+The estimate assumes requests of equal cost at one limiter. It is rougher when:
+
+- **routes have a `weight`.** Waiters are served strictly in order, so a heavy
+  request at the head holds lighter ones behind it until enough capacity frees.
+- **a request passes several limiters.** Route, priority tier and global each
+  have their own queue, and the request waits at each in turn against one
+  shared deadline: the smallest non-zero `queue.timeout` among them.
+- **render time varies.** Use `tanod_origin_latency_seconds` under load, not
+  the latency of an idle origin.
+
+Check the result during overload:
+
+| Signal | Means |
+|---|---|
+| `tanod_queue_wait_seconds` near `queue.timeout` | A standing queue. Admitted requests pay the full wait. Lower `queue.max`. |
+| `tanod_admission_total{decision="shed_queue_timeout"}` high relative to `shed_queue_full` | Requests waited the whole deadline and were refused anyway — the slowest way to fail. Lower `queue.max` or `queue.timeout`. |
+| `tanod_queue_depth` pinned at `queue.max` | Arrivals exceed the ceiling continuously. The queue cannot help; caching, coalescing or origin capacity can. |
 
 ---
 

@@ -6,6 +6,12 @@ work and [operations guide](./docs/OPERATIONS.md) for deployment details.
 Tanod was released as Harmost up to 0.1.4. Entries below 0.2.0 use the current
 names.
 
+## 0.3.1 — Unreleased
+
+- Changed `tanod init` to generate a queue as deep as the concurrency ceiling with a `1s` deadline, down from twice the ceiling and `2s`. Under sustained overload a deep queue never empties and adds its whole wait to every admitted request without adding throughput. Existing configs are unchanged.
+- Resized the sample `tanod.yaml` queues the same way.
+- Added [sizing the queue](./docs/OPERATIONS.md#sizing-the-queue) to the operations guide: the wait estimate, where it stops holding, and the metrics that show a standing queue.
+
 ## 0.3.0 — 2026-10-08
 
 - Added `origin.command`: Tanod starts and supervises the app server, so one container or systemd unit runs both with no runner process, for any framework.

@@ -19,6 +19,7 @@ The next visitor-facing improvements are:
 
 - Add opt-in, per-route stale responses when admission sheds a request; currently stale content is served during revalidation or upstream failure, not overload shedding
 - Estimate distinct client addresses over one- and five-minute windows without exporting addresses, and report open downstream connections
+- Measure queue wait, successful-response latency, throughput and rejections under sustained overload; if a tuned queue still adds too much delay, add queue-delay control (a short wait cap once the queue has not emptied recently) and adaptive LIFO, which needs a custom wait list in place of the FIFO semaphore
 
 ## Expand integrations and distribution
 
