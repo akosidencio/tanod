@@ -182,7 +182,7 @@ Both an app-local proxy and a separate proxy tier are supported deployment patte
 | One Tanod in front of several origins | Its global limit covers the origin pool it protects | One process owns the Tanod cache and purge endpoint |
 | Several Tanod replicas sharing an origin pool | Statically partition the total budget across the declared replicas | Cache and coalescing stay local; purges must reach every replica |
 
-Copying the full origin concurrency budget to every proxy replica multiplies the allowed work. Use `capacity` and reviewed replica allocations, or the Next.js generator's `--global-concurrency` and `--replicas` options. The [Next.js production reference](./docs/NEXTJS-PRODUCTION-REFERENCE.md) includes path-stable ingress and purge fan-out examples.
+Copying the full origin concurrency budget to every proxy replica multiplies the allowed work. Use `capacity` and reviewed replica allocations, or the Next.js generator's `--global-concurrency` and `--replicas` options. The [Next.js production reference](./docs/NEXTJS-PRODUCTION-REFERENCE.md) includes path-stable ingress and purge fan-out examples. The [deployment guide](./docs/DEPLOYMENT-GUIDE.md) recommends a setup for each scenario, including Kubernetes with autoscaling, and explains how to measure the ceiling.
 
 ### Run Tanod inside your app
 
@@ -379,6 +379,7 @@ Use these guides for the next step:
 | Guide | What it covers |
 | --- | --- |
 | [Standalone server](./docs/STANDALONE.md) | Release binary, systemd, local origin, and public domain |
+| [Deployment guide](./docs/DEPLOYMENT-GUIDE.md) | Choosing a setup, finding the origin ceiling, autoscaling, and recommended configs |
 | [Operations](./docs/OPERATIONS.md) | Health, deployment, reload, restart, purge, and monitoring |
 | [Annotated configuration](./tanod.yaml) | Listeners, origin budgets, routes, cache, resilience, and telemetry |
 | [Configuration schema](./docs/CONFIG-SCHEMA.md) | Version compatibility, migration rules, and rejected combinations |

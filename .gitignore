@@ -40,3 +40,4 @@ docs/*
 !docs/ROADMAP.md
 !docs/NEXTJS-PRODUCTION-REFERENCE.md
 !docs/STANDALONE.md
+!docs/DEPLOYMENT-GUIDE.md

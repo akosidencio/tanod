@@ -289,6 +289,9 @@ spec:
             limits: { memory: "1Gi" }
 ```
 
+Running Tanod inside each app pod, and pairing it with an autoscaler, is covered
+in the [deployment guide](./DEPLOYMENT-GUIDE.md#autoscaling).
+
 The arithmetic that matters, in one place:
 
 ```
