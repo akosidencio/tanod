@@ -612,3 +612,49 @@ Two things worth knowing before you trust these:
   so a routing decision that looks wrong can be checked rather than guessed at.
   A backend with a much higher EWMA and much less traffic is the strategy
   working.
+
+
+### Choosing an origin strategy
+
+`origin.load_balancing` supports four strategies:
+
+| Value | Selection | Suitable workload |
+|---|---|---|
+| `round_robin` (default) | Rotate configured upstreams, then their resolved addresses | Similar render workers |
+| `hash_by_path` | Existing FNV modulo mapping at both levels | Path affinity with fixed membership |
+| `consistent_hash` | Pingora Ketama ring across unique resolved addresses | Path affinity with instances added or removed |
+| `least_loaded` | Minimize `(in_flight + 1) × latency EWMA` per configured upstream | Workers with different speeds or load |
+
+To opt into Ketama:
+
+```yaml
+origin:
+  upstreams: ["origin.internal:3000"]
+  load_balancing: consistent_hash
+  resolve_interval: 10s
+```
+
+Each resolved instance has equal weight in the Ketama ring. A name resolving
+five addresses therefore gets more traffic than a name resolving one. Changing
+from `hash_by_path` changes initial path ownership; subsequent membership
+changes move only the paths whose ring owner changes. Configuration order does
+not affect Ketama ownership. Health and breakers filter candidates before
+routing, and a fully unhealthy pool still serves as described above. Breaker
+recovery probes can deliberately override affinity.
+
+The resolver keeps the last good DNS answer after a failed lookup and rebuilds
+Ketama snapshots on the blocking pool. `load_balancing` is a startup setting;
+changing it requires restarting Tanod.
+
+Active health probes use Pingora's HTTP client over cleartext HTTP, as before.
+Any valid 2xx response is healthy; redirects and malformed HTTP fail. The
+configured `health.timeout` includes connecting, reading headers, and draining
+the response body. A health endpoint must complete its response within that
+deadline. Probes rotate independently through the current DNS addresses, one
+per configured upstream per round. Health streaks and metrics still describe
+the configured name, so they are advisory rather than a per-instance health
+registry. Strict readiness starts unhealthy until `healthy_after` successful
+probes. Shutdown cancels an outstanding probe immediately.
+
+See [Pingora reuse findings](./PINGORA-REUSE.md) for the library boundaries and
+cache retention comparison.

@@ -705,9 +705,15 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
             health.path,
             health.interval.as_duration()
         );
+        let checker = match HealthChecker::new(upstreams.clone(), &health) {
+            Ok(checker) => checker,
+            Err(error) => {
+                eprintln!("error: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
         server.add_service(pingora_core::services::background::background_service(
-            "health",
-            HealthChecker::new(upstreams.clone(), &health),
+            "health", checker,
         ));
     }
 

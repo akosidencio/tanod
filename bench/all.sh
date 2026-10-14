@@ -88,6 +88,7 @@ run chaos.sh "${CHAOS_ROUNDS:-2}"
 # and one that is simply gone — and assert on what the *origins* counted rather
 # than on what the proxy says about itself.
 run breaker.sh "${BREAKER_REQUESTS:-40}" "${BREAKER_RENDER_MS:-20}"
+BALANCING_STRATEGY=consistent_hash run breaker.sh "${BREAKER_REQUESTS:-40}" "${BREAKER_RENDER_MS:-20}"
 run retry.sh "${RETRY_REQUESTS:-40}" "${RETRY_RENDER_MS:-20}"
 
 # Phase 4: the cache lifecycle. Tags and the purge API, including the half

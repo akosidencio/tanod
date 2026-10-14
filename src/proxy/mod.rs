@@ -1055,11 +1055,16 @@ impl ProxyHttp for Tanod {
             .upstreams
             .select(path)
             .ok_or_else(|| Error::explain(ErrorType::InternalError, "no upstream configured"))?;
-        // Which of the instances behind this upstream's name. Under
-        // `hash_by_path` a path keeps reaching the same instance, whose own
-        // render cache then stays warm; otherwise instances take turns.
-        let socket = backend
-            .socket_for((self.upstreams.strategy() == LoadBalancing::HashByPath).then_some(path));
+        // Which of the instances behind this upstream's name. Either path
+        // hashing strategy keeps a path on one instance, whose own render
+        // cache then stays warm; otherwise instances take turns.
+        let socket = backend.socket_for(
+            matches!(
+                self.upstreams.strategy(),
+                LoadBalancing::HashByPath | LoadBalancing::ConsistentHash
+            )
+            .then_some(path),
+        );
         // Called again for every retry, which is the point: a retried request
         // goes back through selection and so lands wherever the breakers and
         // the load signal now say it should, rather than back on the backend

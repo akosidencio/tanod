@@ -55,6 +55,12 @@ impl Resolver {
                 .with_label_values(&[&backend.address])
                 .set(i64::try_from(backend.sockets().len()).unwrap_or(i64::MAX));
         }
+        if changed > 0 {
+            let pool = self.pool.clone();
+            if let Err(error) = tokio::task::spawn_blocking(move || pool.refresh_selector()).await {
+                log::warn!("upstream selector rebuild did not finish: {error}");
+            }
+        }
         changed
     }
 }

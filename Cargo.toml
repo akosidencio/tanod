@@ -21,6 +21,7 @@ pingora-proxy = "0.9"
 pingora-http = "0.9"
 pingora-error = "0.9"
 pingora-cache = "0.9"
+pingora-load-balancing = "0.9"
 parking_lot = "0.12"
 prometheus = "0.14"
 # /metrics. The same `prometheus` version as above, which is what makes it
@@ -56,7 +57,7 @@ fuzzing = []
 # unused attack surface. A config with `server.tls` or `origin.tls` is
 # *rejected* by a binary built without it rather than quietly serving
 # cleartext.
-tls = ["pingora-core/rustls"]
+tls = ["pingora-core/rustls", "pingora-load-balancing/rustls"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["sync", "time", "rt", "macros", "test-util"] }
@@ -64,6 +65,13 @@ proptest = "1"
 # Test-only: proves the hand-written OTLP JSON parses. Never linked into the
 # binary.
 serde_json = "1"
+# Evaluation only; production cache storage retains its streaming byte budget.
+TinyUFO = "0.9"
+
+[[bench]]
+name = "eviction"
+path = "bench/eviction.rs"
+harness = false
 
 # The crate contains no `unsafe`. `forbid` turns that from a fact about today
 # into an invariant: adding a block is a compile error, not a review comment.

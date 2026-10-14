@@ -8,6 +8,10 @@ names.
 
 ## 0.3.2 - Unreleased
 
+- Reused Pingora's round-robin algorithm and HTTP health-check client. Health probes validate complete HTTP responses, accept all 2xx statuses, enforce the whole-attempt timeout, and cancel promptly on shutdown. Configured upstream health thresholds, circuit breakers, load-aware scoring, and admission remain Tanod policies.
+- Added opt-in `origin.load_balancing: consistent_hash`, using Pingora's Ketama selector across resolved instances. DNS changes rebuild selector snapshots off proxy workers. Existing `hash_by_path` mappings and the default round-robin strategy are preserved.
+- Added a byte-weighted TinyUFO retention comparison against the production CLOCK and FIFO stores; TinyUFO remains an evaluation dependency. See [Pingora reuse findings](./docs/PINGORA-REUSE.md).
+
 - Security: updated the locked Rustls dependency to 0.23.46, fixing RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348, and RUSTSEC-2026-0349. Added a documented exception for Pingora's unmaintained unsafe-libyaml dependency (RUSTSEC-2024-0449); Tanod uses serde-saphyr for its configuration and does not call Pingora's YAML configuration parser.
 - Added a shared compatibility declaration for Next.js 16.4.0 and 16.3.8 on Node 22 and 24. Every pair is a release gate covering a real build, generated policy validation, HTTP, browser navigation/prefetch, Server Actions, invalidation, and replica recovery, with CI logs attached per pair. Adapter tests cover both Node lines and pinned Bun 1.4.0.
 - Clarified that npm peer/engine installation ranges and historical manifest-only verification do not promise full framework integration coverage.

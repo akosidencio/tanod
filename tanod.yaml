@@ -60,9 +60,10 @@ origin:
   #     args: ["node", "server.js"]   # gets PORT=3001 and HOSTNAME=127.0.0.1
   #     ready_timeout: 60s
   #     stop_timeout: 10s
-  # round_robin (default), hash_by_path, or least_loaded.
+  # round_robin (default), hash_by_path, consistent_hash, or least_loaded.
   #
   # Hashing by path also warms the origin's own render cache and JIT state.
+  # consistent_hash uses Ketama to limit remapping when instances change.
   # least_loaded scores each backend on outstanding work against observed
   # latency, which is what notices a backend that is up but slow.
   load_balancing: hash_by_path
