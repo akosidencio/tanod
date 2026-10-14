@@ -8,6 +8,15 @@ ignore = [
     # this when the Pingora dependency no longer uses derivative.
     "RUSTSEC-2024-0388",
 
+    # unsafe-libyaml 0.2.11 is unmaintained, with no patched release. It is
+    # required by pingora-core 0.9 through serde_yaml. Tanod parses its config
+    # with serde-saphyr and builds ServerConf programmatically using
+    # Server::new_with_opt_and_conf (src/main.rs); Pingora's YAML parser is
+    # not called by that path. This exception covers the maintenance warning
+    # only. Remove it when Pingora replaces this dependency, and re-review it
+    # if Tanod starts using Pingora's YAML configuration APIs.
+    "RUSTSEC-2024-0449",
+
     # rustls-pemfile 2.2.0 is unmaintained and arrives through Pingora's rustls
     # feature. No maintained version exists for us to select independently of
     # pingora-rustls 0.9. Remove this with the corresponding Pingora update.

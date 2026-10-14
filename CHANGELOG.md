@@ -8,6 +8,7 @@ names.
 
 ## 0.3.2 - Unreleased
 
+- Security: updated the locked Rustls dependency to 0.23.46, fixing RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348, and RUSTSEC-2026-0349. Added a documented exception for Pingora's unmaintained unsafe-libyaml dependency (RUSTSEC-2024-0449); Tanod uses serde-saphyr for its configuration and does not call Pingora's YAML configuration parser.
 - Added a shared compatibility declaration for Next.js 16.4.0 and 16.3.8 on Node 22 and 24. Every pair is a release gate covering a real build, generated policy validation, HTTP, browser navigation/prefetch, Server Actions, invalidation, and replica recovery, with CI logs attached per pair. Adapter tests cover both Node lines and pinned Bun 1.4.0.
 - Clarified that npm peer/engine installation ranges and historical manifest-only verification do not promise full framework integration coverage.
 - Fixed Next.js capacity calibration recommending a ceiling when every request fails. Missing or undersampled healthy baselines now return a null recommendation and a nonzero CLI exit status.
