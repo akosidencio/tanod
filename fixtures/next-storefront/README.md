@@ -42,6 +42,29 @@ Run the complete scenario from the repository root:
 ./bench/nextjs-browser.sh  # the same stack, driven by Chromium
 ```
 
+The compatibility runner repeats all HTTP, browser, reference, and replica
+checks for a declared Next.js/Node pair. Build arguments select the framework
+and Node release without rewriting the checked-in fixture or lockfile:
+
+```bash
+TANOD_NEXT_VERSION=16.3.8 TANOD_NEXT_NODE=24 bash bench/nextjs-compatibility.sh
+```
+
+CI takes the required pairs from
+[`compatibility.json`](../../packages/tanod-next/src/compatibility.json).
+The runner uses a separate Compose project and origin image for each pair,
+and writes version targets and suite logs under `compatibility-results/`.
+Runs on one host are sequential because the fixture uses fixed loopback ports.
+On Linux hosts outside Playwright's supported distributions, set
+`TANOD_BROWSER_DOCKER=1` to run Chromium and the same harness in the official
+Playwright image matching the pinned harness dependency. This uses host
+networking and does not install system packages.
+Linux hosts without `apt-get` use this mode automatically; set
+`TANOD_BROWSER_DOCKER=0` to explicitly use the native browser installer.
+If the native browser's system dependencies are already installed, set
+`TANOD_BROWSER_INSTALL_DEPS=0` to download Chromium without changing system
+packages. Browser assertions still run and fail normally in either mode.
+
 The browser script covers the two requests curl cannot construct: a router
 prefetch carrying a real `Next-Router-State-Tree`, and a Server Action POST
 carrying an action id this build assigned.
@@ -53,5 +76,6 @@ docker compose -f compose.nextjs.yaml up --build
 curl -i http://127.0.0.1:18080/products/atlas-runner
 ```
 
-Only Tanod publishes a host port. The three Next.js services are reachable
-only inside the Compose network, matching the intended production topology.
+The edge publishes the traffic port; origin and admin ports bind only to
+loopback for local diagnostic checks. Keep those diagnostic ports private in
+production.

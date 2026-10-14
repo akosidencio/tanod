@@ -1,10 +1,12 @@
+import { readFileSync } from 'node:fs';
+
 /**
  * What this package has been built and tested against.
  *
  * Next's build manifests are internal formats with their own version numbers,
- * independent of Next's release version. They are the actual compatibility
- * surface: a Next upgrade that leaves them alone changes nothing here, and one
- * that bumps them can change everything.
+ * independent of Next's release version. These guards protect policy
+ * generation; unchanged manifests do not prove unchanged browser protocols or
+ * invalidation behavior. The real-framework matrix tests those separately.
  *
  * The rule mirrors Tanod's own configuration rule, and for the same reason.
  * An unknown manifest version is **refused**, never guessed at. Guessing would
@@ -14,6 +16,15 @@
 
 /** The Tanod configuration schema version this package emits. */
 export const TANOD_SCHEMA_VERSION = 1;
+
+// CI, CLI help, and local compatibility runs consume the same declaration.
+const matrix = JSON.parse(readFileSync(new URL('./compatibility.json', import.meta.url), 'utf8'));
+export const SUPPORTED_NODE_RELEASES = Object.freeze(matrix.node);
+export const TESTED_BUN_RELEASE = matrix.bun;
+/** Required real-build, HTTP, browser, and invalidation gates for each release. */
+export const NEXT_COMPATIBILITY_MATRIX = Object.freeze(matrix.next.flatMap((next) =>
+  matrix.node.map((node) => Object.freeze({ next, node })),
+));
 
 /**
  * Manifest versions this package understands.

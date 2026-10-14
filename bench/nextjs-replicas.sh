@@ -4,7 +4,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPOSE=(docker compose -p tanod-nextjs-replicated -f compose.nextjs.yaml -f compose.nextjs-replicated.yaml)
+COMPOSE=(docker compose -p "${TANOD_NEXTJS_PROJECT:-tanod-nextjs-replicated}" -f compose.nextjs.yaml -f compose.nextjs-replicated.yaml)
 EDGE=http://127.0.0.1:18080
 RESULT_DIR=$(mktemp -d)
 

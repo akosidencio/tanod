@@ -13,7 +13,7 @@ test('reads a real Next build', () => {
   assert.ok(build.staticRoutes.length > 0);
 });
 
-test('the compatibility matrix matches the build it claims to support', () => {
+test('the manifest verification history matches the committed build fixture', () => {
   // The matrix is only worth having if it is checked against a real build
   // rather than transcribed by hand.
   assert.ok(

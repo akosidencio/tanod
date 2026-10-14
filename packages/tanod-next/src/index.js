@@ -10,4 +10,7 @@ export {
 } from './policy.js';
 export { calibrate, doctor, explainRequest, formatInspection } from './workflows.js';
 export { createPurger, revalidateTag, revalidatePath } from './purge.js';
-export { TANOD_SCHEMA_VERSION, SUPPORTED_MANIFESTS, VERIFIED_NEXT_RELEASES } from './compat.js';
+export {
+  TANOD_SCHEMA_VERSION, SUPPORTED_MANIFESTS, VERIFIED_NEXT_RELEASES,
+  NEXT_COMPATIBILITY_MATRIX, SUPPORTED_NODE_RELEASES, TESTED_BUN_RELEASE,
+} from './compat.js';

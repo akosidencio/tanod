@@ -25,8 +25,14 @@ must pass before merge.
 | Doc tests | `cargo test --workspace --doc --locked` | any failure |
 | Dependency advisories | `cargo audit -D warnings` | any advisory not listed in `.cargo/audit.toml` with a reason |
 | End-to-end suite | `./bench/all.sh` | any script's own assertions |
-| Next.js proof | `./bench/nextjs.sh` (11 steps), `./bench/nextjs-browser.sh` | any assertion |
+| Next.js compatibility | `bash bench/nextjs-compatibility.sh` for every declared Next.js/Node pair | actual version mismatch, generated policy rejection, or any HTTP, browser, invalidation, or replica assertion |
 | Fuzz targets | `cargo +nightly fuzz build`, then 60s per target | a crash, or a target that no longer builds |
+
+The separate Next.js matrix is generated from
+[`packages/tanod-next/src/compatibility.json`](../packages/tanod-next/src/compatibility.json).
+It covers Next 16.4.0 and 16.3.8 on Node 22 and 24. Adapter unit tests also run
+on both Node lines and the declared Bun version. A copied manifest fixture is
+not evidence that the full integration passed on another framework release.
 
 `bench/all.sh` runs, among the rest of the suite, the operability scripts added
 in this phase at CI-sized parameters:

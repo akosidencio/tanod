@@ -6,6 +6,14 @@ work and [operations guide](./docs/OPERATIONS.md) for deployment details.
 Tanod was released as Harmost up to 0.1.4. Entries below 0.2.0 use the current
 names.
 
+## 0.3.2 - Unreleased
+
+- Added a shared compatibility declaration for Next.js 16.4.0 and 16.3.8 on Node 22 and 24. Every pair is a release gate covering a real build, generated policy validation, HTTP, browser navigation/prefetch, Server Actions, invalidation, and replica recovery, with CI logs attached per pair. Adapter tests cover both Node lines and pinned Bun 1.4.0.
+- Clarified that npm peer/engine installation ranges and historical manifest-only verification do not promise full framework integration coverage.
+- Fixed Next.js capacity calibration recommending a ceiling when every request fails. Missing or undersampled healthy baselines now return a null recommendation and a nonzero CLI exit status.
+- Added separate warm-up and sustained measurement windows, representative route mixes, an optional p95 latency target, and typed calibration reports. Calibration stops increasing load at the first unhealthy step and distinguishes a measured healthy limit from unobserved saturation.
+- Calibration steps must start at 1 and strictly increase. The default measurement is now 10 seconds per step after a 2-second warm-up, with at least 20 samples required; use `--requests-per-worker` for request-count experiments. Report consumers must handle nullable `observedKnee` and `recommendedCeiling` values.
+
 ## 0.3.1 — 2026-10-11
 
 - Changed `tanod init` to generate a queue as deep as the concurrency ceiling with a `1s` deadline, down from twice the ceiling and `2s`. Under sustained overload a deep queue never empties and adds its whole wait to every admitted request without adding throughput. Existing configs are unchanged.

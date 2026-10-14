@@ -3,7 +3,7 @@ members = [".", "spike/pingora-cache", "bench/slow-origin"]
 
 [package]
 name = "tanod"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 rust-version = "1.88"
 description = "Origin workload governor for server-rendered applications"

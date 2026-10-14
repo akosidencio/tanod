@@ -41,3 +41,5 @@ docs/*
 !docs/NEXTJS-PRODUCTION-REFERENCE.md
 !docs/STANDALONE.md
 !docs/DEPLOYMENT-GUIDE.md
+# Local compatibility evidence; CI uploads it as an artifact.
+compatibility-results/

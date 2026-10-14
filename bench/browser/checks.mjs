@@ -75,11 +75,14 @@ async function checkPrefetch(browser) {
 
   // Record every request the router issues, not just the document.
   const requests = [];
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("request", (request) => {
     requests.push({
       url: request.url(),
       method: request.method(),
       headers: request.headers(),
+      navigation: request.isNavigationRequest(),
     });
   });
 
@@ -157,8 +160,23 @@ async function checkPrefetch(browser) {
       "a prefetch payload was retained",
   );
 
+  // Use the client router after prefetching. Payload reuse is only useful if
+  // the browser can navigate and hydrate the resulting page correctly.
+  const beforeNavigation = requests.length;
+  await Promise.all([
+    page.waitForURL((url) => url.pathname === PREFETCH_PATH),
+    page.click(`a[href="${PREFETCH_PATH}"]`),
+  ]);
+  await page.waitForSelector('main[data-route-kind="public-ssr"]');
+  assert(await page.textContent("h1") === "atlas runner", "client navigation rendered the wrong product");
+  assert(
+    !requests.slice(beforeNavigation).some((request) => request.navigation),
+    "the App Router fell back to a document navigation",
+  );
+  assert(pageErrors.length === 0, `browser errors during prefetch/navigation: ${pageErrors.join('; ')}`);
+
   pass(
-    `the App Router prefetched ${new URL(prefetch.url).pathname}; four concurrent replays cost one render, and a later one rendered again`,
+    `the App Router prefetched and navigated to ${new URL(prefetch.url).pathname}; four concurrent replays cost one render, and a later one rendered again`,
   );
   await context.close();
 }

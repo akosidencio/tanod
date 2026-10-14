@@ -1,9 +1,16 @@
-FROM node:22-alpine AS dependencies
+ARG NODE_VERSION=22
+FROM node:${NODE_VERSION}-alpine AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
+# Matrix builds change only the framework version. Record the selected package
+# files as well as node_modules so the builder reports the version it ran.
+ARG NEXT_VERSION
+RUN if [ -n "$NEXT_VERSION" ]; then \
+      npm install --no-audit --no-fund --save-exact "next@$NEXT_VERSION"; \
+    fi
 
-FROM node:22-alpine AS builder
+FROM node:${NODE_VERSION}-alpine AS builder
 WORKDIR /app
 ARG TANOD_BUILD_ID=next-fixture-v1
 ARG NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
@@ -11,10 +18,11 @@ ENV TANOD_BUILD_ID=$TANOD_BUILD_ID
 ENV NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=$NEXT_SERVER_ACTIONS_ENCRYPTION_KEY
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
+COPY --from=dependencies /app/package.json /app/package-lock.json ./
 RUN npm run build
 RUN node -e "require('node:fs').writeFileSync('tanod.deployment.json', JSON.stringify({version:1,build_id:process.env.TANOD_BUILD_ID}, null, 2) + '\\n')"
 
-FROM node:22-alpine AS runtime
+FROM node:${NODE_VERSION}-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production

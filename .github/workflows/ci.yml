@@ -29,6 +29,30 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  compatibility-matrix:
+    name: compatibility targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      nextjs: ${{ steps.matrix.outputs.nextjs }}
+      node: ${{ steps.matrix.outputs.node }}
+      bun: ${{ steps.matrix.outputs.bun }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Read the package's compatibility declaration
+        id: matrix
+        run: |
+          {
+            echo "nextjs=$(node scripts/nextjs-compatibility.mjs matrix)"
+            echo "node=$(node scripts/nextjs-compatibility.mjs node)"
+            echo "bun=$(node scripts/nextjs-compatibility.mjs bun)"
+          } >> "$GITHUB_OUTPUT"
+
   # Linux is the only platform, not merely the reference one: Tanod is
   # deployed on Linux, the published image is `linux/amd64`, and the release
   # binary targets `x86_64-unknown-linux-gnu`. Every job here runs the full
@@ -146,9 +170,14 @@ jobs:
   # that proves it skips itself when the binary is absent. Skipping quietly in
   # CI would leave the one assertion that matters unenforced.
   tanod-next:
-    name: "@tanod/next (node + bun)"
+    name: "@tanod/next (Node ${{ matrix.node }} + Bun)"
+    needs: compatibility-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ${{ fromJSON(needs.compatibility-matrix.outputs.node) }}
     defaults:
       run:
         working-directory: packages/tanod-next
@@ -163,7 +192,7 @@ jobs:
         working-directory: .
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
       - name: Install dev dependencies (typescript, @types/node)
         run: npm install --no-save typescript@^5.6 @types/node@^22
       - name: Typecheck
@@ -176,7 +205,7 @@ jobs:
           TANOD_REQUIRE_BINARY: "1"
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ needs.compatibility-matrix.outputs.bun }}
       - name: Test on Bun
         run: npm run test:bun
         env:
@@ -270,9 +299,16 @@ jobs:
   # different from a unit test failure: the policy is wrong about Next.js, not
   # wrong about itself.
   nextjs:
-    name: next.js integration proof (linux)
+    name: "Next ${{ matrix.next }} / Node ${{ matrix.node }} integration proof"
+    needs: compatibility-matrix
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.compatibility-matrix.outputs.nextjs) }}
+    env:
+      TANOD_NEXT_VERSION: ${{ matrix.next }}
+      TANOD_NEXT_NODE: ${{ matrix.node }}
 
     steps:
       - uses: actions/checkout@v4
@@ -281,20 +317,21 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
       - name: Build the doctor validation binary
         run: cargo build --locked
 
-      - name: HTTP assertions
-        run: ./bench/nextjs.sh
-
-      - name: Browser-driven assertions
-        run: ./bench/nextjs-browser.sh
-
-      - name: Production-reference assertions
-        run: ./bench/nextjs-reference.sh
-
-      - name: Replicated-governor assertions
-        run: ./bench/nextjs-replicas.sh
+      - name: Real build, HTTP, browser, invalidation, and replica assertions
+        run: bash bench/nextjs-compatibility.sh
+      - name: Publish compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextjs-${{ matrix.next }}-node-${{ matrix.node }}
+          path: compatibility-results/
+          if-no-files-found: error
 
   # Fuzz targets are built on every run so a target cannot rot unnoticed, and
   # run briefly. A short run is a smoke test, not a campaign: it catches a
