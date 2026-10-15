@@ -4,7 +4,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPOSE=(docker compose -p tanod-nextjs-reference -f compose.nextjs.yaml)
+COMPOSE=(docker compose -p "${TANOD_NEXTJS_PROJECT:-tanod-nextjs-reference}" -f compose.nextjs.yaml)
 RESULT_DIR=$(mktemp -d)
 mkdir -p "$RESULT_DIR/config"
 cp bench/nextjs.yaml "$RESULT_DIR/config/nextjs.yaml"
@@ -54,6 +54,18 @@ done
 CONTAINER_ID=$("${COMPOSE[@]}" ps -q next-1)
 [ -n "$CONTAINER_ID" ] || fail "next-1 container was not found"
 docker cp "$CONTAINER_ID:/app/.next" "$RESULT_DIR/.next" >/dev/null
+
+# Verify the selected image's actual framework/runtime and generate policy
+# from this build, rather than accepting a committed fixture as evidence.
+docker exec "$CONTAINER_ID" node -p \
+  'JSON.stringify({next:require("next/package.json").version,node:process.versions.node})' \
+  > "$RESULT_DIR/versions.json"
+if [ -n "${TANOD_COMPAT_REPORT_DIR:-}" ]; then
+  cp "$RESULT_DIR/versions.json" "$TANOD_COMPAT_REPORT_DIR/versions.json"
+fi
+node scripts/nextjs-compatibility.mjs verify "$RESULT_DIR/.next" "$RESULT_DIR/versions.json" \
+  "$RESULT_DIR/config/generated.yaml" \
+  || fail "the selected framework build did not pass adapter validation"
 
 node packages/tanod-next/src/cli.js doctor \
   --dist-dir "$RESULT_DIR/.next" \

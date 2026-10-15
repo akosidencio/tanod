@@ -108,7 +108,7 @@ Run all bounded reference checks:
 ```
 
 Calibration requires an explicit load acknowledgement and route allowlist. It
-prints the target, routes, and concurrency steps before sending requests and
+prints the target, routes, concurrency steps, and measurement settings before sending requests and
 never edits the configuration.
 
 ```bash
@@ -121,7 +121,12 @@ node packages/tanod-next/src/cli.js calibrate \
 
 Use the recommendation as a starting point for review. Repeat the measurement
 on production hardware with representative renders and monitoring before
-raising the fixed ceiling.
+raising the fixed ceiling. Measure the origin directly or use `observe` mode;
+an enforcing Tanod can hide the origin's actual limit. Calibration warms each
+step separately, requires at least 20 measured samples, and stops at the first
+unhealthy step. Without a healthy baseline it reports a null recommendation
+and exits nonzero. See the [adapter guide](../packages/tanod-next/README.md#inspect-explain-doctor-and-calibrate)
+for latency targets, load windows, and report fields.
 
 ## Replica behavior
 

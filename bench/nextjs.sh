@@ -10,7 +10,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPOSE=(docker compose -p tanod-nextjs-fixture -f compose.nextjs.yaml)
+COMPOSE=(docker compose -p "${TANOD_NEXTJS_PROJECT:-tanod-nextjs-fixture}" -f compose.nextjs.yaml)
 PROXY_URL=${PROXY_URL:-http://127.0.0.1:18080}
 METRICS_URL=${METRICS_URL:-http://127.0.0.1:19090}
 CONCURRENCY=${CONCURRENCY:-24}
@@ -21,7 +21,9 @@ down_stack() {
 }
 
 cleanup() {
-  down_stack
+  if [ "${TANOD_NEXTJS_KEEP_STACK:-0}" != "1" ]; then
+    down_stack
+  fi
   rm -rf "$RESULT_DIR"
 }
 trap cleanup EXIT

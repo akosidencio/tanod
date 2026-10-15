@@ -210,8 +210,9 @@ tanod-next explain --policy tanod.next.yaml \
   --url 'https://shop.example/products/one' --header 'Cookie: session=secret'
 tanod-next doctor --config tanod.yaml --origin http://next-1:3000 \
   --traffic http://tanod:8080 --metrics http://tanod:9090
-tanod-next calibrate --target http://127.0.0.1:8080 \
-  --route /products/calibration --steps 1,2,4,8 --allow-load
+tanod-next calibrate --target http://127.0.0.1:3000 \
+  --route /products/one --route '/search?q=example' \
+  --steps 1,2,4,8 --duration 10 --warmup 2 --max-p95-ms 500 --allow-load
 ```
 
 `inspect` highlights every public override and its evidence. `explain` is
@@ -219,6 +220,38 @@ local and redacts credential values. `doctor` performs bounded deployment
 checks. `calibrate` refuses non-local targets unless `--allow-production` is
 also present, never changes configuration, and prints the load shape before
 starting.
+
+Point calibration at the origin directly, or at Tanod in `observe` mode.
+An enforcing proxy or a cached response can hide the application's capacity.
+Each concurrency step has a separate warm-up window (2 seconds by default)
+and measurement window (10 seconds). Repeat `--route` for a representative
+mix; routes are selected round-robin, and repeating a path increases its share.
+Existing query parameters are preserved. A unique calibration query parameter
+and `Cache-Control: no-cache` discourage response reuse, but do not guarantee
+that framework or data caches are bypassed.
+
+Calibration starts at concurrency 1 and stops at the first unhealthy step. A
+healthy step has no failed requests in warm-up or measurement, at least 20
+measured samples, and full-response p95 latency within twice the baseline
+(with a 1ms baseline floor for timer resolution). `--max-p95-ms` adds a stricter
+application latency target when supplied. Warm-up is excluded from measured
+latency and throughput; streaming responses are measured through their final
+byte. This is a workload-specific starting point, not a production guarantee.
+
+The JSON report includes `ok`, `highestHealthyConcurrency`,
+`recommendedCeiling`, and the measurements and rejection reasons for each
+step. The recommendation is 70% of the highest healthy concurrency, rounded
+down with a minimum of 1. Without a healthy baseline, the recommendation is
+`null` and the CLI exits with status 1. If no saturation was established,
+`observedKnee` is `null` and the report includes a warning; the suggested
+ceiling is limited to the steps actually measured. Configuration is never edited.
+
+Load windows are bounded: `--duration` allows up to 60 seconds per step,
+`--warmup` up to 30 seconds, and `--timeout-ms` up to 60000ms per request.
+In-flight requests can finish after a window ends. Each phase also stops at
+100000 requests. For reproducible request-count experiments, use
+`--requests-per-worker N` instead of `--duration`; warm-up defaults to zero in
+that mode. `--min-samples N` can raise the sample requirement above 20.
 
 Use `--rollout observe`, then `protect`, `coalesce`, and `cache` in order.
 Observe mode records policy decisions but disables protection and reuse in the
@@ -279,31 +312,53 @@ Four behaviours worth knowing, all of them deliberate:
 
 ## Compatibility
 
-Next's build manifests are internal formats with their own version numbers,
-independent of Next's release version. **They are the compatibility surface.**
-An unknown manifest version is refused rather than guessed at, for the same
-reason Tanod refuses an unknown config schema: generating a route policy from
-a format nobody verified is how a cache ends up sharing what it should not.
+The maintained integration targets are:
 
-| Next | Router | `routes-manifest` | `prerender-manifest` | Status |
-|---|---|---|---|---|
-| 16.4.0 | App + Pages | v3 | v4 | Verified |
-| 16.3.8 | App + Pages | v3 | v4 | Verified |
-| 16.3.3 | App + Pages | v3 | v4 | Verified |
+| Next.js | Node.js | Routers | Required CI coverage |
+|---|---|---|---|
+| 16.4.0 | 22.x, 24.x | App + Pages | Full integration suite on both runtimes |
+| 16.3.8 | 22.x, 24.x | App + Pages | Full integration suite on both runtimes |
 
-"Verified" means a real `next build` output was read by the generator and the
-result passed `tanod check`. The table is asserted against that build in the
-test suite, so it cannot quietly go stale.
+The [compatibility declaration](./src/compatibility.json) drives CI and CLI
+help. Every combination builds a real standalone application, confirms its
+actual framework and Node versions, generates Tanod policy from that build,
+and validates it with `tanod check`. HTTP tests cover response isolation,
+coalescing, streaming, and App/Pages payload variants; Chromium drives real
+prefetch, navigation, and Server Actions. Reference and replica tests exercise
+invalidation, shared Next.js cache state, purge fan-out, and failure recovery.
+All combinations must pass before a release can publish. CI attaches logs for
+each pair so coverage can be checked against a particular commit or tag.
 
-Other Next releases may well work — the manifest versions are what matter — but
-nobody has run them. If yours is refused, the message names both versions.
+Run one pair locally from the repository root (requires Docker, Chromium, and
+a built `target/debug/tanod` for policy validation):
+
+```bash
+TANOD_NEXT_VERSION=16.3.8 TANOD_NEXT_NODE=24 bash bench/nextjs-compatibility.sh
+```
+
+Node 22 and 24 are the supported Node release lines; CI uses their current
+patches and records the actual runtime. Exact Next patches are intentional:
+adding a patch to the matrix requires running the integration suite, rather
+than assuming unchanged manifest versions prove unchanged runtime behavior.
+
+The npm peer range (`next >=14`) and engine minimum (`node >=18.17`) permit
+installation on older applications; they do **not** promise integration
+coverage for those versions. Next.js 14/15, other Next patches, and other Node
+release lines are outside the maintained matrix. They may work with understood
+manifest versions, but require your own deployment validation.
+
+Next's build manifests have their own version numbers. The generator accepts
+`routes-manifest` v3 and `prerender-manifest` v4 and refuses unknown versions.
+This protects policy generation but does not establish browser or invalidation
+compatibility. Historical manifest-only checks for Next 16.3.3 remain recorded
+in `VERIFIED_NEXT_RELEASES`; that history is separate from the maintained matrix.
 
 ### Runtimes
 
 | Runtime | Status |
 |---|---|
-| Node 22.22 | Verified — `npm test` |
-| Bun 1.4 | Verified — `npm run test:bun` |
+| Node 22.x, 24.x | Adapter tests and real Next.js integration in CI |
+| Bun 1.4.0 | Adapter tests in CI; no Bun-hosted Next.js integration claim |
 
 `npm run test:all` runs both.
 

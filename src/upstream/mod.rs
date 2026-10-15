@@ -20,6 +20,7 @@ pub mod resolver;
 pub mod retry;
 pub mod window;
 
+use std::collections::{BTreeSet, HashMap};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -27,6 +28,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use arc_swap::ArcSwap;
+use pingora_load_balancing::selection::algorithms::RoundRobin;
+use pingora_load_balancing::selection::{
+    BackendIter, BackendSelection, Consistent, SelectionAlgorithm,
+};
 
 use crate::config::schema::{Breaker as BreakerConfig, LoadBalancing};
 use breaker::{Breaker, BreakerAllowance, BreakerState, ProbeToken};
@@ -42,43 +47,64 @@ use breaker::{Breaker, BreakerAllowance, BreakerState, ProbeToken};
 /// staging storefront one instance ran at 100% CPU while its twin idled, and a
 /// replaced instance would have been unreachable until Tanod restarted.
 /// [`resolver`] re-resolves every `origin.resolve_interval`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Backend {
     pub id: usize,
     pub address: String,
-    sockets: Arc<ArcSwap<Vec<SocketAddr>>>,
-    rotation: Arc<AtomicUsize>,
+    resolved: Arc<ArcSwap<Resolved>>,
+    rotation: Arc<RoundRobin>,
+    strategy: LoadBalancing,
+}
+
+impl std::fmt::Debug for Backend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Backend")
+            .field("id", &self.id)
+            .field("address", &self.address)
+            .field("sockets", &self.sockets())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Backend {
-    fn new(id: usize, address: &str) -> Result<Self, String> {
+    fn new(id: usize, address: &str, strategy: LoadBalancing) -> Result<Self, String> {
         let sockets = resolve(address)?;
         Ok(Backend {
             id,
             address: address.to_string(),
-            sockets: Arc::new(ArcSwap::from_pointee(sockets)),
-            rotation: Arc::new(AtomicUsize::new(0)),
+            resolved: Arc::new(ArcSwap::from_pointee(Resolved::new(sockets, strategy))),
+            rotation: Arc::new(RoundRobin::new()),
+            strategy,
         })
     }
 
     /// Every address this upstream currently resolves to, in a stable order.
     pub fn sockets(&self) -> Arc<Vec<SocketAddr>> {
-        self.sockets.load_full()
+        self.resolved.load().sockets.clone()
     }
 
     /// The address one origin connection should use.
     ///
-    /// With a `key` — the path, under `hash_by_path` — the same path keeps
+    /// With a `key` — the path, under either hashing strategy — the same path keeps
     /// reaching the same instance, which is the point of that strategy: the
     /// instance's own render cache stays warm. Without one, instances take
     /// turns. The set never goes empty: [`Backend::refresh`] keeps the last
     /// good answer rather than store none.
     pub fn socket_for(&self, key: Option<&str>) -> SocketAddr {
-        let sockets = self.sockets.load();
+        let resolved = self.resolved.load();
+        let sockets = &resolved.sockets;
         let len = sockets.len().max(1);
+        if let (Some(key), Some(ring)) = (key, &resolved.ring) {
+            let mut iter = ring.iter(key.as_bytes());
+            if let Some(target) = iter.next()
+                && let pingora_core::protocols::l4::socket::SocketAddr::Inet(addr) = target.addr
+            {
+                return addr;
+            }
+        }
         let index = match key {
             Some(key) => usize::try_from(fnv1a(key.as_bytes()) % len as u64).unwrap_or(0),
-            None => self.rotation.fetch_add(1, Ordering::Relaxed) % len,
+            None => usize::try_from(self.rotation.next(b"") % len as u64).unwrap_or(0),
         };
         sockets[index.min(sockets.len() - 1)]
     }
@@ -90,11 +116,61 @@ impl Backend {
     /// breakers already handle instances that really are gone.
     pub fn refresh(&self) -> Result<bool, String> {
         let fresh = resolve(&self.address)?;
-        if **self.sockets.load() == fresh {
+        if *self.resolved.load().sockets == fresh {
             return Ok(false);
         }
-        self.sockets.store(Arc::new(fresh));
+        self.resolved
+            .store(Arc::new(Resolved::new(fresh, self.strategy)));
         Ok(true)
+    }
+}
+
+/// DNS membership and its selector are published together. No ring builds
+/// happen on a proxy worker; the resolver builds a new snapshot off-thread.
+struct Resolved {
+    sockets: Arc<Vec<SocketAddr>>,
+    ring: Option<Arc<Consistent>>,
+}
+
+impl Resolved {
+    fn new(sockets: Vec<SocketAddr>, strategy: LoadBalancing) -> Self {
+        let ring = (strategy == LoadBalancing::ConsistentHash)
+            .then(|| build_ring(sockets.iter().copied()));
+        Self {
+            sockets: Arc::new(sockets),
+            ring,
+        }
+    }
+}
+
+fn build_ring(sockets: impl Iterator<Item = SocketAddr>) -> Arc<Consistent> {
+    let targets: BTreeSet<_> = sockets
+        .map(|addr| pingora_load_balancing::Backend {
+            addr: pingora_core::protocols::l4::socket::SocketAddr::Inet(addr),
+            weight: 1,
+            ext: Default::default(),
+        })
+        .collect();
+    Arc::new(Consistent::build(&targets))
+}
+
+struct PoolRing {
+    selector: Arc<Consistent>,
+    owners: HashMap<SocketAddr, Vec<usize>>,
+}
+
+impl PoolRing {
+    fn new(backends: &[Backend]) -> Self {
+        let mut owners: HashMap<SocketAddr, Vec<usize>> = HashMap::new();
+        for backend in backends {
+            for socket in backend.sockets().iter() {
+                owners.entry(*socket).or_default().push(backend.id);
+            }
+        }
+        Self {
+            selector: build_ring(owners.keys().copied()),
+            owners,
+        }
     }
 }
 
@@ -149,7 +225,8 @@ pub struct UpstreamPool {
     backends: Vec<Backend>,
     state: Vec<BackendState>,
     strategy: LoadBalancing,
-    cursor: AtomicUsize,
+    cursor: RoundRobin,
+    ring: Option<ArcSwap<PoolRing>>,
     /// The most backends that may be ejected by their breakers at once.
     ///
     /// Zero when breaking is disabled, which makes every breaker check inert.
@@ -169,7 +246,7 @@ impl UpstreamPool {
         let backends = addresses
             .iter()
             .enumerate()
-            .map(|(id, address)| Backend::new(id, address))
+            .map(|(id, address)| Backend::new(id, address, strategy))
             .collect::<Result<Vec<_>, String>>()?;
         let state = backends
             .iter()
@@ -191,11 +268,14 @@ impl UpstreamPool {
         } else {
             0
         };
+        let ring = (strategy == LoadBalancing::ConsistentHash)
+            .then(|| ArcSwap::from_pointee(PoolRing::new(&backends)));
         Ok(UpstreamPool {
             backends,
             state,
             strategy,
-            cursor: AtomicUsize::new(0),
+            cursor: RoundRobin::new(),
+            ring,
             max_ejected,
             epoch: Instant::now(),
         })
@@ -207,6 +287,14 @@ impl UpstreamPool {
 
     pub fn backends(&self) -> &[Backend] {
         &self.backends
+    }
+
+    /// Refresh the pool-wide Ketama snapshot after DNS updates. Called on
+    /// the blocking pool, since ring construction is CPU work.
+    pub fn refresh_selector(&self) {
+        if let Some(ring) = &self.ring {
+            ring.store(Arc::new(PoolRing::new(&self.backends)));
+        }
     }
 
     pub fn strategy(&self) -> LoadBalancing {
@@ -463,9 +551,9 @@ impl UpstreamPool {
         let len = NonZeroUsize::new(pool.len())?;
         match self.strategy {
             LoadBalancing::RoundRobin => pool
-                .get(self.cursor.fetch_add(1, Ordering::Relaxed) % len)
+                .get(usize::try_from(self.cursor.next(b"") % len.get() as u64).unwrap_or(0))
                 .copied(),
-            // Sending a given path to a consistent backend also warms the
+            // Sending a given path to a stable backend also warms the
             // origin's own render cache and JIT state, which is free origin
             // work avoided on top of anything Tanod does.
             LoadBalancing::HashByPath => {
@@ -473,6 +561,22 @@ impl UpstreamPool {
                 // into a `usize`; `unwrap_or` is unreachable, not a fallback.
                 let index = usize::try_from(fnv1a(path.as_bytes()) % len.get() as u64).unwrap_or(0);
                 pool.get(index).copied()
+            }
+            LoadBalancing::ConsistentHash => {
+                let ring = self.ring.as_ref()?.load();
+                let mut iter = ring.selector.iter(path.as_bytes());
+                // Pingora's default Ketama ring has at most 160 points per
+                // endpoint. Bound traversal when health/breakers exclude nodes.
+                for _ in 0..ring.owners.len().saturating_mul(160) {
+                    let target = iter.next()?;
+                    if let pingora_core::protocols::l4::socket::SocketAddr::Inet(addr) = target.addr
+                        && let Some(ids) = ring.owners.get(&addr)
+                        && let Some(backend) = pool.iter().find(|b| ids.contains(&b.id))
+                    {
+                        return Some(*backend);
+                    }
+                }
+                pool.first().copied()
             }
             LoadBalancing::LeastLoaded => self.least_loaded(pool, len),
         }
@@ -490,7 +594,7 @@ impl UpstreamPool {
         // Start the scan at a rotating offset so that backends which score
         // identically — the common case on an idle pool, where every score is
         // 1 — take turns instead of piling onto the lowest-numbered one.
-        let offset = self.cursor.fetch_add(1, Ordering::Relaxed);
+        let offset = usize::try_from(self.cursor.next(b"") % len.get() as u64).unwrap_or(0);
         let mut best: Option<(&'a Backend, u64)> = None;
         for step in 0..len.get() {
             let Some(backend) = pool.get(offset.wrapping_add(step) % len) else {
@@ -646,6 +750,127 @@ mod tests {
             .map(|i| p.select(&format!("/p/{i}")).unwrap().id)
             .collect();
         assert!(ids.len() > 1, "every path landed on one backend");
+    }
+
+    #[test]
+    fn consistent_hash_only_moves_paths_to_the_added_instance() {
+        let before = pool_of(3, LoadBalancing::ConsistentHash, &breaker_off());
+        let after = pool_of(4, LoadBalancing::ConsistentHash, &breaker_off());
+        let legacy_before = pool_of(3, LoadBalancing::HashByPath, &breaker_off());
+        let legacy_after = pool_of(4, LoadBalancing::HashByPath, &breaker_off());
+        let mut moved = 0;
+        let mut legacy_moved = 0;
+        for i in 0..10_000 {
+            let path = format!("/products/{i}");
+            let old = before.select(&path).unwrap();
+            let new = after.select(&path).unwrap();
+            if old.address != new.address {
+                moved += 1;
+                assert_eq!(new.id, 3, "existing owners must retain their paths");
+            }
+            legacy_moved += usize::from(
+                legacy_before.select(&path).unwrap().address
+                    != legacy_after.select(&path).unwrap().address,
+            );
+        }
+        eprintln!(
+            "3 -> 4 instances, 10000 paths: Ketama moved {moved}, FNV modulo moved {legacy_moved}"
+        );
+        assert!(
+            (1_000..4_000).contains(&moved),
+            "poor ring distribution: {moved}"
+        );
+        assert!(moved * 2 < legacy_moved);
+    }
+
+    #[test]
+    fn consistent_hash_survives_reordering_and_removing_a_backend() {
+        let before = pool_of(4, LoadBalancing::ConsistentHash, &breaker_off());
+        let mut reordered = addresses(4);
+        reordered.reverse();
+        let after =
+            UpstreamPool::new(&reordered, LoadBalancing::ConsistentHash, &breaker_off()).unwrap();
+        after.assume_healthy();
+        let removed = pool_of(3, LoadBalancing::ConsistentHash, &breaker_off());
+        for i in 0..1_000 {
+            let path = format!("/products/{i}");
+            let old = before.select(&path).unwrap();
+            assert_eq!(old.address, after.select(&path).unwrap().address);
+            if old.id != 3 {
+                assert_eq!(old.address, removed.select(&path).unwrap().address);
+            }
+        }
+    }
+
+    #[test]
+    fn consistent_hash_skips_unhealthy_and_ejected_backends_and_recovers() {
+        let p = pool_of(3, LoadBalancing::ConsistentHash, &breaker_on(4, 50));
+        p.set_healthy(0, false);
+        for _ in 0..4 {
+            p.record_outcome(1, None, false);
+        }
+        for i in 0..100 {
+            assert_eq!(p.select_at(&format!("/p/{i}"), 0).unwrap().id, 2);
+        }
+        let recovery = p.select_at("/p/1", 2_000).unwrap();
+        assert_eq!(recovery.id, 1);
+        assert!(recovery.probe.is_some());
+        p.record_outcome(1, recovery.probe, true);
+        assert_eq!(p.breaker_state(1), BreakerState::Closed);
+        for id in 0..3 {
+            p.set_healthy(id, false);
+        }
+        assert!(
+            p.select("/p/1").is_some(),
+            "all unhealthy must still fail open"
+        );
+    }
+
+    #[test]
+    fn consistent_hash_uses_all_dns_instances_and_rebuilds_after_refresh() {
+        let p = pool_of(2, LoadBalancing::ConsistentHash, &breaker_off());
+        let sockets = vec![
+            "10.0.0.1:3000".parse().unwrap(),
+            "10.0.0.2:3000".parse().unwrap(),
+        ];
+        p.backends[0].resolved.store(Arc::new(Resolved::new(
+            sockets.clone(),
+            LoadBalancing::ConsistentHash,
+        )));
+        p.refresh_selector();
+        let mut used = BTreeSet::new();
+        // Pool selection and the backend's local ring must agree on the
+        // actual endpoint, including names resolving to multiple instances.
+        let ring = p.ring.as_ref().unwrap().load();
+        for i in 0..1_000 {
+            let path = format!("/p/{i}");
+            let expected = ring
+                .selector
+                .iter(path.as_bytes())
+                .next()
+                .unwrap()
+                .addr
+                .clone();
+            let selected = p.select(&path).unwrap();
+            let socket = selected.socket_for(Some(&path));
+            assert_eq!(
+                expected,
+                pingora_core::protocols::l4::socket::SocketAddr::Inet(socket)
+            );
+            used.insert(socket);
+        }
+        assert_eq!(used.len(), 3);
+        drop(ring);
+        let replacement = "10.0.0.3:3000".parse().unwrap();
+        p.backends[0].resolved.store(Arc::new(Resolved::new(
+            vec![replacement],
+            LoadBalancing::ConsistentHash,
+        )));
+        p.refresh_selector();
+        for i in 0..100 {
+            let path = format!("/p/{i}");
+            assert!(!sockets.contains(&p.select(&path).unwrap().socket_for(Some(&path))));
+        }
     }
 
     #[test]
@@ -862,12 +1087,14 @@ mod tests {
     /// A backend whose name stands for several instances, as App Platform's
     /// internal service name does when a component runs more than one.
     fn multi_instance(addresses: &[&str]) -> Backend {
+        let strategy = LoadBalancing::HashByPath;
         let sockets: Vec<SocketAddr> = addresses.iter().map(|a| a.parse().unwrap()).collect();
         Backend {
             id: 0,
             address: "origin:3000".to_string(),
-            sockets: Arc::new(ArcSwap::from_pointee(sockets)),
-            rotation: Arc::new(AtomicUsize::new(0)),
+            resolved: Arc::new(ArcSwap::from_pointee(Resolved::new(sockets, strategy))),
+            rotation: Arc::new(RoundRobin::new()),
+            strategy,
         }
     }
 
@@ -911,7 +1138,7 @@ mod tests {
 
     #[test]
     fn a_lookup_returning_the_same_addresses_reports_no_change() {
-        let backend = Backend::new(0, "127.0.0.1:3000").unwrap();
+        let backend = Backend::new(0, "127.0.0.1:3000", LoadBalancing::RoundRobin).unwrap();
 
         assert_eq!(backend.refresh(), Ok(false));
         assert_eq!(

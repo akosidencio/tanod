@@ -8,7 +8,7 @@ import { generateToFile } from './generate-to-file.js';
 import { readBuild } from './manifests.js';
 import { readPolicy } from './policy.js';
 import { generateConfig } from './routes.js';
-import { VERIFIED_NEXT_RELEASES } from './compat.js';
+import { NEXT_COMPATIBILITY_MATRIX, VERIFIED_NEXT_RELEASES } from './compat.js';
 import { calibrate, doctor, explainRequest, formatInspection } from './workflows.js';
 import { START_USAGE, start } from './start.js';
 
@@ -52,9 +52,15 @@ DOCTOR OPTIONS
   --public-url <URL>   Expected public host and scheme at the origin.
 
 CALIBRATION OPTIONS
-  --target <URL>       Tanod URL to measure.
+  --target <URL>       Direct origin, or Tanod in observe mode.
   --route <PATH>       Explicit route allowlist; repeatable.
   --steps <LIST>       Concurrency steps. Default: 1,2,4,8,16.
+  --duration <SECONDS> Measured time per step, up to 60. Default: 10.
+  --warmup <SECONDS>   Warm-up per step, up to 30. Default: 2.
+  --requests-per-worker <N> Request-count mode instead of --duration.
+  --min-samples <N>    Required measured samples per step. Default: 20.
+  --max-p95-ms <MS>    Optional application latency target.
+  --timeout-ms <MS>    Request deadline, up to 60000. Default: 10000.
   --allow-load         Required acknowledgement that load will be sent.
   --allow-production   Required in addition for a non-local target.
 
@@ -63,7 +69,8 @@ NOTES
   Regenerate after each build: deployment.id is the Next build id, and it is
   what keeps a new build from being served the previous one's cache entries.
 
-  Verified against: ${VERIFIED_NEXT_RELEASES.map((r) => `Next ${r.next}`).join(', ')}
+  Required CI matrix: ${NEXT_COMPATIBILITY_MATRIX.map((r) => `Next ${r.next} / Node ${r.node}`).join(', ')}
+  Build-manifest verification history: ${VERIFIED_NEXT_RELEASES.map((r) => `Next ${r.next}`).join(', ')}
 `;
 
 function parseArgs(argv) {
@@ -95,6 +102,12 @@ function parseArgs(argv) {
     target: null,
     routes: [],
     steps: null,
+    durationMs: undefined,
+    warmupMs: undefined,
+    requestsPerWorker: undefined,
+    minSamples: undefined,
+    maxP95Ms: undefined,
+    timeoutMs: undefined,
     allowLoad: false,
     allowProduction: false,
     rollout: 'cache',
@@ -217,6 +230,24 @@ function parseArgs(argv) {
         options.steps = value.split(',').map(Number);
         break;
       }
+      case '--duration':
+        options.durationMs = Number(next()) * 1000;
+        break;
+      case '--warmup':
+        options.warmupMs = Number(next()) * 1000;
+        break;
+      case '--requests-per-worker':
+        options.requestsPerWorker = Number(next());
+        break;
+      case '--min-samples':
+        options.minSamples = Number(next());
+        break;
+      case '--max-p95-ms':
+        options.maxP95Ms = Number(next());
+        break;
+      case '--timeout-ms':
+        options.timeoutMs = Number(next());
+        break;
       case '--allow-load':
         options.allowLoad = true;
         break;
@@ -257,11 +288,15 @@ export async function main(argv) {
     process.stderr.write(
       `tanod-next: calibration target=${options.target ?? '<missing>'} ` +
         `routes=${options.routes.join(',') || '<missing>'} ` +
-        `concurrency=${(options.steps ?? [1, 2, 4, 8, 16]).join(',')}\n`,
+        `concurrency=${(options.steps ?? [1, 2, 4, 8, 16]).join(',')} ` +
+        `measurement=${options.requestsPerWorker === undefined ? `${options.durationMs ?? 10000}ms/step` : `${options.requestsPerWorker} requests/worker`} ` +
+        `warmup=${options.warmupMs ?? (options.requestsPerWorker === undefined ? 2000 : 0)}ms/step ` +
+        `min_samples=${options.minSamples ?? 20} ` +
+        `max_p95=${options.maxP95Ms ?? 'baseline × 2'}ms\n`,
     );
     const report = await calibrate(options);
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-    return 0;
+    return report.ok ? 0 : 1;
   }
 
   const build = await readBuild(options.distDir);

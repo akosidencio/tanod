@@ -89,6 +89,10 @@ Eligible stale responses can be served during background revalidation or an upst
 
 Browser document requests can receive a configurable busy page that refreshes automatically. It does not reserve a queue position; each refresh makes a new request. API requests, Next.js payloads, and prefetches receive the error status without that HTML page.
 
+<img src="./assets/tanod-busy-page.png" alt="Tanod's default busy page: a centered card reading 'Hang tight, you're almost in', with a countdown bar and a note that the page refreshes by itself in 5 seconds" width="640">
+
+The title, message and language are set under `overload.page`; see the [annotated configuration](./tanod.yaml).
+
 ## Features available today
 
 The current code includes these capabilities; several require explicit configuration:
@@ -105,6 +109,12 @@ The current code includes these capabilities; several require explicit configura
 | Application supervision | Start and stop one local application through `origin.command` |
 | Operations | Config validation, policy reloads, readiness and liveness checks, graceful draining, and Linux listener handover |
 | Observability | Structured access logs, Prometheus metrics, traces, and OpenTelemetry Protocol (OTLP) export |
+
+Cache eviction supports `clock` (default), `fifo`, and opt-in `tinyufo`.
+TinyUFO uses Pingora's retention policy inside Tanod's bounded streaming store;
+see [choosing a cache eviction policy](./docs/OPERATIONS.md#choosing-a-cache-eviction-policy).
+Origin balancing supports `round_robin`, `hash_by_path`, `consistent_hash`, and
+`least_loaded`; see [choosing an origin strategy](./docs/OPERATIONS.md#choosing-an-origin-strategy).
 
 TLS support requires a binary built with the `tls` feature. Tanod does not obtain or renew certificates. WebSocket upgrades use separate limits rather than render permits.
 
@@ -207,7 +217,7 @@ For setups that use a Node or Bun runner, [`tanod-next start`](./packages/tanod-
 
 ## Using Tanod with Next.js
 
-The `@tanod/next` package reads your production build to generate route policy and coordinates Tanod invalidation with Next.js invalidation. It supports Node and Bun; its declared Next.js peer range starts at version 14.
+The `@tanod/next` package reads your production build to generate route policy and coordinates Tanod invalidation with Next.js invalidation. The maintained integration matrix covers Next.js 16.4.0 and 16.3.8 on Node 22 and 24, with adapter tests on Bun 1.4.0. Its broader npm installation ranges do not imply equivalent testing; see the [compatibility policy](./packages/tanod-next/README.md#compatibility).
 
 Install the build integration in your Next.js project and generate policy after building:
 
@@ -275,6 +285,8 @@ The [threat model](./docs/THREAT-MODEL.md) documents these boundaries. They do n
 ### Slow readers and render capacity
 
 A slow client can delay the proxy's observation that the origin response has finished, keeping a capacity permit occupied. Optional response spooling buffers the response within per-body and global memory limits so capacity can be released earlier.
+
+The extra spool applies to requests bypassing HTTP caching and coalescing; disable both on a route to spool its responses. Cached/coalesced responses retain their streaming path and can still experience client backpressure.
 
 Spooling delays delivery until buffering completes and sacrifices progressive rendering. It is disabled by default, is rejected on routes declared `streaming`, and falls back to streaming when its budget is exceeded. Review [`spool` settings](./tanod.yaml) and the [spool benchmark](./bench/spool.sh) before enabling it.
 

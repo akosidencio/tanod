@@ -13,7 +13,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-COMPOSE=(docker compose -p tanod-nextjs-fixture -f compose.nextjs.yaml)
+COMPOSE=(docker compose -p "${TANOD_NEXTJS_PROJECT:-tanod-nextjs-fixture}" -f compose.nextjs.yaml)
 PROXY_URL=${PROXY_URL:-http://127.0.0.1:18080}
 METRICS_URL=${METRICS_URL:-http://127.0.0.1:19090}
 STARTED_STACK=0
@@ -52,12 +52,27 @@ fi
 echo "Installing the browser harness (playwright + chromium)..."
 ( cd bench/browser && npm install --silent --no-audit --no-fund ) \
   || fail "could not install the browser harness"
-# `--with-deps` is a no-op on macOS and installs the shared libraries Chromium
-# needs on a bare CI runner. Failing here must be loud: a browser check that
-# silently does not run is worse than no browser check.
-( cd bench/browser && npx --yes playwright install --with-deps chromium ) \
-  || fail "could not install Chromium for the browser checks"
-
-echo
-PROXY_URL="$PROXY_URL" METRICS_URL="$METRICS_URL" \
-  node bench/browser/checks.mjs || fail "browser checks did not hold"
+BROWSER_IN_DOCKER=${TANOD_BROWSER_DOCKER:-auto}
+if [ "$BROWSER_IN_DOCKER" = "1" ] || \
+  { [ "$BROWSER_IN_DOCKER" = "auto" ] && [ "$(uname -s)" = "Linux" ] && ! command -v apt-get >/dev/null; }; then
+  # Linux hosts outside Playwright's supported distributions can run the same
+  # harness in its official image, with a browser matching the pinned package.
+  PLAYWRIGHT_VERSION=$(node -p 'require("./bench/browser/node_modules/playwright/package.json").version')
+  docker run --rm --network host \
+    -v "$PWD:/workspace:ro" -w /workspace \
+    -e PROXY_URL="$PROXY_URL" -e METRICS_URL="$METRICS_URL" \
+    "mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble" \
+    node bench/browser/checks.mjs || fail "container browser checks did not hold"
+else
+  # Install the libraries Chromium needs on a bare CI runner. A failed install
+  # remains a failure, never a skipped browser proof.
+  if [ "${TANOD_BROWSER_INSTALL_DEPS:-1}" = "0" ]; then
+    ( cd bench/browser && npx --yes playwright install chromium ) \
+      || fail "could not install Chromium for the browser checks"
+  else
+    ( cd bench/browser && npx --yes playwright install --with-deps chromium ) \
+      || fail "could not install Chromium for the browser checks"
+  fi
+  PROXY_URL="$PROXY_URL" METRICS_URL="$METRICS_URL" \
+    node bench/browser/checks.mjs || fail "browser checks did not hold"
+fi

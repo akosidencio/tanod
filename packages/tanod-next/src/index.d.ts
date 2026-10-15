@@ -121,7 +121,62 @@ export function validatePolicy(policy: NextPolicy, build?: NextBuild, file?: str
 export function formatInspection(build: NextBuild, policy?: NextPolicy | null, options?: { json?: boolean }): string;
 export function explainRequest(build: NextBuild, policy: NextPolicy | null, options: { url?: string; path?: string; method?: string; headers?: string[] }): Record<string, unknown>;
 export function doctor(build: NextBuild, options?: Record<string, unknown>): Promise<Record<string, unknown>>;
-export function calibrate(options?: Record<string, unknown>): Promise<Record<string, unknown>>;
+export interface CalibrationOptions {
+  target?: string;
+  routes?: string[];
+  steps?: number[];
+  allowLoad?: boolean;
+  allowProduction?: boolean;
+  /** Measured window per step. Defaults to 10000; excludes warm-up. */
+  durationMs?: number;
+  /** Warm-up window per step. Defaults to 2000, or 0 in request-count mode. */
+  warmupMs?: number;
+  /** Request-count mode, mutually exclusive with durationMs. */
+  requestsPerWorker?: number;
+  timeoutMs?: number;
+  minSamples?: number;
+  maxP95Ms?: number;
+  fetch?: typeof globalThis.fetch;
+}
+export interface CalibrationStep {
+  concurrency: number;
+  requests: number;
+  successes: number;
+  failures: number;
+  duration_ms: number;
+  sample_limit_reached: boolean;
+  throughput: number;
+  latency_p50_ms: number | null;
+  latency_p95_ms: number | null;
+  warmup_requests: number;
+  warmup_failures: number;
+  healthy: boolean;
+  reasons: string[];
+}
+export interface CalibrationReport {
+  ok: boolean;
+  reason: string | null;
+  target: string;
+  routes: string[];
+  steps: number[];
+  durationMs: number | null;
+  warmupMs: number;
+  requestsPerWorker: number | null;
+  timeoutMs: number;
+  minSamples: number;
+  maxP95Ms: number | null;
+  baselineP95Ms: number | null;
+  latencyLimitMs: number | null;
+  safetyMargin: number;
+  highestHealthyConcurrency: number | null;
+  kneeObserved: boolean;
+  observedKnee: number | null;
+  recommendedCeiling: number | null;
+  applied: false;
+  warnings: string[];
+  results: CalibrationStep[];
+}
+export function calibrate(options?: CalibrationOptions): Promise<CalibrationReport>;
 export function toGlob(page: string): string;
 export function routeId(page: string, taken: Set<string>): string;
 export function createPurger(options?: PurgerOptions): Purger;
@@ -132,6 +187,9 @@ export function revalidateTag(tag: string, options?: RevalidateTagOptions): Prom
 export function revalidatePath(path: string, options?: PurgerOptions): Promise<PurgeResult>;
 
 export const TANOD_SCHEMA_VERSION: number;
+export const NEXT_COMPATIBILITY_MATRIX: ReadonlyArray<{ next: string; node: string }>;
+export const SUPPORTED_NODE_RELEASES: readonly string[];
+export const TESTED_BUN_RELEASE: string;
 export const SUPPORTED_MANIFESTS: Readonly<Record<string, readonly number[] | null>>;
 export const VERIFIED_NEXT_RELEASES: ReadonlyArray<{
   next: string;

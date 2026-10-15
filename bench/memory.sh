@@ -6,8 +6,8 @@
 # to exceed it. This drives all three past their limits at once:
 #
 #   * the cache budget, with a working set an order of magnitude larger;
-#   * the spool budget, with more slow readers than it can hold at once, so
-#     the overflow path (`budget_exhausted`) is taken rather than described;
+#   * the spool budget, with concurrent slow readers on a separate uncached
+#     route, requiring actual spool outcomes and bounded sampled occupancy;
 #   * `cache.max_body_size`, with a body that exceeds it, which must be served
 #     and not stored.
 #
@@ -58,6 +58,18 @@ SAMPLES="$BENCH_DIR/samples"
 # ------------------------------------------- 1. a working set the cache cannot hold
 
 echo
+echo "cache plus global spool: complete bodies on both miss and hit"
+for attempt in 1 2; do
+  BODY="$BENCH_DIR/cache-spool-$attempt"
+  curl -fsS --max-time 30 -o "$BODY" "$BASE/big/1?cache-spool=check" \
+    || bench_fail "cache plus spool truncated response $attempt"
+  bench_assert_gt "$(wc -c < "$BODY" | tr -d ' ')" 1048576 \
+    "complete 1MiB cache/spool response $attempt"
+done
+cmp -s "$BENCH_DIR/cache-spool-1" "$BENCH_DIR/cache-spool-2" \
+  || bench_fail "cache miss and hit bodies differed with global spool enabled"
+
+echo
 echo "phase 1: $((ROUNDS * 16)) unique 1MiB entries against an 8MiB cache"
 for round in $(seq 1 "$ROUNDS"); do
   seq 1 16 | xargs -P 4 -I{} curl -s -o /dev/null --max-time 30 "$BASE/big/1?u=$round-{}"
@@ -70,7 +82,7 @@ bench_result cache_peak_bytes "$CACHE_PEAK"
 # Both directions. The lower bound is what stops this passing against a cache
 # that quietly never stored anything at all.
 bench_assert_gt "${CACHE_PEAK%%.*}" 2097152 "peak cache bytes (nothing was ever cached)"
-bench_assert_le "${CACHE_PEAK%%.*}" 12582912 "peak cache bytes against an 8MiB budget"
+bench_assert_le "${CACHE_PEAK%%.*}" 8388608 "peak cache bytes against an 8MiB budget"
 
 # ------------------------------------------- 2. a body larger than max_body_size
 
@@ -99,31 +111,39 @@ bench_assert_eq "$BIG_RENDERS" 2 \
 
 echo
 echo "phase 3: $SLOW_READERS slow readers against a 4MiB spool budget"
+SPOOL_SAMPLES="$BENCH_DIR/spool-samples"
+: > "$SPOOL_SAMPLES"
 for i in $(seq 1 "$SLOW_READERS"); do
   # 8 KiB/s against a 1MiB body: each reader is resident for two minutes if
   # left alone, and the deadline below is what ends it.
-  curl -s -o /dev/null --limit-rate 8k --max-time 12 "$BASE/big/1?slow=$i" &
+  curl -s -o /dev/null --limit-rate 8k --max-time 12 "$BASE/big/1/spool?slow=$i" &
 done
 for _ in $(seq 1 12); do
+  SAMPLE_BYTES=$(bench_metric "$METRICS_PORT" tanod_spool_bytes)
+  echo "${SAMPLE_BYTES:-0}" >> "$SPOOL_SAMPLES"
   printf '%s %s\n' "$(bench_rss_kb "$PID")" \
-    "$(bench_metric "$METRICS_PORT" tanod_spool_bytes)" >> "$SAMPLES"
+    "${SAMPLE_BYTES:-0}" >> "$SAMPLES"
   sleep 1
 done
 wait 2>/dev/null
 
 SPOOL_PEAK=$(bench_metric "$METRICS_PORT" tanod_spool_bytes)
-SPOOL_EXHAUSTED=$(bench_metric "$METRICS_PORT" 'tanod_spool_total{reason="budget_exhausted",route="bulk"}')
-SPOOL_COMPLETE=$(bench_metric "$METRICS_PORT" 'tanod_spool_total{reason="complete",route="bulk"}')
+SPOOL_EXHAUSTED=$(bench_metric "$METRICS_PORT" 'tanod_spool_total{reason="budget_exhausted",route="spool"}')
+SPOOL_COMPLETE=$(bench_metric "$METRICS_PORT" 'tanod_spool_total{reason="complete",route="spool"}')
+SPOOL_EXHAUSTED=${SPOOL_EXHAUSTED:-0}
+SPOOL_COMPLETE=${SPOOL_COMPLETE:-0}
 echo "  spool bytes now        ${SPOOL_PEAK:-0}"
 echo "  spools completed       ${SPOOL_COMPLETE:-0}"
 echo "  spools budget-refused  ${SPOOL_EXHAUSTED:-0}"
 bench_result spool_complete "${SPOOL_COMPLETE:-0}"
 bench_result spool_budget_exhausted "${SPOOL_EXHAUSTED:-0}"
-# The overflow path has to have been taken, or phase 3 proved nothing: with
-# $SLOW_READERS × 1MiB against a 4MiB budget, some of them must degrade to
-# streaming rather than the budget silently growing to fit.
+# Require a real spool outcome, even when socket buffering lets requests finish
+# before they overlap enough to exhaust the budget. Missing series are zero;
+# they must not turn an arithmetic error into a passing script.
 bench_assert_gt "$(( ${SPOOL_COMPLETE%%.*} + ${SPOOL_EXHAUSTED%%.*} ))" 0 \
   "responses that went through the spool at all"
+SPOOL_OBSERVED=$(bench_max < "$SPOOL_SAMPLES")
+bench_assert_le "${SPOOL_OBSERVED%%.*}" 4194304 "sampled spool bytes against a 4MiB budget"
 
 # ------------------------------------------------------------- assertions
 

@@ -9,3 +9,4 @@ fixtures/next-storefront/node_modules
 fixtures/next-storefront/*.tsbuildinfo
 .DS_Store
 *.local.yaml
+compatibility-results/

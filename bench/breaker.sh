@@ -8,10 +8,20 @@ BENCH_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 REQUESTS=${1:-40}
 RENDER_MS=${2:-20}
+BALANCING_STRATEGY=${BALANCING_STRATEGY:-round_robin}
 
-bench_init breaker
+if [ "$BALANCING_STRATEGY" = round_robin ]; then
+  bench_init breaker
+else
+  bench_init "breaker-$BALANCING_STRATEGY"
+fi
 bench_param requests "$REQUESTS"
 bench_param render_ms "$RENDER_MS"
+case "$BALANCING_STRATEGY" in
+  round_robin|hash_by_path|consistent_hash|least_loaded) ;;
+  *) bench_fail "unsupported balancing strategy: $BALANCING_STRATEGY" ;;
+esac
+bench_param balancing_strategy "$BALANCING_STRATEGY"
 bench_build
 
 ORIGIN_A=$(bench_free_port)
@@ -22,7 +32,7 @@ ADMIN_PORT=$(bench_free_port)
 CONFIG="$BENCH_DIR/breaker.yaml"
 bench_render_config "$BENCH_ROOT/bench/breaker.yaml" "$CONFIG" \
   "LISTEN=$LISTEN_PORT" "ORIGIN_A=$ORIGIN_A" "ORIGIN_B=$ORIGIN_B" \
-  "METRICS=$METRICS_PORT" "ADMIN=$ADMIN_PORT"
+  "METRICS=$METRICS_PORT" "ADMIN=$ADMIN_PORT" "BALANCING_STRATEGY=$BALANCING_STRATEGY"
 
 bench_spawn origin-a "$(bench_bin slow-origin)" "$ORIGIN_A" "$RENDER_MS"
 bench_spawn origin-b "$(bench_bin slow-origin)" "$ORIGIN_B" "$RENDER_MS"

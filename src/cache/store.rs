@@ -34,6 +34,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::watch;
 
+use super::eviction::{TinyPolicy, Victim};
 use crate::config::schema::{CacheDefaults, Eviction};
 
 type BinaryMeta = (Vec<u8>, Vec<u8>);
@@ -95,6 +96,10 @@ struct Stored {
     /// here. A relaxed store is enough — losing one bit under contention costs
     /// an entry one extra chance, not correctness.
     visited: AtomicBool,
+    /// TinyUFO's revision distinguishes replacements from retired queue
+    /// records; the shared hash avoids allocating a lookup key on every hit.
+    revision: u64,
+    tiny_hash: Option<Arc<str>>,
 }
 
 impl Stored {
@@ -192,6 +197,7 @@ pub struct BoundedStore {
     max_bytes: usize,
     next_id: AtomicU64,
     policy: Eviction,
+    tiny: Option<RwLock<TinyPolicy>>,
     /// Lowercased once at startup so the per-response lookup is a plain
     /// `HeaderMap::get`.
     tag_header: String,
@@ -200,6 +206,7 @@ pub struct BoundedStore {
     /// somebody invalidating, and confusing them makes a dashboard lie.
     evicted: AtomicU64,
     purged: AtomicU64,
+    admission_rejected: AtomicU64,
 }
 
 /// Everything a purge removed, for the response and the metrics.
@@ -225,9 +232,12 @@ impl BoundedStore {
             max_bytes: cfg.max_memory.as_usize(),
             next_id: AtomicU64::new(0),
             policy: cfg.eviction,
+            tiny: (cfg.eviction == Eviction::Tinyufo)
+                .then(|| RwLock::new(TinyPolicy::new(cfg.max_memory.as_usize()))),
             tag_header: cfg.tag_header.to_ascii_lowercase(),
             evicted: AtomicU64::new(0),
             purged: AtomicU64::new(0),
+            admission_rejected: AtomicU64::new(0),
         }))
     }
 
@@ -242,6 +252,10 @@ impl BoundedStore {
 
     pub fn evicted(&self) -> u64 {
         self.evicted.load(Ordering::Relaxed)
+    }
+
+    pub fn admission_rejected(&self) -> u64 {
+        self.admission_rejected.load(Ordering::Relaxed)
     }
 
     pub fn purged(&self) -> u64 {
@@ -270,11 +284,10 @@ impl BoundedStore {
 
     /// Make room for `additional` bytes, evicting until the budget allows it.
     ///
-    /// Lock order throughout this file is `used` → `cached` → `order` →
-    /// `tag_index`, taken in that sequence and never the reverse. Every
-    /// function that touches more than one of them takes them here or in
-    /// `purge_matching` below, so the ordering is checkable by reading two
-    /// places rather than ten.
+    /// Accounting transitions lock `used` → `cached` → `order` →
+    /// `tag_index` → `tiny`, skipping unused locks. Lookup takes only cache
+    /// and policy read locks. Never acquire the cache map after the policy
+    /// lock: readers and eviction must observe the same entry identity.
     fn reserve(&self, additional: usize) -> bool {
         if additional > self.max_bytes {
             return false;
@@ -291,9 +304,19 @@ impl BoundedStore {
         // is hot, arrival order is as good a tiebreak as any.
         let mut chances = match self.policy {
             Eviction::Clock => order.len().saturating_add(1),
-            Eviction::Fifo => 0,
+            Eviction::Fifo | Eviction::Tinyufo => 0,
         };
+        let mut tiny = self.tiny.as_ref().map(|policy| policy.write());
         while used.saturating_add(additional) > self.max_bytes {
+            if let Some(policy) = tiny.as_mut() {
+                let victims = policy.evict();
+                if victims.is_empty() {
+                    return false;
+                }
+                self.discard_victims(victims, &mut used, &mut cached, &mut tag_index);
+                Self::compact(policy, &cached);
+                continue;
+            }
             let Some(victim) = order.pop_front() else {
                 return false;
             };
@@ -322,19 +345,38 @@ impl BoundedStore {
         *used = used.saturating_sub(amount);
     }
 
-    /// Convert an already-accounted temporary fill into a completed entry.
-    fn admit(&self, key: String, obj: Stored) {
+    /// Convert an already-accounted fill. Return an admission-rejected object
+    /// to its streaming handoff; its bytes remain reserved until handoff ends.
+    fn admit(&self, key: String, mut obj: Stored) -> Option<Stored> {
         let mut used = self.used.lock();
         let mut cached = self.cached.write();
         let mut order = self.order.write();
         let mut tag_index = self.tag_index.write();
-        // Remove before indexing the replacement. If both revisions carry the
-        // same tag, doing this in the opposite order removes the new mapping
-        // along with the old one.
+        let mut tiny = self.tiny.as_ref().map(|policy| policy.write());
         if let Some(old) = cached.remove(&key) {
             *used = used.saturating_sub(old.size());
             unindex_tags(&mut tag_index, &key, &old.tags);
-            order.retain(|existing| existing != &key);
+            if let Some(policy) = tiny.as_mut() {
+                policy.remove(&key, old.revision);
+                policy.invalidate();
+            } else {
+                order.retain(|existing| existing != &key);
+            }
+        }
+        if let Some(policy) = tiny.as_mut() {
+            obj.revision = policy.revision();
+            obj.tiny_hash = Some(Arc::from(key.as_str()));
+            let victims = policy.admit(&key, obj.size());
+            let rejected = victims
+                .iter()
+                .any(|v| v.hash.as_ref() == key && v.revision == obj.revision);
+            self.discard_victims(victims, &mut used, &mut cached, &mut tag_index);
+            if rejected {
+                self.admission_rejected.fetch_add(1, Ordering::Relaxed);
+                crate::telemetry::metrics::CACHE_ADMISSION_REJECTED.inc();
+                Self::compact(policy, &cached);
+                return Some(obj);
+            }
         }
         for tag in &obj.tags {
             tag_index
@@ -343,7 +385,47 @@ impl BoundedStore {
                 .insert(key.clone());
         }
         cached.insert(key.clone(), obj);
-        order.push_back(key);
+        if let Some(policy) = tiny.as_mut() {
+            Self::compact(policy, &cached);
+        } else {
+            order.push_back(key);
+        }
+        None
+    }
+
+    fn compact(policy: &mut TinyPolicy, cached: &HashMap<String, Stored>) {
+        policy.compact_if_needed(
+            cached.iter().map(|(hash, entry)| {
+                (
+                    hash.as_str(),
+                    entry.revision,
+                    entry.size(),
+                    entry.visited.load(Ordering::Relaxed),
+                )
+            }),
+            cached.len(),
+        );
+    }
+
+    fn discard_victims(
+        &self,
+        victims: Vec<Victim>,
+        used: &mut usize,
+        cached: &mut HashMap<String, Stored>,
+        tag_index: &mut HashMap<String, HashSet<String>>,
+    ) {
+        for victim in victims {
+            if cached
+                .get(victim.hash.as_ref())
+                .is_some_and(|entry| entry.revision == victim.revision)
+                && let Some(entry) = cached.remove(victim.hash.as_ref())
+            {
+                *used = used.saturating_sub(entry.size());
+                unindex_tags(tag_index, victim.hash.as_ref(), &entry.tags);
+                self.evicted.fetch_add(1, Ordering::Relaxed);
+                crate::telemetry::metrics::CACHE_EVICTED.inc();
+            }
+        }
     }
 
     /// Drop every entry carrying any of these tags.
@@ -454,6 +536,12 @@ impl BoundedStore {
             .filter(|(key, entry)| matches(key, entry))
             .map(|(key, _)| key.clone())
             .collect();
+        let mut tiny = self.tiny.as_ref().map(|policy| policy.write());
+        if !doomed.is_empty()
+            && let Some(policy) = tiny.as_mut()
+        {
+            policy.invalidate();
+        }
         let mut purged = Purged::default();
         for key in &doomed {
             if let Some(entry) = cached.remove(key) {
@@ -462,7 +550,13 @@ impl BoundedStore {
                 purged.entries += 1;
                 purged.bytes += size;
                 unindex_tags(&mut tag_index, key, &entry.tags);
+                if let Some(policy) = tiny.as_mut() {
+                    policy.remove(key, entry.revision);
+                }
             }
+        }
+        if let Some(policy) = tiny.as_mut() {
+            Self::compact(policy, &cached);
         }
         if !doomed.is_empty() {
             let removed: HashSet<&String> = doomed.iter().collect();
@@ -508,6 +602,8 @@ impl Storage for BoundedStore {
         key: &CacheKey,
         _t: &SpanHandle,
     ) -> Result<Option<(CacheMeta, HitHandler)>> {
+        // TinyUFO rejection must atomically move a fill into its handoff.
+        let _lifecycle = self.tiny.as_ref().map(|_| self.lifecycle.read());
         let hash = key.combined();
 
         // Recording the read here rather than in the hit handler is
@@ -517,6 +613,9 @@ impl Storage for BoundedStore {
             let cached = self.cached.read();
             cached.get(&hash).map(|obj| {
                 obj.visited.store(true, Ordering::Relaxed);
+                if let (Some(policy), Some(hash)) = (&self.tiny, &obj.tiny_hash) {
+                    policy.read().hit(hash, obj.revision);
+                }
                 (obj.meta.clone(), obj.body.clone())
             })
         };
@@ -542,6 +641,7 @@ impl Storage for BoundedStore {
                 // revalidation overlaps.
                 writes
                     .iter()
+                    .filter(|(_, fill)| !fill.invalidated || !fill.written.borrow().done())
                     .max_by_key(|(id, _)| **id)
                     .map(|(_, t)| (t.meta.clone(), t.body.clone(), t.written.subscribe()))
             })
@@ -575,6 +675,7 @@ impl Storage for BoundedStore {
             return Ok(None);
         };
         let id: u64 = write_id.into();
+        let _lifecycle = self.tiny.as_ref().map(|_| self.lifecycle.read());
         let hash = key.combined();
 
         // Take everything needed out of the lock in one scope: a parking_lot
@@ -582,13 +683,17 @@ impl Storage for BoundedStore {
         // whole future non-Send.
         let found = {
             let guard = self.temp.read();
-            guard.get(&hash).and_then(|m| m.get(&id)).map(|temp| {
-                (
-                    temp.meta.clone(),
-                    temp.body.clone(),
-                    temp.written.subscribe(),
-                )
-            })
+            guard
+                .get(&hash)
+                .and_then(|m| m.get(&id))
+                .filter(|temp| !temp.invalidated || !temp.written.borrow().done())
+                .map(|temp| {
+                    (
+                        temp.meta.clone(),
+                        temp.body.clone(),
+                        temp.written.subscribe(),
+                    )
+                })
         };
         let Some((meta, body, written)) = found else {
             // Pingora requires an exact tag match here. Falling back to another
@@ -736,7 +841,17 @@ impl Storage for BoundedStore {
         }
         obj.meta = replacement;
         obj.tags = replacement_tags;
-        Ok(true)
+        let mut tiny = self.tiny.as_ref().map(|policy| policy.write());
+        if let Some(policy) = tiny.as_mut() {
+            policy.remove(&hash, obj.revision);
+            policy.invalidate();
+            obj.revision = policy.revision();
+            obj.tiny_hash = Some(Arc::from(hash.as_str()));
+            let victims = policy.admit(&hash, obj.size());
+            self.discard_victims(victims, &mut used, &mut cached, &mut tag_index);
+            Self::compact(policy, &cached);
+        }
+        Ok(cached.contains_key(&hash))
     }
 
     fn support_streaming_partial_write(&self) -> bool {
@@ -921,7 +1036,16 @@ impl HandleMiss for FollowableMiss {
         } else {
             // A purge either marks this fill before this transition or waits
             // until it has become a completed entry and removes it there.
-            let _lifecycle = self.store.lifecycle.read();
+            let _shared = self
+                .store
+                .tiny
+                .is_none()
+                .then(|| self.store.lifecycle.read());
+            let _exclusive = self
+                .store
+                .tiny
+                .is_some()
+                .then(|| self.store.lifecycle.write());
             let temp = self
                 .store
                 .remove_temp(&self.key, id)
@@ -931,7 +1055,7 @@ impl HandleMiss for FollowableMiss {
                 return Ok(MissFinishType::Created(size));
             }
             let body = temp.body;
-            self.store.admit(
+            let rejected = self.store.admit(
                 self.key.clone(),
                 Stored {
                     meta: temp.meta,
@@ -944,8 +1068,38 @@ impl HandleMiss for FollowableMiss {
                     // here would give every entry a free pass and turn the
                     // policy back into FIFO with extra steps.
                     visited: AtomicBool::new(false),
+                    revision: 0,
+                    tiny_hash: None,
                 },
             );
+            if let Some(obj) = rejected {
+                self.store
+                    .temp
+                    .write()
+                    .entry(self.key.clone())
+                    .or_default()
+                    .insert(
+                        id,
+                        Temp {
+                            meta: obj.meta,
+                            body: obj.body,
+                            written: self.written.clone(),
+                            transient: true,
+                            tags: obj.tags,
+                            path: obj.path,
+                            invalidated: false,
+                        },
+                    );
+                let store = self.store;
+                let key = self.key.clone();
+                let accounted = self.accounted;
+                tokio::spawn(async move {
+                    tokio::time::sleep(TRANSIENT_HANDOFF).await;
+                    if store.remove_temp(&key, id).is_some() {
+                        store.release(accounted);
+                    }
+                });
+            }
         }
         Ok(MissFinishType::Created(size))
     }
@@ -1854,5 +2008,303 @@ mod tests {
         drop(a);
         drop(b);
         assert_eq!(store.bytes_used(), 0);
+    }
+    fn tiny_store(budget: usize) -> &'static BoundedStore {
+        BoundedStore::new(&CacheDefaults {
+            eviction: Eviction::Tinyufo,
+            max_memory: ByteSize(budget as u64),
+            ..Default::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn tinyufo_pressure_evicts_completed_entries_for_a_large_streaming_fill() {
+        let budget = 256 * 1024;
+        let store = tiny_store(budget);
+        fill(store, "/old", &["old-tag"], 1000).await;
+        let key = CacheKey::new("/new", "/new");
+        let mut writer = store
+            .get_miss_handler(&key, &meta(), &Span::inactive().handle())
+            .await
+            .unwrap();
+        let first = budget - store.bytes_used() - 512;
+        writer
+            .write_body(Bytes::from(vec![b'x'; first]), false)
+            .await
+            .unwrap();
+        writer
+            .write_body(Bytes::from(vec![b'y'; 1024]), true)
+            .await
+            .unwrap();
+        writer.finish().await.unwrap();
+        assert!(store.bytes_used() <= budget);
+        assert!(is_cached(store, "/new").await);
+        assert!(!is_cached(store, "/old").await);
+        assert_eq!(
+            store.tags(),
+            0,
+            "pressure victims must leave no tag mappings"
+        );
+        assert!(store.evicted() > 0);
+        store.purge_all();
+        assert_eq!(store.bytes_used(), 0);
+    }
+
+    #[tokio::test]
+    async fn tinyufo_can_purge_and_replace_the_same_key_without_stale_queue_records() {
+        let store = tiny_store(64 * 1024);
+        fill(store, "/keep", &["keep"], 1000).await;
+        for revision in 0..500 {
+            let tag = format!("revision-{revision}");
+            fill(store, "/same", &[&tag], 1000 + revision % 200).await;
+            assert_eq!(store.entries(), 2);
+            assert!(is_cached(store, "/keep").await);
+            assert_eq!(store.tags(), 2);
+            if revision % 2 == 0 {
+                assert_eq!(store.purge_tags([tag.as_str()]).entries, 1);
+                assert!(!is_cached(store, "/same").await);
+                fill(store, "/same", &[&tag], 1200).await;
+            }
+            if revision > 0 {
+                let old = format!("revision-{}", revision - 1);
+                assert_eq!(store.purge_tags([old.as_str()]).entries, 0);
+            }
+        }
+        assert_eq!(store.purge_paths(["/same"]).entries, 1);
+        assert!(is_cached(store, "/keep").await);
+        assert_eq!(store.purge_all().entries, 1);
+        assert_eq!(store.bytes_used(), 0);
+        assert_eq!(store.tags(), 0);
+        // Force pressure after the invalidation/replacement workload so lazy
+        // records are exercised by eviction, not only by ordinary lookups.
+        for i in 0..100 {
+            fill(store, &format!("/pressure/{i}"), &[], 8000).await;
+        }
+        assert!(store.bytes_used() <= store.limit());
+        assert!(store.entries() > 0);
+    }
+
+    #[tokio::test]
+    async fn tinyufo_metadata_growth_shrink_and_new_tags_remain_accounted() {
+        let store = tiny_store(64 * 1024);
+        fill(store, "/meta", &["old"], 1000).await;
+        let key = CacheKey::new("/meta", "/meta");
+        for revision in 0..200 {
+            let mut header = ResponseHeader::build(200, None).unwrap();
+            let tag = format!("new-{revision}");
+            header.insert_header("x-tanod-cache-tags", &tag).unwrap();
+            header
+                .insert_header("x-padding", "a".repeat(revision % 50 * 20))
+                .unwrap();
+            let now = SystemTime::now();
+            let replacement = CacheMeta::new(now + Duration::from_secs(30), now, 0, 0, header);
+            assert!(
+                store
+                    .update_meta(&key, &replacement, &Span::inactive().handle())
+                    .await
+                    .unwrap()
+            );
+            assert!(store.bytes_used() <= store.limit());
+            assert_eq!(store.tags(), 1);
+            assert_eq!(store.purge_tags(["old"]).entries, 0);
+        }
+        assert_eq!(store.purge_paths(["/meta"]).entries, 1);
+        assert_eq!(store.bytes_used(), 0);
+        fill(store, "/meta", &["again"], 2000).await;
+        assert!(is_cached(store, "/meta").await);
+        assert_eq!(store.purge_tags(["again"]).entries, 1);
+        assert_eq!(store.bytes_used(), 0);
+    }
+
+    #[tokio::test]
+    async fn tinyufo_rejected_fills_keep_a_bounded_follower_handoff() {
+        let store = tiny_store(1 << 20);
+        // Model policy rounding pressure independently of the streaming
+        // budget to deterministically exercise TinyLFU admission rejection.
+        *store.tiny.as_ref().unwrap().write() = TinyPolicy::new(1500);
+        fill(store, "/hot", &[], 1000).await;
+        fill(store, "/warm", &[], 1000).await;
+        fill(store, "/hot", &[], 1000).await;
+        assert!(is_cached(store, "/hot").await);
+        let retained = store.bytes_used();
+        let key = CacheKey::new("/cold", "/cold");
+        let span = Span::inactive().handle();
+        let mut writer = store.get_miss_handler(&key, &meta(), &span).await.unwrap();
+        writer
+            .write_body(Bytes::from(vec![b'a'; 500]), false)
+            .await
+            .unwrap();
+        let (_, mut follower) = store.lookup(&key, &span).await.unwrap().unwrap();
+        assert_eq!(follower.read_body().await.unwrap().unwrap().len(), 500);
+        writer
+            .write_body(Bytes::from(vec![b'b'; 500]), true)
+            .await
+            .unwrap();
+        writer.finish().await.unwrap();
+        assert_eq!(follower.read_body().await.unwrap().unwrap().len(), 500);
+        assert!(follower.read_body().await.unwrap().is_none());
+        assert_eq!(
+            store.entries(),
+            1,
+            "cold admission should have been rejected"
+        );
+        assert_eq!(store.admission_rejected(), 1);
+        assert!(
+            is_cached(store, "/cold").await,
+            "late followers need the handoff"
+        );
+        assert!(store.bytes_used() > retained);
+        tokio::time::sleep(TRANSIENT_HANDOFF * 2).await;
+        assert!(!is_cached(store, "/cold").await);
+        assert!(is_cached(store, "/hot").await);
+        assert_eq!(store.bytes_used(), retained);
+    }
+
+    #[tokio::test]
+    async fn tinyufo_abandoned_and_invalidated_fills_release_their_reservations() {
+        let store = tiny_store(1 << 20);
+        let span = Span::inactive().handle();
+        let key = CacheKey::new("/partial", "/partial");
+        let mut writer = store.get_miss_handler(&key, &meta(), &span).await.unwrap();
+        writer
+            .write_body(Bytes::from_static(b"first"), false)
+            .await
+            .unwrap();
+        let (_, mut follower) = store.lookup(&key, &span).await.unwrap().unwrap();
+        assert_eq!(
+            follower.read_body().await.unwrap().unwrap(),
+            Bytes::from_static(b"first")
+        );
+        drop(writer);
+        assert_eq!(store.bytes_used(), 0);
+        assert!(follower.read_body().await.is_err());
+        let mut writer = store.get_miss_handler(&key, &meta(), &span).await.unwrap();
+        writer
+            .write_body(Bytes::from_static(b"again"), false)
+            .await
+            .unwrap();
+        let (_, mut follower) = store.lookup(&key, &span).await.unwrap().unwrap();
+        store.purge_paths(["/partial"]);
+        writer.finish().await.unwrap();
+        assert!(store.lookup(&key, &span).await.unwrap().is_none());
+        assert_eq!(
+            follower.read_body().await.unwrap().unwrap(),
+            Bytes::from_static(b"again")
+        );
+        assert!(follower.read_body().await.unwrap().is_none());
+        assert_eq!(store.bytes_used(), 0);
+        fill(store, "/partial", &[], 1000).await;
+        assert!(is_cached(store, "/partial").await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn tinyufo_concurrent_fills_purges_and_reads_preserve_accounting() {
+        let store = tiny_store(20 * 1024);
+        for i in 0..8 {
+            fill(store, &format!("/kept/{i}"), &[], 1000).await;
+        }
+        let mut tasks = tokio::task::JoinSet::new();
+        for task in 0..12 {
+            tasks.spawn(async move {
+                let span = Span::inactive().handle();
+                for turn in 0..40 {
+                    let path = format!("/p/{}", (task + turn) % 8);
+                    let key = CacheKey::new(path.as_str(), path.as_str());
+                    let mut writer = store.get_miss_handler(&key, &meta(), &span).await.unwrap();
+                    writer
+                        .write_body(Bytes::from(vec![b'x'; 500]), false)
+                        .await
+                        .unwrap();
+                    tokio::task::yield_now().await;
+                    if turn % 3 == 0 {
+                        store.purge_paths([path.as_str()]);
+                    }
+                    writer
+                        .write_body(Bytes::from(vec![b'y'; 500]), true)
+                        .await
+                        .unwrap();
+                    writer.finish().await.unwrap();
+                    let _ = store.lookup(&key, &span).await.unwrap();
+                }
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap();
+        }
+        tokio::time::sleep(TRANSIENT_HANDOFF * 2).await;
+        assert!(store.temp.read().is_empty());
+        let used = store.bytes_used();
+        let cached = store.cached.read();
+        assert_eq!(used, cached.values().map(Stored::size).sum::<usize>());
+        assert!(
+            store.evicted() > 0,
+            "concurrent workload must exercise eviction"
+        );
+        assert!(store.bytes_used() <= store.limit());
+        for (tag, keys) in store.tag_index.read().iter() {
+            for key in keys {
+                assert!(cached.get(key).unwrap().tags.contains(tag));
+            }
+        }
+    }
+    #[tokio::test]
+    async fn tinyufo_preserves_expiry_and_stale_windows_through_revalidation() {
+        let store = tiny_store(1 << 20);
+        let key = CacheKey::new("/expired", "/expired");
+        let span = Span::inactive().handle();
+        let now = SystemTime::now();
+        let stale = CacheMeta::new(
+            now - Duration::from_secs(1),
+            now - Duration::from_secs(10),
+            60,
+            120,
+            ResponseHeader::build(200, None).unwrap(),
+        );
+        let mut writer = store.get_miss_handler(&key, &stale, &span).await.unwrap();
+        writer
+            .write_body(Bytes::from_static(b"cached body"), true)
+            .await
+            .unwrap();
+        writer.finish().await.unwrap();
+        let (found, _) = store.lookup(&key, &span).await.unwrap().unwrap();
+        assert!(!found.is_fresh(now));
+        assert!(found.serve_stale_while_revalidate(now));
+        assert!(found.serve_stale_if_error(now));
+        let fresh = CacheMeta::new(
+            now + Duration::from_secs(60),
+            now,
+            30,
+            90,
+            ResponseHeader::build(200, None).unwrap(),
+        );
+        assert!(store.update_meta(&key, &fresh, &span).await.unwrap());
+        let (found, mut hit) = store.lookup(&key, &span).await.unwrap().unwrap();
+        assert!(found.is_fresh(now));
+        assert_eq!(found.stale_while_revalidate_sec(), 30);
+        assert_eq!(found.stale_if_error_sec(), 90);
+        assert_eq!(
+            hit.read_body().await.unwrap().unwrap(),
+            Bytes::from_static(b"cached body")
+        );
+    }
+
+    #[tokio::test]
+    async fn tinyufo_purge_hides_a_rejected_handoff_from_new_readers() {
+        let store = tiny_store(1 << 20);
+        *store.tiny.as_ref().unwrap().write() = TinyPolicy::new(1500);
+        fill(store, "/hot", &[], 1000).await;
+        fill(store, "/warm", &[], 1000).await;
+        fill(store, "/hot", &[], 1000).await;
+        fill(store, "/cold", &[], 1000).await;
+        let key = CacheKey::new("/cold", "/cold");
+        let span = Span::inactive().handle();
+        let (_, mut attached) = store.lookup(&key, &span).await.unwrap().unwrap();
+        store.purge_paths(["/cold"]);
+        assert!(store.lookup(&key, &span).await.unwrap().is_none());
+        assert_eq!(attached.read_body().await.unwrap().unwrap().len(), 1000);
+        assert!(attached.read_body().await.unwrap().is_none());
+        tokio::time::sleep(TRANSIENT_HANDOFF * 2).await;
+        assert_eq!(store.entries(), 1);
+        assert!(is_cached(store, "/hot").await);
     }
 }

@@ -4,6 +4,7 @@
 //! store, and uses `pingora-cache`'s cache lock for request coalescing. See
 //! `spike/pingora-cache/FINDINGS.md` for how that was decided.
 
+mod eviction;
 pub mod key;
 pub mod policy;
 pub mod store;

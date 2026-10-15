@@ -83,18 +83,26 @@ throughput and p95 latency at each step:
 
 ```bash
 tanod-next calibrate --target http://127.0.0.1:3000 \
-  --route /products/a-real-product --steps 1,2,4,8,16 --allow-load
+  --route /products/a-real-product --route '/search?q=example' \
+  --steps 1,2,4,8,16 --duration 10 --warmup 2 --max-p95-ms 500 --allow-load
 ```
 
-It calls the highest step with no failures and a p95 no worse than twice the
-single-request p95 the *observed knee*, and recommends 70% of it. It never
-changes configuration.
+Each step warms up for 2 seconds, then measures for 10 seconds by default.
+It stops increasing load at the first step with failures, fewer than 20 measured
+samples, or full-response p95 above twice the concurrency-1 baseline or the
+optional application target (`500ms` in this example). It recommends 70% of
+the highest healthy step. Without a healthy baseline it returns no recommendation
+and exits nonzero. Passing every step does not establish saturation: the report
+leaves `observedKnee` null and warns that its recommendation is bounded by the
+steps measured. It never changes configuration.
 
 - **Point it at the app directly**, or at Tanod in `observe` mode. A Tanod in
   `protect` mode refuses requests above its current ceiling, which shows up as
   failures and hides the real knee.
 - **Use a realistic route.** A page lighter than your real traffic produces a
-  ceiling that is too high.
+  ceiling that is too high. Repeat `--route` to sample a representative mix;
+  repeat a path to give it more weight. Confirm that each URL exercises the
+  rendering and data access you intend to measure.
 - **Use production-shaped hardware**, with the same CPU and memory limits as
   production. A pod's CPU limit moves the knee; change the limit and the
   ceiling has to be measured again.

@@ -25,8 +25,14 @@ must pass before merge.
 | Doc tests | `cargo test --workspace --doc --locked` | any failure |
 | Dependency advisories | `cargo audit -D warnings` | any advisory not listed in `.cargo/audit.toml` with a reason |
 | End-to-end suite | `./bench/all.sh` | any script's own assertions |
-| Next.js proof | `./bench/nextjs.sh` (11 steps), `./bench/nextjs-browser.sh` | any assertion |
+| Next.js compatibility | `bash bench/nextjs-compatibility.sh` for every declared Next.js/Node pair | actual version mismatch, generated policy rejection, or any HTTP, browser, invalidation, or replica assertion |
 | Fuzz targets | `cargo +nightly fuzz build`, then 60s per target | a crash, or a target that no longer builds |
+
+The separate Next.js matrix is generated from
+[`packages/tanod-next/src/compatibility.json`](../packages/tanod-next/src/compatibility.json).
+It covers Next 16.4.0 and 16.3.8 on Node 22 and 24. Adapter unit tests also run
+on both Node lines and the declared Bun version. A copied manifest fixture is
+not evidence that the full integration passed on another framework release.
 
 `bench/all.sh` runs, among the rest of the suite, the operability scripts added
 in this phase at CI-sized parameters:
@@ -39,6 +45,13 @@ in this phase at CI-sized parameters:
 | [`soak.sh`](../bench/soak.sh) | over a short run: no leak, no permit left held, the cache filled *and* stayed inside its budget, no panic |
 | [`memory.sh`](../bench/memory.sh) | every configured budget holds while the workload exceeds it; an oversized body is served and not stored |
 | [`chaos.sh`](../bench/chaos.sh) | survives losing every backend; nothing private is shared; the admin surface answers *during* the outage; capacity comes back |
+
+The suite also runs coalescing, streaming, HTTP protocol semantics, purge,
+memory pressure, storage cost and the short soak with `CACHE_EVICTION=tinyufo`.
+Each run records its policy and writes a separate artifact. The cache unit
+tests additionally cover admission rejection, repeated invalidation and
+replacement, metadata revalidation, TTL/stale metadata and concurrent
+accounting. The default CLOCK coverage remains part of the suite.
 
 And the origin-resilience scripts. Both are written so the *origins* are the
 witnesses — each fixture counts what it was actually asked to render — because
@@ -63,6 +76,7 @@ the ones that catch what short runs cannot.
 
 ```bash
 SOAK_SECONDS=3600 SOAK_WORKERS=24 ./bench/soak.sh
+CACHE_EVICTION=tinyufo SOAK_SECONDS=3600 SOAK_WORKERS=24 ./bench/soak.sh
 ```
 
 **Gate:** exits zero.
@@ -79,6 +93,7 @@ requests is invisible in sixty seconds and obvious in an hour.
 
 ```bash
 MEMORY_ROUNDS=40 MEMORY_SLOW_READERS=64 ./bench/memory.sh
+CACHE_EVICTION=tinyufo MEMORY_ROUNDS=40 MEMORY_SLOW_READERS=64 ./bench/memory.sh
 ```
 
 **Gate:** exits zero, and record `rss_peak_kb` in the release notes.
