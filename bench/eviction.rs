@@ -1,5 +1,5 @@
-//! Compare completed-entry retention at the same accounted-byte budget.
-//! This does not model fills, expiry, invalidation, or resident allocator memory.
+//! Compare production streaming-store retention and a completed-only reference.
+//! This does not model concurrent fills, expiry, purges, or allocator memory.
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -133,19 +133,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("workload,policy,trial,hits,requests,hit_ratio,peak_accounted_bytes");
     for (name, mixed) in [("equal_400B", false), ("mixed_400_to_4600B", true)] {
         let objects = objects(mixed)?;
-        for (policy, label) in [(Eviction::Fifo, "fifo"), (Eviction::Clock, "clock")] {
-            let (hits, peak) = bounded(policy, &objects, &requests).await?;
-            println!(
-                "{name},{label},1,{hits},{REQUESTS},{:.4},{peak}",
-                hits as f64 / REQUESTS as f64
-            );
+        for (policy, label) in [
+            (Eviction::Fifo, "fifo"),
+            (Eviction::Clock, "clock"),
+            (Eviction::Tinyufo, "tinyufo"),
+        ] {
+            let trials = if policy == Eviction::Tinyufo { 5 } else { 1 };
+            for trial in 1..=trials {
+                let (hits, peak) = bounded(policy, &objects, &requests).await?;
+                println!(
+                    "{name},{label},{trial},{hits},{REQUESTS},{:.4},{peak}",
+                    hits as f64 / REQUESTS as f64
+                );
+            }
         }
         // TinyUFO seeds its internal hashing randomly. Report several trials
         // instead of presenting one randomized admission sketch as a constant.
         for trial in 1..=5 {
             let (hits, peak) = tiny(&objects, &requests);
             println!(
-                "{name},tinyufo,{trial},{hits},{REQUESTS},{:.4},{peak}",
+                "{name},tinyufo_reference,{trial},{hits},{REQUESTS},{:.4},{peak}",
                 hits as f64 / REQUESTS as f64
             );
         }

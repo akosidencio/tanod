@@ -494,6 +494,15 @@ pub static CACHE_EVICTED: LazyLock<IntCounter> = LazyLock::new(|| {
     .expect("metric registration")
 });
 
+/// Completed fills rejected by the optional cache admission policy.
+pub static CACHE_ADMISSION_REJECTED: LazyLock<IntCounter> = LazyLock::new(|| {
+    register_int_counter!(
+        "tanod_cache_admission_rejected_total",
+        "Completed fills not retained by the cache admission policy"
+    )
+    .expect("metric registration")
+});
+
 /// Distinct invalidation tags currently indexed. The tag index is bounded by
 /// the entries pointing at it, so this is the number that shows whether an
 /// origin's tagging scheme is as small as its author thinks.
@@ -553,6 +562,7 @@ pub fn preregister() {
     LazyLock::force(&RETRY_BUDGET);
     LazyLock::force(&CACHE_PURGED);
     LazyLock::force(&CACHE_EVICTED);
+    LazyLock::force(&CACHE_ADMISSION_REJECTED);
     LazyLock::force(&CACHE_TAGS);
 }
 

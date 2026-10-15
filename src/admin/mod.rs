@@ -328,15 +328,17 @@ impl Admin {
             match self.store.eviction() {
                 crate::config::schema::Eviction::Clock => "clock",
                 crate::config::schema::Eviction::Fifo => "fifo",
+                crate::config::schema::Eviction::Tinyufo => "tinyufo",
             },
         );
         field_str(&mut s, "tag_header", self.store.tag_header());
         let _ = write!(
             s,
-            "\"tags\":{},\"evicted\":{},\"purged\":{},\"purge_enabled\":{}}},",
+            "\"tags\":{},\"evicted\":{},\"purged\":{},\"admission_rejected\":{},\"purge_enabled\":{}}},",
             self.store.tags(),
             self.store.evicted(),
             self.store.purged(),
+            self.store.admission_rejected(),
             self.purge_token.is_some()
         );
 
@@ -1118,5 +1120,16 @@ mod tests {
         }
         assert!(!in_string, "unterminated string in {body}");
         assert_eq!(depth, 0, "unbalanced braces in {body}");
+    }
+    #[test]
+    fn status_reports_tinyufo_and_admission_rejections() {
+        let mut admin = admin(false);
+        admin.store = BoundedStore::new(&crate::config::schema::CacheDefaults {
+            eviction: crate::config::schema::Eviction::Tinyufo,
+            ..Default::default()
+        });
+        let status: serde_json::Value = serde_json::from_str(&admin.status_body()).unwrap();
+        assert_eq!(status["cache"]["eviction"], "tinyufo");
+        assert_eq!(status["cache"]["admission_rejected"], 0);
     }
 }

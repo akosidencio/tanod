@@ -32,6 +32,13 @@ telemetry:
   prometheus:
     listen: "127.0.0.1:@METRICS@"
 routes:
+  - id: spool
+    match: "/big/1/spool"
+    class: public_ssr
+    cache:
+      enabled: false
+    coalesce:
+      enabled: false
   - id: bulk
     match: "/big/**"
     class: public_ssr

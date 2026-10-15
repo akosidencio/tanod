@@ -1244,8 +1244,8 @@ origin:
     }
 
     #[test]
-    fn both_eviction_policies_are_accepted() {
-        for policy in ["clock", "fifo"] {
+    fn all_eviction_policies_are_accepted() {
+        for policy in ["clock", "fifo", "tinyufo"] {
             validate(&parse(&format!("{BASE}cache:\n  eviction: {policy}\n"))).unwrap();
         }
     }

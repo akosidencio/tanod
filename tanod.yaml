@@ -124,7 +124,9 @@ cache:
   max_memory: 512MiB
   max_body_size: 4MiB
   respect_origin: true
-  # clock (default) or fifo. Second-chance FIFO spares an entry that has been
+  # clock (default), fifo, or tinyufo. TinyUFO uses Pingora retention while
+  # Tanod keeps streaming fills inside the same byte budget.
+  # Second-chance FIFO spares an entry that has been
   # read since it was queued, which on the skewed request distribution an SSR
   # microcache actually sees is worth about a seventh more hits for one
   # relaxed atomic per read.

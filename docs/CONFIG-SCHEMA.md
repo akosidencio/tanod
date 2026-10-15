@@ -98,6 +98,7 @@ needs to change:
 | `origin.load_balancing: least_loaded` | load-aware selection | `round_robin` |
 | `origin.resolve_interval` | multi-instance origins behind one name | `10s`; `0` resolves once at startup |
 | `route.priority`, `route.weight` | weighted admission | `normal`, `1` |
+| `cache.eviction: tinyufo` | Pingora retention inside the bounded streaming store | `clock` |
 | `cache.eviction` | measured eviction policy | `clock` — **a behaviour change**, see below |
 | `cache.tag_header` | cache tags | `x-tanod-cache-tags` |
 | `cache.purge.token` | the purge API | absent — **endpoint disabled** |

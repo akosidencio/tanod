@@ -915,7 +915,11 @@ impl ProxyHttp for Tanod {
                 // created only where there is a permit to give back. A class
                 // that is exempt from admission — static, streaming — has
                 // nothing to gain and everything to lose from being buffered.
-                if ctx.spool_enabled {
+                // Pingora's streaming-cache reader emits a Done task without
+                // a final response_body_filter call. A second spool would
+                // retain bytes it never gets a chance to flush. Keep cache
+                // and coalescing responses on their own streaming path.
+                if ctx.spool_enabled && !session.cache.enabled() {
                     ctx.spool = Some(Spool::new(
                         self.spool_budget.clone(),
                         ctx.policy.config.spool.max_body.as_usize(),

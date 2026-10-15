@@ -658,3 +658,53 @@ probes. Shutdown cancels an outstanding probe immediately.
 
 See [Pingora reuse findings](./PINGORA-REUSE.md) for the library boundaries and
 cache retention comparison.
+
+
+### Choosing a cache eviction policy
+
+`cache.eviction` decides which completed responses to retain when the cache
+fills. It does not change route eligibility, cache keys, TTL, or the configured
+memory budget.
+
+| Value | Retention policy | Tradeoff |
+|---|---|---|
+| `clock` (default) | Give a recently read entry one extra chance | Low bookkeeping cost; suitable starting point |
+| `fifo` | Discard the oldest entry | Simple, but ignores repeated hits |
+| `tinyufo` | Pingora S3-FIFO eviction and TinyLFU completed-entry admission | More bookkeeping; measured more hits on the synthetic skewed workloads |
+
+Enable TinyUFO explicitly:
+
+```yaml
+cache:
+  eviction: tinyufo
+```
+
+Restart Tanod after changing the policy; reloading cannot change an existing
+store's eviction policy. The default remains CLOCK.
+
+All policies reserve serialized metadata, paths, tags and body bytes while
+fills stream. TinyUFO chooses completed-entry victims for those reservations;
+an in-progress response never becomes a victim. A completed fill rejected by
+the admission policy is available briefly for coalesced follower handoff and
+then released. Attached followers can finish reading even after purge or
+eviction. Purged content cannot become a persistent entry afterward.
+
+TTL and stale windows continue to be interpreted by Pingora's HTTP cache.
+Metadata revalidation updates the stored tags and accounting. Tag/path purges
+and deployment rollover work with every policy.
+
+`/status` reports `cache.eviction`, `cache.bytes_used`, `cache.evicted`, and
+`cache.admission_rejected`. Prometheus exposes
+`tanod_cache_admission_rejected_total` separately from
+`tanod_cache_evicted_total`: a rejected fill was never retained as a completed
+cache entry. Compare hit ratio, origin render count, memory and latency when
+rolling out the option. [Pingora reuse findings](./PINGORA-REUSE.md) describe
+the measured workload and the integration's weight and bookkeeping limits.
+
+
+With Pingora 0.9, the extra response spool applies only to requests bypassing
+HTTP caching and coalescing. Cached/coalesced responses keep their streaming
+storage path, preventing an unflushed spool from truncating them. To spool a
+route, disable both `cache.enabled` and `coalesce.enabled` on that route;
+client backpressure can still affect cached/coalesced responses. This applies
+to every eviction policy.

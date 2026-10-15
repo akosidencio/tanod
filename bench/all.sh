@@ -112,6 +112,16 @@ else
   FAILED="$FAILED websocket.sh(no-python3)"
 fi
 
+# The optional policy must pass the same cache lifecycle gates as CLOCK.
+# CACHE_EVICTION changes only each run's generated config and artifact name.
+CACHE_EVICTION=tinyufo run coalesce.sh "${COALESCE_CONCURRENCY:-40}" "${COALESCE_RENDER_MS:-800}"
+CACHE_EVICTION=tinyufo run stream.sh "${STREAM_CONCURRENCY:-20}" 5 400
+CACHE_EVICTION=tinyufo run protocol.sh
+CACHE_EVICTION=tinyufo run purge.sh "${PURGE_RENDER_MS:-20}"
+CACHE_EVICTION=tinyufo run memory.sh "${MEMORY_ROUNDS:-6}" "${MEMORY_SLOW_READERS:-12}"
+CACHE_EVICTION=tinyufo run storage.sh "${STORAGE_SAMPLES:-60}" "${STORAGE_RENDER_MS:-200}"
+CACHE_EVICTION=tinyufo run soak.sh "${SOAK_SECONDS:-60}" "${SOAK_WORKERS:-12}"
+
 # TLS needs its own build (`--features tls`, a two-minute compile) and
 # openssl to mint a certificate. SKIP_TLS=1 acknowledges leaving it out.
 if [ "${SKIP_TLS:-0}" = "1" ]; then

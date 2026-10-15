@@ -705,6 +705,8 @@ pub enum Eviction {
     /// improvement is measurable rather than asserted, and as an escape hatch
     /// if the extra atomic ever matters.
     Fifo,
+    /// Pingora TinyUFO retention, with Tanod streaming byte reservations.
+    Tinyufo,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]

@@ -22,6 +22,7 @@ pingora-http = "0.9"
 pingora-error = "0.9"
 pingora-cache = "0.9"
 pingora-load-balancing = "0.9"
+TinyUFO = "0.9"
 parking_lot = "0.12"
 prometheus = "0.14"
 # /metrics. The same `prometheus` version as above, which is what makes it
@@ -65,8 +66,6 @@ proptest = "1"
 # Test-only: proves the hand-written OTLP JSON parses. Never linked into the
 # binary.
 serde_json = "1"
-# Evaluation only; production cache storage retains its streaming byte budget.
-TinyUFO = "0.9"
 
 [[bench]]
 name = "eviction"
