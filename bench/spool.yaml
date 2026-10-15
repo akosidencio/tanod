@@ -21,6 +21,8 @@ timeouts:
   downstream_write: 60s
 cache:
   enabled: false
+coalesce:
+  enabled: false
 spool:
   enabled: @SPOOL@
   max_body: @SPOOL_MAX_BODY@

@@ -42,7 +42,12 @@ bench_cpu_count() {
 # ---------------------------------------------------------------- lifecycle
 
 bench_init() {
+  case "${CACHE_EVICTION:-}" in
+    ""|clock|fifo|tinyufo) ;;
+    *) echo "invalid CACHE_EVICTION: $CACHE_EVICTION" >&2; exit 1 ;;
+  esac
   BENCH_NAME=$1
+  [ -n "${CACHE_EVICTION:-}" ] && BENCH_NAME="$BENCH_NAME-$CACHE_EVICTION"
   BENCH_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tanod-bench-XXXXXX")
   mkdir -p "$BENCH_DIR/pids" "$BENCH_DIR/logs"
   BENCH_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -54,6 +59,7 @@ bench_init() {
   bench_param cpus "$(bench_cpu_count)"
   bench_param rustc "$(rustc --version 2>/dev/null | awk '{print $2}')"
   bench_param profile "${BENCH_PROFILE:-debug}"
+  [ -n "${CACHE_EVICTION:-}" ] && bench_param cache_eviction "$CACHE_EVICTION"
   bench_param commit "$(git -C "$BENCH_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 }
 
@@ -302,6 +308,18 @@ bench_render_config() { # template, out, then KEY=VALUE...
     script="$script s|@${pair%%=*}@|${pair#*=}|g;"
   done
   sed "$script" "$template" > "$out" || bench_fail "could not render $template"
+  if [ -n "${CACHE_EVICTION:-}" ]; then
+    # Override only the root cache policy in this run's generated config.
+    # Keep the checked-in templates and every other cache setting intact.
+    awk -v policy="$CACHE_EVICTION" '
+      /^cache:[[:space:]]*$/ { active = 1; seen = 1; print; print "  eviction: " policy; next }
+      active && /^  eviction:/ { next }
+      /^[^ #]/ { active = 0 }
+      { print }
+      END { if (!seen) print "cache:\n  eviction: " policy }
+    ' "$out" > "$out.eviction" || bench_fail "could not set cache eviction policy"
+    mv "$out.eviction" "$out" || bench_fail "could not install cache policy config"
+  fi
   if grep -q '@[A-Z_]*@' "$out"; then
     bench_fail "unsubstituted placeholder left in $out: $(grep -o '@[A-Z_]*@' "$out" | sort -u | tr '\n' ' ')"
   fi

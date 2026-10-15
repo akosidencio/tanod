@@ -46,6 +46,13 @@ in this phase at CI-sized parameters:
 | [`memory.sh`](../bench/memory.sh) | every configured budget holds while the workload exceeds it; an oversized body is served and not stored |
 | [`chaos.sh`](../bench/chaos.sh) | survives losing every backend; nothing private is shared; the admin surface answers *during* the outage; capacity comes back |
 
+The suite also runs coalescing, streaming, HTTP protocol semantics, purge,
+memory pressure, storage cost and the short soak with `CACHE_EVICTION=tinyufo`.
+Each run records its policy and writes a separate artifact. The cache unit
+tests additionally cover admission rejection, repeated invalidation and
+replacement, metadata revalidation, TTL/stale metadata and concurrent
+accounting. The default CLOCK coverage remains part of the suite.
+
 And the origin-resilience scripts. Both are written so the *origins* are the
 witnesses — each fixture counts what it was actually asked to render — because
 a breaker benchmark that reads the proxy's own metrics is measuring the
@@ -69,6 +76,7 @@ the ones that catch what short runs cannot.
 
 ```bash
 SOAK_SECONDS=3600 SOAK_WORKERS=24 ./bench/soak.sh
+CACHE_EVICTION=tinyufo SOAK_SECONDS=3600 SOAK_WORKERS=24 ./bench/soak.sh
 ```
 
 **Gate:** exits zero.
@@ -85,6 +93,7 @@ requests is invisible in sixty seconds and obvious in an hour.
 
 ```bash
 MEMORY_ROUNDS=40 MEMORY_SLOW_READERS=64 ./bench/memory.sh
+CACHE_EVICTION=tinyufo MEMORY_ROUNDS=40 MEMORY_SLOW_READERS=64 ./bench/memory.sh
 ```
 
 **Gate:** exits zero, and record `rss_peak_kb` in the release notes.

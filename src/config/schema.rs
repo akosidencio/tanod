@@ -578,6 +578,9 @@ pub enum LoadBalancing {
     /// the *origin's* own warmth — its in-process render cache, module graph
     /// and JIT state are all path-correlated.
     HashByPath,
+    /// Ketama path affinity across resolved instances. Adding or removing an
+    /// instance moves only the paths whose ring ownership changes.
+    ConsistentHash,
     /// Send each request to the backend with the least outstanding work,
     /// scored as in-flight requests against observed latency.
     ///
@@ -702,6 +705,8 @@ pub enum Eviction {
     /// improvement is measurable rather than asserted, and as an escape hatch
     /// if the extra atomic ever matters.
     Fifo,
+    /// Pingora TinyUFO retention, with Tanod streaming byte reservations.
+    Tinyufo,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]

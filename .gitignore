@@ -41,5 +41,9 @@ docs/*
 !docs/NEXTJS-PRODUCTION-REFERENCE.md
 !docs/STANDALONE.md
 !docs/DEPLOYMENT-GUIDE.md
+!docs/PINGORA-REUSE.md
+!docs/data/
+docs/data/*
+!docs/data/pingora-eviction.csv
 # Local compatibility evidence; CI uploads it as an artifact.
 compatibility-results/

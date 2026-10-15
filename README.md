@@ -110,6 +110,12 @@ The current code includes these capabilities; several require explicit configura
 | Operations | Config validation, policy reloads, readiness and liveness checks, graceful draining, and Linux listener handover |
 | Observability | Structured access logs, Prometheus metrics, traces, and OpenTelemetry Protocol (OTLP) export |
 
+Cache eviction supports `clock` (default), `fifo`, and opt-in `tinyufo`.
+TinyUFO uses Pingora's retention policy inside Tanod's bounded streaming store;
+see [choosing a cache eviction policy](./docs/OPERATIONS.md#choosing-a-cache-eviction-policy).
+Origin balancing supports `round_robin`, `hash_by_path`, `consistent_hash`, and
+`least_loaded`; see [choosing an origin strategy](./docs/OPERATIONS.md#choosing-an-origin-strategy).
+
 TLS support requires a binary built with the `tls` feature. Tanod does not obtain or renew certificates. WebSocket upgrades use separate limits rather than render permits.
 
 ## Getting started
@@ -279,6 +285,8 @@ The [threat model](./docs/THREAT-MODEL.md) documents these boundaries. They do n
 ### Slow readers and render capacity
 
 A slow client can delay the proxy's observation that the origin response has finished, keeping a capacity permit occupied. Optional response spooling buffers the response within per-body and global memory limits so capacity can be released earlier.
+
+The extra spool applies to requests bypassing HTTP caching and coalescing; disable both on a route to spool its responses. Cached/coalesced responses retain their streaming path and can still experience client backpressure.
 
 Spooling delays delivery until buffering completes and sacrifices progressive rendering. It is disabled by default, is rejected on routes declared `streaming`, and falls back to streaming when its budget is exceeded. Review [`spool` settings](./tanod.yaml) and the [spool benchmark](./bench/spool.sh) before enabling it.
 

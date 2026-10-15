@@ -15,7 +15,7 @@ origin:
   upstreams:
     - "127.0.0.1:@ORIGIN_A@"
     - "127.0.0.1:@ORIGIN_B@"
-  load_balancing: round_robin
+  load_balancing: @BALANCING_STRATEGY@
   concurrency:
     max: 50
     queue:

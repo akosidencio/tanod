@@ -94,9 +94,11 @@ needs to change:
 | `origin.breaker` | circuit breaking | disabled |
 | `origin.retry` | bounded retries | disabled |
 | `origin.priorities` | reserved capacity | every tier 100% — no tiering |
+| `origin.load_balancing: consistent_hash` | Ketama affinity across resolved instances | `round_robin` |
 | `origin.load_balancing: least_loaded` | load-aware selection | `round_robin` |
 | `origin.resolve_interval` | multi-instance origins behind one name | `10s`; `0` resolves once at startup |
 | `route.priority`, `route.weight` | weighted admission | `normal`, `1` |
+| `cache.eviction: tinyufo` | Pingora retention inside the bounded streaming store | `clock` |
 | `cache.eviction` | measured eviction policy | `clock` — **a behaviour change**, see below |
 | `cache.tag_header` | cache tags | `x-tanod-cache-tags` |
 | `cache.purge.token` | the purge API | absent — **endpoint disabled** |
