@@ -6,7 +6,7 @@ work and [operations guide](./docs/OPERATIONS.md) for deployment details.
 Tanod was released as Harmost up to 0.1.4. Entries below 0.2.0 use the current
 names.
 
-## 0.3.2 - Unreleased
+## 0.3.2 - 2026-10-15
 
 - Reused Pingora's round-robin algorithm and HTTP health-check client. Health probes validate complete HTTP responses, accept all 2xx statuses, enforce the whole-attempt timeout, and cancel promptly on shutdown. Configured upstream health thresholds, circuit breakers, load-aware scoring, and admission remain Tanod policies.
 - Added opt-in `origin.load_balancing: consistent_hash`, using Pingora's Ketama selector across resolved instances. DNS changes rebuild selector snapshots off proxy workers. Existing `hash_by_path` mappings and the default round-robin strategy are preserved.
