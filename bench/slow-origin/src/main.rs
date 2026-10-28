@@ -28,6 +28,11 @@
 //!   active health check can express. Renders are still counted while failing,
 //!   so a benchmark can prove traffic stopped arriving rather than inferring
 //!   it from the proxy's own metrics.
+//! * `GET /reflect/<n>` — a cacheable page whose body contains an absolute URL
+//!   built from `X-Forwarded-Proto` and `X-Forwarded-Host`, the way an SSR
+//!   framework builds canonical links and redirects. If any header that
+//!   shapes that URL is not in the proxy's cache key, a forged value is
+//!   stored and served to everyone; the body shows it.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -211,15 +216,34 @@ async fn main() -> std::io::Result<()> {
                 // is the only trustworthy witness to what the proxy sent, and
                 // reading the proxy's own log would be asking the component
                 // under test to grade itself.
-                let body = format!(
-                    "{{\"x_forwarded_for\":\"{}\",\"x_forwarded_proto\":\"{}\",\"forwarded\":\"{}\",\"host\":\"{}\",\"traceparent\":\"{}\",\"tracestate\":\"{}\"}}",
-                    header_value(&head, "x-forwarded-for").unwrap_or_default(),
-                    header_value(&head, "x-forwarded-proto").unwrap_or_default(),
-                    header_value(&head, "forwarded").unwrap_or_default(),
-                    header_value(&head, "host").unwrap_or_default(),
-                    header_value(&head, "traceparent").unwrap_or_default(),
-                    header_value(&head, "tracestate").unwrap_or_default(),
-                );
+                // Repeated fields are joined with ` | ` so a duplicate the
+                // proxy should have collapsed is visible rather than hidden
+                // behind whichever copy came first.
+                let mut body = String::from("{");
+                for (field, name) in [
+                    ("x_forwarded_for", "x-forwarded-for"),
+                    ("x_forwarded_proto", "x-forwarded-proto"),
+                    ("forwarded", "forwarded"),
+                    ("host", "host"),
+                    ("traceparent", "traceparent"),
+                    ("tracestate", "tracestate"),
+                    ("x_forwarded_host", "x-forwarded-host"),
+                    ("x_forwarded_port", "x-forwarded-port"),
+                    ("x_real_ip", "x-real-ip"),
+                    ("x_forwarded_prefix", "x-forwarded-prefix"),
+                    ("x_original_host", "x-original-host"),
+                    ("x_original_url", "x-original-url"),
+                    ("cf_connecting_ip", "cf-connecting-ip"),
+                ] {
+                    if body.len() > 1 {
+                        body.push(',');
+                    }
+                    body.push_str(&format!(
+                        "\"{field}\":\"{}\"",
+                        header_values(&head, name).join(" | ").replace('"', "'")
+                    ));
+                }
+                body.push('}');
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\n\
                      Content-Type: application/json\r\n\
@@ -271,6 +295,31 @@ async fn main() -> std::io::Result<()> {
             }
 
             tokio::time::sleep(Duration::from_millis(render_ms)).await;
+
+            if path.starts_with("/reflect") {
+                let proto =
+                    header_value(&head, "x-forwarded-proto").unwrap_or_else(|| "http".into());
+                let host = header_value(&head, "x-forwarded-host")
+                    .or_else(|| header_value(&head, "host"))
+                    .unwrap_or_default();
+                let body = format!(
+                    "<html><head><link rel=\"canonical\" href=\"{proto}://{host}{path}\"></head>\
+                     <body>render {seq}</body></html>"
+                );
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\n\
+                     Content-Type: text/html\r\n\
+                     Content-Length: {}\r\n\
+                     Cache-Control: public, max-age=60\r\n\
+                     X-Origin-Total: {seq}\r\n\
+                     Connection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+                let _ = sock.flush().await;
+                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                return;
+            }
 
             // /validated/* carries an ETag and Last-Modified and answers
             // conditional requests itself, so a test can tell a 304 the origin
@@ -444,6 +493,19 @@ fn tail_number(path: &str) -> Option<usize> {
 }
 
 /// One request header's value, matched case-insensitively.
+fn header_values(head: &str, name: &str) -> Vec<String> {
+    head.lines()
+        .skip(1)
+        .take_while(|line| !line.trim().is_empty())
+        .filter_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.trim()
+                .eq_ignore_ascii_case(name)
+                .then(|| value.trim().to_string())
+        })
+        .collect()
+}
+
 fn header_value(head: &str, name: &str) -> Option<String> {
     head.lines()
         .skip(1)

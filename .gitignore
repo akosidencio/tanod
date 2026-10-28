@@ -50,4 +50,5 @@ compatibility-results/
 
 # Internal implementation reports and local benchmark evidence.
 docs/PHASE1-CACHE-CORRECTNESS.md
+docs/PHASE2-OPERATIONAL-HARDENING.md
 benchmark-results/

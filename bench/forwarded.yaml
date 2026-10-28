@@ -6,11 +6,12 @@
 # believed.
 version: 1
 server:
-  listen: "127.0.0.1:@LISTEN@"
+  listen: "@LISTEN_ADDR@:@LISTEN@"
   trusted_proxies:
     from: @TRUST@
     client_ip: @CLIENT_IP_SOURCE@
     scheme: @SCHEME_SOURCE@
+    host: @HOST_SOURCE@
 origin:
   upstreams: ["127.0.0.1:@ORIGIN@"]
   concurrency:
@@ -28,6 +29,17 @@ routes:
 
   # Cacheable, so the scheme's effect on the cache key is observable as a
   # render count rather than inferred.
+  # Cacheable, and the body carries an absolute URL the origin built from the
+  # forwarded scheme and host. A header that shapes it without being in the
+  # key shows up here as a poisoned body served to the next visitor.
+  - id: reflect
+    match: "/reflect/**"
+    class: public_ssr
+    cache:
+      override_origin: true
+      ttl:
+        max: 10s
+
   - id: pages
     match: "/p/**"
     class: public_ssr

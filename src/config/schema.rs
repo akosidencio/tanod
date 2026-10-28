@@ -210,7 +210,7 @@ pub struct ServerTls {
 /// them only from a peer whose address is in `from`. Everyone else is treated
 /// as the client, whatever they claim — which is also why `from` is empty by
 /// default: an unconfigured Tanod cannot be lied to.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedProxies {
     /// CIDR blocks whose forwarded headers are believed. `10.0.0.0/8`,
@@ -227,15 +227,40 @@ pub struct TrustedProxies {
     /// partition an attacker controls.
     #[serde(default)]
     pub scheme: ForwardedSource,
+    /// Where the public host comes from when the peer is trusted.
+    ///
+    /// Off by default, unlike the other two, because believing it changes what
+    /// the origin builds absolute URLs, redirects and Server Action origin
+    /// checks from, and because many proxies pass a client's
+    /// `X-Forwarded-Host` through untouched. Enable it only when every trusted
+    /// proxy overwrites the header. A believed host enters the cache key. With
+    /// `none`, the origin's `X-Forwarded-Host` is the request's own authority.
+    #[serde(default = "forwarded_none")]
+    pub host: ForwardedSource,
+}
+
+impl Default for TrustedProxies {
+    fn default() -> Self {
+        TrustedProxies {
+            from: Vec::new(),
+            client_ip: ForwardedSource::default(),
+            scheme: ForwardedSource::default(),
+            host: ForwardedSource::None,
+        }
+    }
+}
+
+fn forwarded_none() -> ForwardedSource {
+    ForwardedSource::None
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ForwardedSource {
-    /// `X-Forwarded-For` / `X-Forwarded-Proto`.
+    /// `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Host`.
     #[default]
     XForwarded,
-    /// RFC 7239 `Forwarded: for=...;proto=...`.
+    /// RFC 7239 `Forwarded: for=...;proto=...;host=...`.
     Forwarded,
     /// Believe nothing. The connection peer is the client and the listener
     /// decides the scheme.

@@ -180,7 +180,7 @@ Place Tanod behind the public edge and keep your origin reachable only through t
 Client → CDN / Caddy / NGINX / load balancer → Tanod → application
 ```
 
-The edge can terminate TLS, manage certificates, and apply client rate limits. Keep Tanod's admin and metrics listeners on loopback or a private network. Configure `server.trusted_proxies` for the actual edge addresses before relying on forwarded client or scheme headers.
+The edge can terminate TLS, manage certificates, and apply client rate limits. Keep Tanod's admin and metrics listeners on loopback or a private network. Configure `server.trusted_proxies` for the actual edge addresses before relying on forwarded client or scheme headers; a public host from the edge is believed only with `trusted_proxies.host`. Tanod restates every forwarding header the origin receives — see [forwarded headers](./docs/OPERATIONS.md#forwarded-headers).
 
 ### Choosing a topology
 

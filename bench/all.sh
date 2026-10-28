@@ -82,6 +82,9 @@ run supervise.sh "${SUPERVISE_RENDER_MS:-2500}"
 run tracing.sh
 run soak.sh "${SOAK_SECONDS:-45}" "${SOAK_WORKERS:-10}"
 run memory.sh "${MEMORY_ROUNDS:-6}" "${MEMORY_SLOW_READERS:-12}"
+# A full cache must degrade to uncached serving or a visible abort, never a
+# truncated body presented as complete.
+run cache-pressure.sh "${CACHE_PRESSURE_RENDER_MS:-800}"
 run chaos.sh "${CHAOS_ROUNDS:-2}"
 
 # Phase 3: origin resilience. Both scripts turn a backend into the failure the
@@ -121,6 +124,7 @@ CACHE_EVICTION=tinyufo run protocol.sh
 CACHE_EVICTION=tinyufo run purge.sh "${PURGE_RENDER_MS:-20}"
 CACHE_EVICTION=tinyufo run cache-policy-reload.sh
 CACHE_EVICTION=tinyufo run memory.sh "${MEMORY_ROUNDS:-6}" "${MEMORY_SLOW_READERS:-12}"
+CACHE_EVICTION=tinyufo run cache-pressure.sh "${CACHE_PRESSURE_RENDER_MS:-800}"
 CACHE_EVICTION=tinyufo run storage.sh "${STORAGE_SAMPLES:-60}" "${STORAGE_RENDER_MS:-200}"
 CACHE_EVICTION=tinyufo run soak.sh "${SOAK_SECONDS:-60}" "${SOAK_WORKERS:-12}"
 
@@ -145,6 +149,9 @@ if [ "${SKIP_DOCKER:-0}" = "1" ]; then
   echo "SKIPPED bench/nextjs.sh (SKIP_DOCKER=1)"
 elif docker_available; then
   run nextjs.sh
+  # Reuses the fixture image nextjs.sh just built: forwarded headers against
+  # Next's own redirect and Server Action origin checks.
+  run nextjs-forwarded.sh
   if [ "${SKIP_BROWSER:-0}" = "1" ]; then
     echo "SKIPPED bench/nextjs-browser.sh (SKIP_BROWSER=1)"
   else

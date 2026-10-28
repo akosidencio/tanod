@@ -260,27 +260,14 @@ impl Reloader {
         // Resize before swapping: a request arriving on the new policy should
         // never find the old ceiling still in force.
         let global = &snapshot.config.origin.concurrency;
-        self.admission.apply_limits(
+        let retired = self.admission.apply_limits(
             global.max,
             global.queue.max,
             global.queue.timeout.as_duration(),
             &snapshot.config.origin.priorities,
             &route_limits,
         );
-        for tier in self.admission.tier_limiters() {
-            crate::telemetry::metrics::LIMIT
-                .with_label_values(&[tier.name()])
-                .set(i64::try_from(tier.limit()).unwrap_or(i64::MAX));
-            crate::telemetry::metrics::QUEUE_DEPTH
-                .with_label_values(&[tier.name()])
-                .set(i64::try_from(tier.queue_depth()).unwrap_or(i64::MAX));
-            crate::telemetry::metrics::IN_FLIGHT
-                .with_label_values(&[tier.name()])
-                .set(
-                    i64::try_from(tier.limit().saturating_sub(tier.available()))
-                        .unwrap_or(i64::MAX),
-                );
-        }
+        publish_limiters(&self.admission, &retired);
         // Retire admission before publication. Old pinned requests may register
         // later, but finish checks this namespace under the lifecycle guard.
         if let Some(store) = self.store {
@@ -312,6 +299,43 @@ impl Reloader {
         crate::telemetry::metrics::set_build_info(deployment_id.as_deref());
 
         Ok(generation)
+    }
+}
+
+/// Republish every limiter gauge a reload can have moved.
+///
+/// The request path publishes on the way through, but only the limiters a
+/// request touched, so without this a lowered ceiling stays invisible until
+/// traffic happens to cross it — and an oversubscribed limiter, the state an
+/// operator most needs to see right after a reload, shows the old limit.
+/// `in_flight` is read from the permits, so it reports the work still running
+/// above a lowered limit rather than the limit itself.
+///
+/// Retired route series are withdrawn. Their limiter may still hold permits,
+/// but that work remains in the global and tier series, and a route id that
+/// is later re-added must not inherit a stale value.
+fn publish_limiters(admission: &AdmissionController, retired: &[String]) {
+    use crate::telemetry::metrics::{IN_FLIGHT, LIMIT, QUEUE_DEPTH};
+    let gauge = |value: usize| i64::try_from(value).unwrap_or(i64::MAX);
+    let registered = admission.route_limiters();
+    let limiters = std::iter::once(admission.global())
+        .chain(admission.tier_limiters())
+        .chain(registered.iter());
+    for limiter in limiters {
+        let name = [limiter.name()];
+        LIMIT.with_label_values(&name).set(gauge(limiter.limit()));
+        QUEUE_DEPTH
+            .with_label_values(&name)
+            .set(gauge(limiter.queue_depth()));
+        IN_FLIGHT
+            .with_label_values(&name)
+            .set(gauge(limiter.in_flight()));
+    }
+    for id in retired {
+        let name = [id.as_str()];
+        let _ = LIMIT.remove_label_values(&name);
+        let _ = QUEUE_DEPTH.remove_label_values(&name);
+        let _ = IN_FLIGHT.remove_label_values(&name);
     }
 }
 

@@ -332,13 +332,22 @@ impl Admin {
             },
         );
         field_str(&mut s, "tag_header", self.store.tag_header());
+        let pressure = self.store.memory_pressure();
         let _ = write!(
             s,
-            "\"tags\":{},\"evicted\":{},\"purged\":{},\"admission_rejected\":{},\"purge_enabled\":{}}},",
+            "\"tags\":{},\"evicted\":{},\"purged\":{},\"admission_rejected\":{},\
+             \"pinned_bytes\":{},\"headroom_bytes\":{},\"memory_pressure\":{{\
+             \"uncached_fallback\":{},\"fill_abandoned\":{},\"memory_exhausted\":{}}},\
+             \"purge_enabled\":{}}},",
             self.store.tags(),
             self.store.evicted(),
             self.store.purged(),
             self.store.admission_rejected(),
+            self.store.bytes_pinned(),
+            self.store.headroom(),
+            pressure.uncached_fallback,
+            pressure.fill_abandoned,
+            pressure.memory_exhausted,
             self.purge_token.is_some()
         );
 
@@ -365,9 +374,7 @@ impl Admin {
             "\"upgrades\":{{\"enabled\":{},\"limit\":{},\"in_flight\":{}}}}}",
             cfg.upgrade.enabled,
             self.upgrades.limit(),
-            self.upgrades
-                .limit()
-                .saturating_sub(self.upgrades.available())
+            self.upgrades.in_flight()
         );
         s
     }
@@ -389,13 +396,15 @@ fn compiled_features() -> Vec<&'static str> {
 fn limiter_json(s: &mut String, limiter: &Limiter) {
     s.push('{');
     field_str(s, "name", limiter.name());
-    let limit = limiter.limit();
+    // `in_flight` is counted at the permits, not derived as `limit -
+    // available`: after a shrink it is the work still running, and may be
+    // above `limit` until that work drains.
     let _ = write!(
         s,
         "\"limit\":{},\"in_flight\":{},\"available\":{},\"queue_depth\":{},\
          \"queue_max\":{},\"queue_timeout_ms\":{}}}",
-        limit,
-        limit.saturating_sub(limiter.available()),
+        limiter.limit(),
+        limiter.in_flight(),
         limiter.available(),
         limiter.queue_depth(),
         limiter.queue_max(),
@@ -1131,5 +1140,70 @@ mod tests {
         let status: serde_json::Value = serde_json::from_str(&admin.status_body()).unwrap();
         assert_eq!(status["cache"]["eviction"], "tinyufo");
         assert_eq!(status["cache"]["admission_rejected"], 0);
+        assert_eq!(status["cache"]["pinned_bytes"], 0);
+        assert_eq!(status["cache"]["headroom_bytes"], 4 * 1024 * 1024);
+        for outcome in ["uncached_fallback", "fill_abandoned", "memory_exhausted"] {
+            assert_eq!(status["cache"]["memory_pressure"][outcome], 0, "{outcome}");
+        }
+    }
+
+    /// Four units at the origin, then a reload lowers every ceiling. The
+    /// document must keep reporting the four units while they drain; deriving
+    /// `in_flight` as `limit - available` said 1, 1 and 2.
+    #[tokio::test]
+    async fn status_reports_running_work_above_a_lowered_limit() {
+        let a = admin(false);
+        let route = a.admission.registered_route("products").unwrap();
+        let crate::admission::Admission::Admitted(permits) = a
+            .admission
+            .admit(
+                crate::classifier::RequestClass::PublicDynamic,
+                Some(&route),
+                crate::config::schema::Priority::Normal,
+                4,
+            )
+            .await
+        else {
+            panic!("not admitted");
+        };
+        let held = permits.into_inner();
+        let upgrade = a.upgrades.acquire(None, 1).await.unwrap();
+        a.admission.apply_limits(
+            1,
+            5,
+            Duration::from_millis(250),
+            &crate::config::schema::Priorities::default(),
+            &[("products".into(), 2, 2, Duration::from_millis(100))],
+        );
+
+        let status: serde_json::Value = serde_json::from_str(&a.status_body()).unwrap();
+        let limiters = |status: &serde_json::Value| -> Vec<serde_json::Value> {
+            let admission = &status["admission"];
+            std::iter::once(admission["global"].clone())
+                .chain(admission["tiers"].as_array().unwrap().iter().cloned())
+                .chain(admission["routes"].as_array().unwrap().iter().cloned())
+                .collect()
+        };
+        let all = limiters(&status);
+        let find = |name: &str| {
+            all.iter()
+                .find(|l| l["name"] == name)
+                .unwrap_or_else(|| panic!("no limiter {name} in {status}"))
+        };
+        for (name, limit) in [("global", 1), ("tier:normal", 1), ("products", 2)] {
+            let l = find(name);
+            assert_eq!(l["limit"], limit, "{name}");
+            assert_eq!(l["in_flight"], 4, "{name}");
+            assert_eq!(l["available"], 0, "{name}");
+        }
+        assert_eq!(status["upgrades"]["in_flight"], 1);
+
+        drop((held, upgrade));
+        let status: serde_json::Value = serde_json::from_str(&a.status_body()).unwrap();
+        for l in limiters(&status) {
+            assert_eq!(l["in_flight"], 0, "{l}");
+            assert_eq!(l["available"], l["limit"], "{l}");
+        }
+        assert_eq!(status["upgrades"]["in_flight"], 0);
     }
 }

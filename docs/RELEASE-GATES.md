@@ -44,6 +44,9 @@ in this phase at CI-sized parameters:
 | [`tracing.sh`](../bench/tracing.sh) | trace context propagated and continued correctly; spans exported in a shape a collector accepts; log ids findable in the exported spans; a dead collector costs no request |
 | [`soak.sh`](../bench/soak.sh) | over a short run: no leak, no permit left held, the cache filled *and* stayed inside its budget, no panic |
 | [`memory.sh`](../bench/memory.sh) | every configured budget holds while the workload exceeds it; an oversized body is served and not stored |
+| [`cache-pressure.sh`](../bench/cache-pressure.sh) | with no cache memory a coalesced herd is served uncached and complete; a fill that runs out mid-body finishes for its leader and follower and is not stored; a burst past the headroom aborts exactly the fills that exhausted it, and every other response is byte-exact; an oversized chunked body fails once, then streams uncached; pinned bytes return to zero. Runs with CLOCK and TinyUFO |
+| [`forwarded.sh`](../bench/forwarded.sh) | a client's forwarding headers move neither the origin's view nor the key; a forged host cannot poison a cacheable page (`/reflect`); a trusted proxy's chain is walked, a spoofed prefix chooses neither scheme nor host, and an opted-in public host is preserved and keyed; IPv6 peers |
+| [`nextjs-forwarded.sh`](../bench/nextjs-forwarded.sh) | against a real Next.js server: a forged scheme cannot shape a redirect, a forged host cannot pass the Server Action origin check while a genuine or public origin can, SSR/RSC entries survive forged headers, http/https/host variants are separate entries. Needs Docker |
 | [`chaos.sh`](../bench/chaos.sh) | survives losing every backend; nothing private is shared; the admin surface answers *during* the outage; capacity comes back |
 
 The suite also runs coalescing, streaming, HTTP protocol semantics, purge,

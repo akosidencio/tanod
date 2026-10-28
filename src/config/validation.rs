@@ -359,14 +359,15 @@ fn validate_trusted_proxies(cfg: &Config) -> Result<()> {
     }
     // Naming a source without naming anyone to believe is a policy that reads
     // as "trust X-Forwarded-For" and behaves as "trust nothing".
-    let reads_headers =
-        proxies.client_ip != ForwardedSource::None || proxies.scheme != ForwardedSource::None;
+    let reads_headers = proxies.client_ip != ForwardedSource::None
+        || proxies.scheme != ForwardedSource::None
+        || proxies.host != ForwardedSource::None;
     if proxies.from.is_empty()
         && reads_headers
         && cfg.server.trusted_proxies != TrustedProxies::default()
     {
         return Err(err(
-            "server.trusted_proxies names a client_ip or scheme source but `from` is empty, so no \
+            "server.trusted_proxies names a client_ip, scheme or host source but `from` is empty, so no \
              peer is ever trusted and neither is read; list the CIDR blocks your load balancer \
              connects from",
         ));
