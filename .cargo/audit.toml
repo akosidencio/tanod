@@ -21,4 +21,40 @@ ignore = [
     # feature. No maintained version exists for us to select independently of
     # pingora-rustls 0.9. Remove this with the corresponding Pingora update.
     "RUSTSEC-2025-0134",
+
+    # zstd 0.13.3 / zstd-safe 7.2.4 arrive through Pingora 0.9:
+    # pingora-header-serde pins zstd ^0.13.1 and zstd-safe ^7.1, and no Pingora
+    # release moves off them (0.9.0 is the latest, checked 2026-10-28). The
+    # fixed releases are semver-incompatible, so they cannot be selected here.
+    # zstd-sys was updated to 2.1.2, closing RUSTSEC-2026-0410.
+    #
+    # What Pingora calls, and why none of these is reachable from Tanod:
+    # * pingora-header-serde serialises cache metadata with one-shot
+    #   `CCtx::compress`/`DCtx::decompress` on thread-local contexts, over bytes
+    #   Tanod produced itself in the same process. No streaming API, no
+    #   `with_context` stream, no `Seekable`, no `try_clone`, no dictionary
+    #   swap on a live stream, no mixing of streaming and one-shot calls.
+    # * pingora-core's response compression builds `zstd::stream::write::Encoder`
+    #   with `new`/`with_dictionary`, which own their context; Tanod never
+    #   enables that module (no compression level is ever set).
+    # * `pingora_header_serde::dict::train` (dictionary training) is never
+    #   called.
+    # * The `experimental`, `seekable` and `zstdmt` features are not enabled
+    #   anywhere in the graph (`cargo tree -e features -i zstd-safe`).
+    # Remove all of these with the Pingora update that moves to zstd 0.14.3 /
+    # zstd-safe 8.2, and re-review them if Tanod starts using Pingora response
+    # compression or header dictionaries.
+    "RUSTSEC-2026-0391", # zstd: stream state leaks across a reused `with_context` context
+    "RUSTSEC-2026-0398", # zstd-safe: `Seekable::decompress` length past capacity
+    "RUSTSEC-2026-0403", # zstd-safe: `decompress_stream` exposes memory after a bad legacy frame
+    "RUSTSEC-2026-0395", # zstd-safe (unsound): `StableInBuffer` use-after-free, experimental
+    "RUSTSEC-2026-0396", # zstd-safe (unsound): uninitialised `Seekable` seek table
+    "RUSTSEC-2026-0397", # zstd-safe (unsound): `OutBuffer::around_pos`, streaming only
+    "RUSTSEC-2026-0399", # zstd-safe (unsound): `init_using_cdict`/`ddict`, experimental
+    "RUSTSEC-2026-0400", # zstd-safe (unsound): one-shot call on a context with an open stream
+    "RUSTSEC-2026-0401", # zstd-safe (unsound): `train_from_buffer` size overflow
+    "RUSTSEC-2026-0402", # zstd-safe (unsound): `CCtx::try_clone` with zstdmt, experimental
+    "RUSTSEC-2026-0404", # zstd-safe (unsound): `DCtx::try_clone`, experimental
+    "RUSTSEC-2026-0405", # zstd-safe (unsound): `InBuffer::pos` in seekable compression
+    "RUSTSEC-2026-0406", # zstd-safe (unsound): zstdmt context changes mid-frame
 ]

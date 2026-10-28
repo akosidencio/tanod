@@ -15,7 +15,12 @@ serde-saphyr = "1"
 globset = "0.4"
 http = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["sync", "time", "rt", "macros", "signal"] }
+# `~1.53.3`, not `1`: tokio 1.54 asserts that a `BufStream` capacity is
+# non-zero, and Pingora 0.9 builds every accepted TCP stream with
+# `BufStream::with_capacity(0, 0, ..)`, so the proxy panics on its first
+# connection. 1.53.3 carries the fix for RUSTSEC-2026-0386. Lift this with the
+# Pingora release that stops passing zero.
+tokio = { version = "~1.53.3", features = ["sync", "time", "rt", "macros", "signal"] }
 pingora-core = "0.9"
 pingora-proxy = "0.9"
 pingora-http = "0.9"
@@ -61,7 +66,7 @@ fuzzing = []
 tls = ["pingora-core/rustls", "pingora-load-balancing/rustls"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["sync", "time", "rt", "macros", "test-util"] }
+tokio = { version = "~1.53.3", features = ["sync", "time", "rt", "macros", "test-util"] }
 proptest = "1"
 # Test-only: proves the hand-written OTLP JSON parses. Never linked into the
 # binary.
