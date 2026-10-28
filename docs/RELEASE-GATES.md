@@ -48,6 +48,9 @@ in this phase at CI-sized parameters:
 
 The suite also runs coalescing, streaming, HTTP protocol semantics, purge,
 memory pressure, storage cost and the short soak with `CACHE_EVICTION=tinyufo`.
+`bench/cache-policy-reload.sh` also runs with CLOCK and TinyUFO: actual origin
+render counts must stay unchanged for an operational reload and increase after
+TTL, query, variant, override, public/private-route and deployment changes.
 Each run records its policy and writes a separate artifact. The cache unit
 tests additionally cover admission rejection, repeated invalidation and
 replacement, metadata revalidation, TTL/stale metadata and concurrent

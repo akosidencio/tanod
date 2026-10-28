@@ -25,11 +25,13 @@ another:
 * **`src/cache/policy.rs`** — deciding that a response may be handed to a
   request other than the one that produced it.
 
-Everything else in the codebase can be wrong without a confidentiality
-consequence. These two cannot. They are therefore written as pure functions
-with no proxy runtime attached, which is also what makes them reviewable in
-isolation: you need no Pingora knowledge and no running server to reason about
-either.
+These functions are reviewable in isolation, but runtime lifecycle and reload
+also enforce confidentiality: an otherwise correct key and sharing decision
+cannot protect a request if the stored response was authorized by an obsolete
+policy. Review `PolicySnapshot::cache_compatible`, `Reloader::reload`, and
+`BoundedStore` alongside the pure functions. The operations guide documents
+[reload compatibility](./OPERATIONS.md#cache-policy-across-reloads) and purge
+attachment semantics.
 
 Total surface under review: roughly 400 lines of logic across two files, plus
 the classifier that feeds them (`src/classifier/`, ~350 lines).
@@ -120,6 +122,22 @@ no query policy has an unbounded key space by design. Is defaulting that way
 defensible, given the component's purpose is to reduce origin work?
 
 ### Shareability
+
+**Reload and purge lifecycle (Phase 1 hardening).** Compatibility uses exact
+typed policy comparisons, not the configuration fingerprint. Incompatible
+reloads allocate a new process-local namespace, retire admission and reclaim
+completed entries before publishing the new snapshot. Old pinned requests may
+stream, but late completion cannot persist or leave a transient handoff in a
+retired namespace. Ordinary operational reloads preserve the namespace.
+
+Purge closes new subscriptions atomically with the eligibility check. Existing
+readers continue draining. Pingora's leader attachment is reserved at miss
+registration and transferred by its private write tag; this transfer must
+survive purge between registration and retrieval because Pingora 0.9 panics
+on a missing leader reader. Further tagged lookups cannot attach after purge.
+The coordinated tests in `store_phase1_tests.rs` and `reload_phase1_tests.rs`
+exercise these transitions with CLOCK and TinyUFO. Independent review of the
+compatibility projection and the reserved-leader capability remains useful.
 
 **C8 — `Set-Cookie` is an unconditional refusal.**
 No route configuration, no override, no class reaches past it.

@@ -47,3 +47,7 @@ docs/data/*
 !docs/data/pingora-eviction.csv
 # Local compatibility evidence; CI uploads it as an artifact.
 compatibility-results/
+
+# Internal implementation reports and local benchmark evidence.
+docs/PHASE1-CACHE-CORRECTNESS.md
+benchmark-results/

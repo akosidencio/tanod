@@ -8,6 +8,10 @@ names.
 
 ## 0.3.2 - Unreleased
 
+- Reject new attachments to invalidated streaming fills through both Pingora lookup paths, while preserving existing readers and preventing late admission. Selective purges now cover transient coalescing responses as well.
+- Isolate incompatible cache-sharing policies across hot reloads with process-local namespaces and exact policy comparison. Reclaim obsolete entries and prevent late old-generation fills from being retained; compatible operational reloads preserve cache hits.
+- Add coordinated CLOCK/TinyUFO regressions for purge, cancellation, replacement, reload, streaming followers and memory accounting.
+
 - Reused Pingora's round-robin algorithm and HTTP health-check client. Health probes validate complete HTTP responses, accept all 2xx statuses, enforce the whole-attempt timeout, and cancel promptly on shutdown. Configured upstream health thresholds, circuit breakers, load-aware scoring, and admission remain Tanod policies.
 - Added opt-in `origin.load_balancing: consistent_hash`, using Pingora's Ketama selector across resolved instances. DNS changes rebuild selector snapshots off proxy workers. Existing `hash_by_path` mappings and the default round-robin strategy are preserved.
 - Added opt-in `cache.eviction: tinyufo`, using Pingora TinyUFO inside Tanod's bounded streaming store. CLOCK remains the default. Streaming reservations, coalesced follower handoff, metadata revalidation, expiry, and tag/path/deployment purges remain supported; changes to the policy require restarting Tanod.

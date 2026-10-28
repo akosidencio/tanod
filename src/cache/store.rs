@@ -35,6 +35,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::watch;
 
 use super::eviction::{TinyPolicy, Victim};
+use super::key::CacheNamespace;
 use crate::config::schema::{CacheDefaults, Eviction};
 
 type BinaryMeta = (Vec<u8>, Vec<u8>);
@@ -123,11 +124,17 @@ struct Temp {
     /// A purge matched this fill while it was in progress. Existing followers
     /// may still drain the body, but it must not be admitted afterward.
     invalidated: bool,
+    namespace: Option<CacheNamespace>,
+    /// Pingora's leader is a reader too. Reserve its attachment at registration:
+    /// set_miss_handler panics if its subsequent exact-tag lookup misses. The
+    /// private writer tag transfers this reader once, even if purge intervenes;
+    /// it never authorizes a new attachment to an invalidated response.
+    leader: Option<watch::Receiver<Written>>,
 }
 
 impl Temp {
     fn new(meta: BinaryMeta, transient: bool, tags: Vec<String>, path: String) -> Self {
-        let (tx, _rx) = watch::channel(Written::Partial(0));
+        let (tx, rx) = watch::channel(Written::Partial(0));
         Temp {
             meta,
             body: Arc::new(RwLock::new(Vec::new())),
@@ -136,6 +143,8 @@ impl Temp {
             tags,
             path,
             invalidated: false,
+            namespace: None,
+            leader: Some(rx),
         }
     }
 }
@@ -175,9 +184,11 @@ fn parse_tags(value: &str) -> Vec<String> {
 /// traffic spikes.
 pub struct BoundedStore {
     /// Makes registering and completing a fill atomic with respect to purge.
+    /// Contains the namespace allowed to admit completed entries. Old pinned
+    /// requests may stream in their own namespace, but cannot retain entries.
     /// The read side is held only for those short state transitions, never
     /// while response bytes stream.
-    lifecycle: RwLock<()>,
+    lifecycle: RwLock<Option<CacheNamespace>>,
     cached: RwLock<HashMap<String, Stored>>,
     /// Eviction queue. Front is the next candidate; under
     /// [`Eviction::Clock`] an entry that has been read gets requeued at the
@@ -223,7 +234,7 @@ impl BoundedStore {
         // `Storage` takes `&'static self` throughout (upstream marks this a
         // TODO). Leaking once at startup is the intended shape.
         Box::leak(Box::new(BoundedStore {
-            lifecycle: RwLock::new(()),
+            lifecycle: RwLock::new(None),
             cached: RwLock::new(HashMap::new()),
             order: RwLock::new(VecDeque::new()),
             tag_index: RwLock::new(HashMap::new()),
@@ -463,15 +474,28 @@ impl BoundedStore {
         self.purge_matching_locked(|key, _| victims.contains(key))
     }
 
-    /// Drop every completed entry.
-    ///
-    /// This is what a deployment rollover uses. The cache key already carries
-    /// `deployment.id`, so entries from the previous build are unreachable the
-    /// moment the id changes — but unreachable is not the same as reclaimed,
-    /// and a cache still holding a whole build's worth of dead responses has
-    /// that much less room for the one now serving traffic.
+    /// Invalidate all registered fills and drop every completed entry.
+    /// Existing followers retain their body and progress notification Arcs.
     pub fn purge_all(&self) -> Purged {
         let _lifecycle = self.lifecycle.write();
+        self.purge_all_locked()
+    }
+
+    /// Rotate admission before publishing the new policy. The lifecycle write
+    /// guard makes retirement, invalidation and completed-entry reclamation one
+    /// transition against writer registration/completion. No namespace history
+    /// is retained, so rapid reloads cannot grow a retired-generation registry.
+    pub(crate) fn activate_namespace(&self, namespace: u64) -> Purged {
+        let mut active = self.lifecycle.write();
+        let next = Some(CacheNamespace(namespace));
+        if *active == next {
+            return Purged::default();
+        }
+        *active = next;
+        self.purge_all_locked()
+    }
+
+    fn purge_all_locked(&self) -> Purged {
         {
             let mut temp = self.temp.write();
             for writes in temp.values_mut() {
@@ -602,8 +626,8 @@ impl Storage for BoundedStore {
         key: &CacheKey,
         _t: &SpanHandle,
     ) -> Result<Option<(CacheMeta, HitHandler)>> {
-        // TinyUFO rejection must atomically move a fill into its handoff.
-        let _lifecycle = self.tiny.as_ref().map(|_| self.lifecycle.read());
+        // Attachment is atomic with purge and completion/handoff transitions.
+        let _lifecycle = self.lifecycle.read();
         let hash = key.combined();
 
         // Recording the read here rather than in the hit handler is
@@ -634,6 +658,10 @@ impl Storage for BoundedStore {
         // entries, every one of them would miss and go to the origin — which
         // is request collapsing failing silently, in the one shape where the
         // collapsing matters most.
+        // Eligibility check and subscription share the temp read guard. Purge
+        // marks fills under its write guard: subscribing here is attachment's
+        // linearization point. Purge linearizes when its lifecycle write guard
+        // is released, after all matching temps and completed entries change.
         let partial = {
             let temp = self.temp.read();
             temp.get(&hash).and_then(|writes| {
@@ -641,7 +669,7 @@ impl Storage for BoundedStore {
                 // revalidation overlaps.
                 writes
                     .iter()
-                    .filter(|(_, fill)| !fill.invalidated || !fill.written.borrow().done())
+                    .filter(|(_, fill)| !fill.invalidated)
                     .max_by_key(|(id, _)| **id)
                     .map(|(_, t)| (t.meta.clone(), t.body.clone(), t.written.subscribe()))
             })
@@ -675,24 +703,26 @@ impl Storage for BoundedStore {
             return Ok(None);
         };
         let id: u64 = write_id.into();
-        let _lifecycle = self.tiny.as_ref().map(|_| self.lifecycle.read());
+        let _lifecycle = self.lifecycle.read();
         let hash = key.combined();
 
         // Take everything needed out of the lock in one scope: a parking_lot
         // guard is !Send, so holding one across the await below makes the
         // whole future non-Send.
         let found = {
-            let guard = self.temp.read();
+            let mut guard = self.temp.write();
             guard
-                .get(&hash)
-                .and_then(|m| m.get(&id))
-                .filter(|temp| !temp.invalidated || !temp.written.borrow().done())
-                .map(|temp| {
-                    (
-                        temp.meta.clone(),
-                        temp.body.clone(),
-                        temp.written.subscribe(),
-                    )
+                .get_mut(&hash)
+                .and_then(|m| m.get_mut(&id))
+                .and_then(|temp| {
+                    // This capability belongs to the miss handler, not to later
+                    // requests. Transfer its pre-purge reservation first; all new
+                    // subscriptions still require an eligible fill under this lock.
+                    let reader = temp
+                        .leader
+                        .take()
+                        .or_else(|| (!temp.invalidated).then(|| temp.written.subscribe()))?;
+                    Some((temp.meta.clone(), temp.body.clone(), reader))
                 })
         };
         let Some((meta, body, written)) = found else {
@@ -726,33 +756,25 @@ impl Storage for BoundedStore {
             .response_header()
             .headers
             .contains_key(crate::cache::TRANSIENT_HEADER);
-        // Read the origin's tags here, where the response header is still in
-        // hand. A transient entry is never admitted, so its tags would only be
-        // accounted and thrown away.
-        let tags = if transient {
-            Vec::new()
-        } else {
-            meta.response_header()
-                .headers
-                .get(&self.tag_header)
-                .and_then(|value| value.to_str().ok())
-                .map(parse_tags)
-                .unwrap_or_default()
-        };
-        // The path travels in the key's `user_tag`, which Pingora does not
-        // hash. See `Tanod::cache_key_callback`.
-        let path = if transient {
-            String::new()
-        } else {
-            key.user_tag().to_string()
-        };
+        // Transient responses also need purge identity: a path/tag purge must
+        // hide their in-progress and scheduler-handoff forms from new readers.
+        // Only completed admission populates the reverse tag index.
+        let tags = meta
+            .response_header()
+            .headers
+            .get(&self.tag_header)
+            .and_then(|value| value.to_str().ok())
+            .map(parse_tags)
+            .unwrap_or_default();
+        let path = key.user_tag().to_string();
         let serialized = meta.serialize()?;
         let tags_size: usize = tags.iter().map(String::len).sum();
         let meta_size = serialized.0.len() + serialized.1.len() + tags_size + path.len();
         if !self.reserve(meta_size) {
             return Error::e_explain(ErrorType::InternalError, "cache memory budget exhausted");
         }
-        let temp = Temp::new(serialized, transient, tags, path);
+        let mut temp = Temp::new(serialized, transient, tags, path);
+        temp.namespace = key.extensions.get::<CacheNamespace>().copied();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let handler = FollowableMiss {
             store: self,
@@ -1007,23 +1029,31 @@ impl HandleMiss for FollowableMiss {
         let total = self.written.borrow().bytes();
         self.written.send_replace(Written::Complete(total));
 
-        let transient = {
-            let temp = self.store.temp.read();
-            temp.get(&self.key)
-                .and_then(|writes| writes.get(&id))
-                .map(|entry| entry.transient)
-        };
-        let Some(transient) = transient else {
-            return Err(Error::explain(ErrorType::InternalError, "write vanished"));
-        };
+        // Completion atomically moves a fill into completed storage or its
+        // transient handoff. Lookups must not see the remove/reinsert gap,
+        // regardless of eviction policy. Hold this only for the transition;
+        // never while streaming bytes or awaiting work.
+        let active = self.store.lifecycle.write();
+        let mut temp = self
+            .store
+            .remove_temp(&self.key, id)
+            .ok_or_else(|| Error::explain(ErrorType::InternalError, "write vanished"))?;
         let size = self.body.read().len();
         self.finished = true;
-        if transient {
-            // The lock is released when the miss handler is created. If the
-            // whole body arrives in the same upstream read as the headers,
-            // removing this temp immediately races the woken followers and
-            // turns each into a new origin request. Keep it only for a short
-            // scheduler handoff; attached readers retain their own Arcs.
+        // A finished writer no longer needs its unused leader reservation.
+        temp.leader = None;
+        let retired = temp.namespace.is_some() && *active != temp.namespace;
+        if temp.invalidated || retired {
+            self.store.release(self.accounted);
+            return Ok(MissFinishType::Created(size));
+        }
+        if temp.transient {
+            self.store
+                .temp
+                .write()
+                .entry(self.key.clone())
+                .or_default()
+                .insert(id, temp);
             let store = self.store;
             let key = self.key.clone();
             let accounted = self.accounted;
@@ -1034,26 +1064,6 @@ impl HandleMiss for FollowableMiss {
                 }
             });
         } else {
-            // A purge either marks this fill before this transition or waits
-            // until it has become a completed entry and removes it there.
-            let _shared = self
-                .store
-                .tiny
-                .is_none()
-                .then(|| self.store.lifecycle.read());
-            let _exclusive = self
-                .store
-                .tiny
-                .is_some()
-                .then(|| self.store.lifecycle.write());
-            let temp = self
-                .store
-                .remove_temp(&self.key, id)
-                .ok_or_else(|| Error::explain(ErrorType::InternalError, "write vanished"))?;
-            if temp.invalidated {
-                self.store.release(self.accounted);
-                return Ok(MissFinishType::Created(size));
-            }
             let body = temp.body;
             let rejected = self.store.admit(
                 self.key.clone(),
@@ -1088,6 +1098,8 @@ impl HandleMiss for FollowableMiss {
                             tags: obj.tags,
                             path: obj.path,
                             invalidated: false,
+                            namespace: temp.namespace,
+                            leader: None,
                         },
                     );
                 let store = self.store;
@@ -1122,13 +1134,17 @@ impl Drop for FollowableMiss {
 }
 
 #[cfg(test)]
+#[path = "store_phase1_tests.rs"]
+mod phase1_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     // Aliased: `Bytes` in this file already means `bytes::Bytes`, and the
     // body-writing tests below use it.
     use crate::config::units::Bytes as ByteSize;
 
-    fn cache_cfg(max_bytes: usize) -> CacheDefaults {
+    pub(super) fn cache_cfg(max_bytes: usize) -> CacheDefaults {
         CacheDefaults {
             max_memory: ByteSize(max_bytes as u64),
             ..Default::default()
@@ -1144,7 +1160,7 @@ mod tests {
     use pingora_http::ResponseHeader;
     use std::time::{Duration, SystemTime};
 
-    fn meta() -> CacheMeta {
+    pub(super) fn meta() -> CacheMeta {
         let now = SystemTime::now();
         CacheMeta::new(
             now + Duration::from_secs(60),
@@ -1608,7 +1624,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_transient_entry_is_never_tagged_or_indexed() {
+    async fn a_transient_entry_is_never_persistently_indexed() {
         let store = store_of(1 << 20);
         let mut header = ResponseHeader::build(200, None).unwrap();
         header
