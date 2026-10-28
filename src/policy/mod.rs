@@ -13,7 +13,7 @@ pub mod overload_page;
 pub mod reload;
 
 use crate::classifier::RequestClass;
-use crate::config::schema::{ClassOverride, Config, Route};
+use crate::config::schema::{CacheDefaults, ClassOverride, Config, Route};
 use http::Method;
 use matcher::{CompiledMatcher, MatcherError};
 use std::sync::Arc;
@@ -41,6 +41,8 @@ pub struct PolicySnapshot {
     pub routes: Vec<ResolvedRoute>,
     pub config: Config,
     pub generation: u64,
+    /// Process-local namespace, retained only across compatible reloads.
+    pub(crate) cache_namespace: u64,
     /// Stable for the effective configuration, independent of how many times a
     /// particular process has reloaded it. Kept below 2^53 so Prometheus can
     /// represent the integer exactly in its floating-point sample format.
@@ -53,6 +55,14 @@ pub struct PolicySnapshot {
 
 impl PolicySnapshot {
     pub fn build(config: Config, generation: u64) -> Result<Arc<Self>, MatcherError> {
+        Self::build_in_namespace(config, generation, generation)
+    }
+
+    fn build_in_namespace(
+        config: Config,
+        generation: u64,
+        cache_namespace: u64,
+    ) -> Result<Arc<Self>, MatcherError> {
         let fingerprint = config_fingerprint(&config);
         let routes = config
             .routes
@@ -74,8 +84,92 @@ impl PolicySnapshot {
             retry_after,
             config,
             generation,
+            cache_namespace,
             fingerprint,
         }))
+    }
+
+    /// Compare typed effective sharing inputs, never a lossy fingerprint.
+    /// Ordered matchers and classes fence route changes; complete cache and
+    /// coalescing structs include TTL/stale, query, variants and overrides.
+    /// Framework rules are code-bound (NextJs), so cannot change on reload.
+    /// Limits, priority, spooling, logging and shed-page edits do not change
+    /// which request/response pairs may share bytes.
+    pub(crate) fn cache_compatible(&self, config: &Config) -> bool {
+        // Exhaustive projections make adding a top-level, cache or route
+        // field a compile-time prompt to review compatibility. Nested sharing
+        // structs use derived equality, automatically covering new fields.
+        fn sharing(config: &Config) -> impl PartialEq + '_ {
+            let Config {
+                version,
+                mode,
+                server: _,
+                origin: _,
+                capacity: _,
+                health: _,
+                cache,
+                coalesce,
+                timeouts: _,
+                overload: _,
+                spool: _,
+                upgrade: _,
+                deployment,
+                routes,
+                telemetry: _,
+                debug_headers: _,
+            } = config;
+            let CacheDefaults {
+                enabled,
+                store: _,
+                max_memory: _,
+                max_body_size,
+                respect_origin,
+                eviction: _,
+                tag_header,
+                purge: _,
+            } = cache;
+            (
+                version,
+                mode,
+                deployment,
+                enabled,
+                max_body_size,
+                respect_origin,
+                tag_header,
+                coalesce,
+                routes
+                    .iter()
+                    .map(|route| {
+                        let Route {
+                            id: _,
+                            matcher,
+                            class,
+                            priority: _,
+                            weight: _,
+                            cache,
+                            coalesce,
+                            concurrency: _,
+                            spool: _,
+                        } = route;
+                        (matcher, class, cache, coalesce)
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        }
+        sharing(&self.config) == sharing(config)
+    }
+
+    pub(crate) fn build_for_reload(
+        config: Config,
+        generation: u64,
+        previous: &Self,
+    ) -> Result<Arc<Self>, MatcherError> {
+        let namespace = if previous.cache_compatible(&config) {
+            previous.cache_namespace
+        } else {
+            generation
+        };
+        Self::build_in_namespace(config, generation, namespace)
     }
 
     /// First match in file order wins.

@@ -466,7 +466,8 @@ pub static RETRY_BUDGET: LazyLock<IntGauge> = LazyLock::new(|| {
     .expect("metric registration")
 });
 
-/// Entries removed by an explicit purge, by `scope`: `tags` or `all`.
+/// Entries removed by purge or policy retirement: `selective`, `all`,
+/// `deployment` or `policy` scope.
 ///
 /// Deliberately separate from eviction. An evicted entry means the cache is
 /// doing its job inside its budget; a purged one means somebody invalidated

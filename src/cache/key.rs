@@ -14,6 +14,23 @@ use crate::classifier::RequestMetadata;
 use crate::config::schema::{QueryMode, QueryPolicy};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
+/// Carried in Pingora extensions for admission, and encoded in the primary
+/// key for both completed-cache lookup and Pingora's coalescing lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CacheNamespace(pub u64);
+
+impl CacheNamespace {
+    pub(crate) fn key(self, canonical: String, path: &str) -> pingora_cache::key::CacheKey {
+        // The fixed marker, decimal number and colon have unambiguous bounds.
+        let mut key = pingora_cache::key::CacheKey::new(
+            format!("tanod-policy-v1:{}:{canonical}", self.0),
+            path,
+        );
+        key.extensions.insert(self);
+        key
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
     scheme: String,

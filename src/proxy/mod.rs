@@ -234,6 +234,7 @@ impl Tanod {
         // `Storage` takes `&'static self` throughout, so the store and the
         // lock are created once and leaked deliberately at startup.
         let store = BoundedStore::new(&initial.config.cache);
+        store.activate_namespace(initial.cache_namespace);
         let cache_lock: &'static pingora_cache::lock::CacheKeyLockImpl = Box::leak(
             pingora_cache::lock::CacheLock::new_boxed(initial.config.timeouts.origin.as_duration()),
         );
@@ -809,10 +810,10 @@ impl ProxyHttp for Tanod {
         // and doing it in the one field that cannot change the key means it
         // cannot change what is shared with whom. `cache::key` remains the
         // sole authority on that, which the test below pins.
-        Ok(PingoraCacheKey::new(
-            key.canonical_string(),
-            purgeable_path(&path),
-        ))
+        Ok(
+            crate::cache::key::CacheNamespace(ctx.policy.cache_namespace)
+                .key(key.canonical_string(), purgeable_path(&path)),
+        )
     }
 
     /// Admission. Reached only on a genuine cache miss, so hits and coalesced

@@ -29,10 +29,12 @@ pub struct Reloader {
     path: String,
     policy: Arc<ArcSwap<PolicySnapshot>>,
     admission: Arc<AdmissionController>,
-    /// The response cache, so a deployment rollover can reclaim the previous
-    /// build's entries. `None` in tests that only exercise policy.
+    /// The response cache, so policy retirement can reclaim obsolete entries.
+    /// `None` in tests that only exercise policy.
     store: Option<&'static crate::cache::BoundedStore>,
     generation: AtomicU64,
+    /// Serialize reload transactions, never the request path.
+    reload_lock: parking_lot::Mutex<()>,
 }
 
 impl Reloader {
@@ -41,19 +43,22 @@ impl Reloader {
         policy: Arc<ArcSwap<PolicySnapshot>>,
         admission: Arc<AdmissionController>,
     ) -> Self {
+        let generation = policy.load().generation;
         Reloader {
             path: path.into(),
             policy,
             admission,
             store: None,
-            generation: AtomicU64::new(1),
+            generation: AtomicU64::new(generation),
+            reload_lock: parking_lot::Mutex::new(()),
         }
     }
 
-    /// Give the reloader the cache, so that changing `deployment.id` reclaims
-    /// the old build's entries instead of leaving them to age out.
+    /// Give the reloader the cache for atomic admission retirement and
+    /// reclamation when cache-sharing semantics change.
     #[must_use]
     pub fn with_store(mut self, store: &'static crate::cache::BoundedStore) -> Self {
+        store.activate_namespace(self.policy.load().cache_namespace);
         self.store = Some(store);
         self
     }
@@ -61,6 +66,7 @@ impl Reloader {
     /// Re-read, validate, and apply. Returns the new generation, or an
     /// explanation of why the running config was kept.
     pub fn reload(&self) -> Result<u64, String> {
+        let _reload = self.reload_lock.lock();
         let cfg = crate::config::load(&self.path).map_err(|e| {
             let mut msg = e.to_string();
             if let Some(src) = std::error::Error::source(&e) {
@@ -223,7 +229,6 @@ impl Reloader {
             );
         }
         let deployment_changed = cfg.deployment.id != current.config.deployment.id;
-        drop(current);
 
         let route_limits: Vec<(String, usize, usize, std::time::Duration)> = cfg
             .routes
@@ -240,8 +245,14 @@ impl Reloader {
             })
             .collect();
 
-        let next_generation = self.generation.load(Ordering::SeqCst) + 1;
-        let snapshot = PolicySnapshot::build(cfg, next_generation).map_err(|e| e.to_string())?;
+        let next_generation = self
+            .generation
+            .load(Ordering::SeqCst)
+            .checked_add(1)
+            .ok_or("policy generation exhausted; restart required")?;
+        let snapshot = PolicySnapshot::build_for_reload(cfg, next_generation, &current)
+            .map_err(|e| e.to_string())?;
+        drop(current);
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let fingerprint = snapshot.fingerprint;
         let deployment_id = snapshot.config.deployment.id.clone();
@@ -270,22 +281,22 @@ impl Reloader {
                         .unwrap_or(i64::MAX),
                 );
         }
-        // Deployment-safe invalidation. The cache key already carries
-        // `deployment.id`, so the previous build's entries become unreachable
-        // the instant the id changes — but unreachable is not reclaimed, and a
-        // cache still holding a whole dead build has that much less room for
-        // the one now serving traffic. Done before the swap, so no request on
-        // the new generation observes the old entries occupying the budget.
-        if deployment_changed && let Some(store) = self.store {
-            let purged = store.purge_all();
+        // Retire admission before publication. Old pinned requests may register
+        // later, but finish checks this namespace under the lifecycle guard.
+        if let Some(store) = self.store {
+            let purged = store.activate_namespace(snapshot.cache_namespace);
             if purged.entries > 0 {
                 log::info!(
-                    "deployment id changed; purged {} cache entries ({} bytes) from the                      previous build",
+                    "cache policy changed; reclaimed {} entries ({} bytes)",
                     purged.entries,
                     purged.bytes
                 );
                 crate::telemetry::metrics::CACHE_PURGED
-                    .with_label_values(&["deployment"])
+                    .with_label_values(&[if deployment_changed {
+                        "deployment"
+                    } else {
+                        "policy"
+                    }])
                     .inc_by(purged.entries as u64);
             }
         }
@@ -329,6 +340,10 @@ impl BackgroundService for Reloader {
 }
 
 #[cfg(test)]
+#[path = "reload_phase1_tests.rs"]
+mod phase1_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
@@ -355,7 +370,7 @@ routes:
       max: 10
 "#;
 
-    fn setup(
+    pub(super) fn setup(
         body: &str,
     ) -> (
         tempfile_lite::TempPath,

@@ -761,7 +761,7 @@ pub enum Store {
     Memory,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct CoalesceDefaults {
     #[serde(default = "yes")]
@@ -1022,7 +1022,7 @@ fn d_1s() -> Dur {
     Dur(std::time::Duration::from_secs(1))
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Deployment {
     /// Static build identifier, mixed into every cache key.
@@ -1068,14 +1068,14 @@ pub struct Route {
 }
 
 /// `match: "/products/**"` and the expanded table form both parse.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum Matcher {
     Path(String),
     Detailed(DetailedMatcher),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct DetailedMatcher {
     #[serde(default)]
@@ -1095,7 +1095,7 @@ pub enum ClassOverride {
     Streaming,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RouteCache {
     #[serde(default)]
@@ -1121,7 +1121,7 @@ pub struct RouteCache {
     pub override_origin: bool,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Ttl {
     /// Ceiling applied to whatever the origin asked for. Shrinks, never grows.
@@ -1129,7 +1129,7 @@ pub struct Ttl {
     pub max: Option<Dur>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct QueryPolicy {
     pub mode: QueryMode,
@@ -1148,14 +1148,14 @@ pub enum QueryMode {
     Exclude,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct VaryPolicy {
     #[serde(default)]
     pub headers: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RouteCoalesce {
     #[serde(default)]

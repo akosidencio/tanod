@@ -396,10 +396,21 @@ Four things worth knowing before you rely on it:
 - **Purge is per process.** Every replica has its own cache and endpoint. Fan
   out from the deploy pipeline; `@tanod/next` accepts all admin listeners
   through `endpoints` or `TANOD_PURGE_URLS` and fails on partial delivery.
-- **In-flight renders keep streaming, but are not admitted afterward.** A
-  matching render already streaming to a client is allowed to finish, while
-  its temporary fill is marked invalid so it cannot repopulate the cache after
-  the purge has reported success.
+- **No new attachment to invalidated fills.** Once a purge returns, ordinary
+  lookups and exact streaming-write-tag lookups cannot attach to a matching
+  pre-purge fill, even while its writer is still streaming. This also covers
+  transient coalescing responses and TinyUFO admission-rejection handoffs.
+  Pingora's leader reader is reserved when its fill is registered; its private
+  write tag can transfer that already attached reader once if purge intervenes
+  before Pingora retrieves it. Further tagged lookups cannot attach.
+- **Already attached readers keep streaming.** They retain their response and
+  receive subsequent chunks normally. The invalidated writer cannot admit its
+  response afterward. A canceled writer reports an error to its followers
+  rather than leaving them waiting forever. Purge does not cancel origin work.
+- **Purge covers fills registered before its linearization point.** A request
+  already rendering at the origin but not yet registered with the store may
+  register afterward. Purge is not an origin transaction or a content-version
+  fence; use deployment identity for application-build isolation.
 
 ### Purging by path
 
@@ -461,11 +472,44 @@ a supported contract; the supported one is phase 6's `@tanod/next`.
 
 ### Deployment rollovers
 
-Nothing to call. The cache key already carries `deployment.id`, so the previous
-build's entries become unreachable the moment the id changes — and a `SIGHUP`
-that changes it also purges them, so their bytes go back to the budget instead
-of aging out. A reload that does *not* change the id leaves the cache alone;
-purging on every `SIGHUP` would turn a routine config change into a stampede.
+Nothing to call. The cache key carries `deployment.id` and a process-local
+cache-policy namespace. A deployment change retires the previous namespace and
+reclaims completed entries before publishing the new snapshot.
+
+### Cache policy across reloads
+
+An accepted reload preserves the cache namespace only when its typed sharing
+inputs compare equal: configuration version, protect/observe mode, deployment
+identity, cache enablement/body limit/origin-respect/tag-header settings, global
+coalescing settings, and the ordered route matchers, classes, complete cache
+policies and coalescing policies. This includes overrides, TTL ceilings, stale
+windows, query policies and variant headers. Framework exclusions and mandatory
+Next.js variants are fixed in code and cannot change through a reload.
+
+Capacity, route names, concurrency, priority, weight, spooling, logging and shed
+page changes retain cached responses. Matching is conservative: syntactically
+different matcher forms or differently ordered variant/query lists may cause a
+cold cache even if an operator considers them equivalent. Sharing changes
+currently retire the whole namespace, including otherwise unaffected routes.
+
+Compatibility uses exact typed equality, not the exported configuration
+fingerprint. Incompatible reloads allocate a fresh monotonically increasing
+namespace; changing A to B and back to A does not revive the original A cache.
+Namespaces are local to the process and never logged or exported. The primary
+key includes the namespace, so Pingora's coalescing locks are isolated as well.
+
+In-flight requests keep their pinned policy. Retirement invalidates existing
+fills and removes completed entries. An old request registering a fill *after*
+retirement may stream in its own namespace, but completion cannot persist it or
+leave a transient handoff. Retired state has no unbounded namespace registry:
+only the active namespace is retained, and active writers release reservations
+on finish/drop. Completed transient handoffs expire through their existing
+bounded scheduler window. Rapid reloads are serialized off the request path.
+
+The logical byte budget continues to count stored entries and live fills.
+Already attached readers can retain detached body Arcs after those bytes leave
+the logical cache budget; it is not a bound on process RSS or downstream socket
+buffers. Purging/reloading does not truncate those readers to reclaim memory.
 
 ### What to watch
 
@@ -691,7 +735,7 @@ eviction. Purged content cannot become a persistent entry afterward.
 
 TTL and stale windows continue to be interpreted by Pingora's HTTP cache.
 Metadata revalidation updates the stored tags and accounting. Tag/path purges
-and deployment rollover work with every policy.
+and deployment/cache-policy retirement work with every policy.
 
 `/status` reports `cache.eviction`, `cache.bytes_used`, `cache.evicted`, and
 `cache.admission_rejected`. Prometheus exposes
