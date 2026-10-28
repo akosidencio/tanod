@@ -174,6 +174,21 @@ groups:
             timeouts.downstream_write. Correct, but it is the coupling the
             spool exists to remove. Raise spool.max_memory if it is sustained.
 
+      # The only cache-memory outcome a visitor sees. Fallbacks and abandoned
+      # fills are served in full and only cost hit ratio.
+      - alert: TanodCacheResponsesAborted
+        expr: sum by (job, instance) (rate(tanod_cache_memory_pressure_total{outcome="memory_exhausted"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Responses on {{ $labels.instance }} are aborted because the cache ran out of memory"
+          description: >-
+            Concurrent cacheable streams outgrew cache.max_memory and the
+            abandoned-fill headroom (one cache.max_body_size), so some were
+            aborted mid-body. Raise cache.max_memory, or keep large streamed
+            responses off cacheable routes.
+
       # Costs traces, never requests. Included because it is easy to miss and
       # the fix is one number.
       - alert: TanodDroppingSpans

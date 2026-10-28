@@ -16,6 +16,29 @@
 //! Both Pingora's per-response size limit and this store's global budget are
 //! enforced while a fill is in progress. Abandoned fills remove their temporary
 //! entry on drop.
+//!
+//! # Memory exhaustion
+//!
+//! Running out of budget must not turn a good origin response into a failed
+//! request where that can be avoided, and where it cannot, it must fail
+//! visibly rather than truncate silently. What is possible depends on where in
+//! Pingora's lifecycle the budget runs out:
+//!
+//! * **Registering a fill** (the metadata reservation in `get_miss_handler`).
+//!   Refused, and Pingora, which has sent nothing downstream yet, disables the
+//!   cache for that response and serves it uncached. The proxy checks
+//!   [`BoundedStore::accepting_fills`] first so the usual case is a clean
+//!   uncacheable decision rather than a storage error.
+//! * **Writing the body.** By now Pingora serves the client *from this store*
+//!   and gives up the whole request if a write fails. So a fill that cannot
+//!   reserve its next chunk is *abandoned* instead: it will never be stored,
+//!   and it keeps streaming to the readers it has, accounted against a bounded
+//!   headroom of one `cache.max_body_size` above the budget. Only when that
+//!   headroom is exhausted too does the write fail, and Pingora aborts the
+//!   response rather than presenting a truncated body as complete.
+//!
+//! Every reserved byte is released exactly once: by completion, by the
+//! handoff timer, or by the handler's drop, whichever owns it.
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -31,7 +54,7 @@ use pingora_error::{Error, ErrorType, Result};
 use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::watch;
 
 use super::eviction::{TinyPolicy, Victim};
@@ -56,6 +79,17 @@ const TRANSIENT_HANDOFF: std::time::Duration = std::time::Duration::from_millis(
 /// because a deployment that needs more than this has a different problem.
 const MAX_TAGS_PER_ENTRY: usize = 64;
 const MAX_TAG_LEN: usize = 256;
+
+/// How a fill's bytes were accounted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Grant {
+    /// Within `cache.max_memory`.
+    Budget,
+    /// Above it, within the abandoned-fill headroom.
+    Headroom,
+    /// Neither. Nothing was reserved and nothing was evicted.
+    Refused,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Written {
@@ -205,7 +239,17 @@ pub struct BoundedStore {
     /// Includes completed entries and every byte in an in-progress fill.
     /// All memory-accounting mutations take this lock before cache-map locks.
     used: Mutex<usize>,
+    /// The part of `used` held by fills: in progress, in a handoff, or
+    /// abandoned. Unlike completed entries these cannot be evicted, so a
+    /// reservation that would not fit beside them is refused up front rather
+    /// than after emptying the cache for nothing. Written only while `used`
+    /// is held; an atomic so status and metrics can read it without the lock.
+    pinned: AtomicUsize,
     max_bytes: usize,
+    /// How far abandoned fills may take `pinned` above `max_bytes` so the
+    /// responses already streaming from them can finish. One maximum body:
+    /// whatever else happens, the fill that runs out first can complete.
+    headroom: usize,
     next_id: AtomicU64,
     policy: Eviction,
     tiny: Option<RwLock<TinyPolicy>>,
@@ -218,6 +262,21 @@ pub struct BoundedStore {
     evicted: AtomicU64,
     purged: AtomicU64,
     admission_rejected: AtomicU64,
+    /// Memory-pressure outcomes; see the module documentation.
+    uncached_fallbacks: AtomicU64,
+    fills_abandoned: AtomicU64,
+    fills_exhausted: AtomicU64,
+}
+
+/// Memory-pressure counters, for the status document.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MemoryPressure {
+    /// Responses served uncached because a fill could not be registered.
+    pub uncached_fallback: u64,
+    /// Fills that ran out mid-body and finished from the headroom, unstored.
+    pub fill_abandoned: u64,
+    /// Fills that ran out of headroom too; their responses were aborted.
+    pub memory_exhausted: u64,
 }
 
 /// Everything a purge removed, for the response and the metrics.
@@ -240,7 +299,11 @@ impl BoundedStore {
             tag_index: RwLock::new(HashMap::new()),
             temp: RwLock::new(HashMap::new()),
             used: Mutex::new(0),
+            pinned: AtomicUsize::new(0),
             max_bytes: cfg.max_memory.as_usize(),
+            // Validation already keeps `max_body_size` within `max_memory`;
+            // the clamp keeps the bound at most twice the budget regardless.
+            headroom: cfg.max_body_size.as_usize().min(cfg.max_memory.as_usize()),
             next_id: AtomicU64::new(0),
             policy: cfg.eviction,
             tiny: (cfg.eviction == Eviction::Tinyufo)
@@ -249,6 +312,9 @@ impl BoundedStore {
             evicted: AtomicU64::new(0),
             purged: AtomicU64::new(0),
             admission_rejected: AtomicU64::new(0),
+            uncached_fallbacks: AtomicU64::new(0),
+            fills_abandoned: AtomicU64::new(0),
+            fills_exhausted: AtomicU64::new(0),
         }))
     }
 
@@ -293,17 +359,70 @@ impl BoundedStore {
         self.cached.read().len()
     }
 
-    /// Make room for `additional` bytes, evicting until the budget allows it.
+    /// Bytes held by fills rather than completed entries.
+    pub fn bytes_pinned(&self) -> usize {
+        self.pinned.load(Ordering::Relaxed)
+    }
+
+    /// How far abandoned fills may exceed [`limit`](Self::limit).
+    pub fn headroom(&self) -> usize {
+        self.headroom
+    }
+
+    pub fn memory_pressure(&self) -> MemoryPressure {
+        MemoryPressure {
+            uncached_fallback: self.uncached_fallbacks.load(Ordering::Relaxed),
+            fill_abandoned: self.fills_abandoned.load(Ordering::Relaxed),
+            memory_exhausted: self.fills_exhausted.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Could a new fill of about `estimate` bytes of metadata register now?
+    ///
+    /// Advisory: the proxy asks before offering Pingora a cacheable response,
+    /// so that the usual exhaustion case becomes an uncacheable response
+    /// instead of a storage error. A fill that passes this and then loses a
+    /// race is still refused safely by `get_miss_handler`.
+    pub fn accepting_fills(&self, estimate: usize) -> bool {
+        self.pinned.load(Ordering::Relaxed).saturating_add(estimate) <= self.max_bytes
+    }
+
+    /// Record a response the proxy served uncached because the cache was full.
+    pub fn note_uncached_fallback(&self) {
+        self.uncached_fallbacks.fetch_add(1, Ordering::Relaxed);
+        crate::telemetry::metrics::CACHE_MEMORY_PRESSURE
+            .with_label_values(&["uncached_fallback"])
+            .inc();
+    }
+
+    /// Reserve `additional` bytes for a fill, evicting completed entries as
+    /// needed.
+    ///
+    /// `budget` allows the reservation inside `max_bytes`; `headroom` allows
+    /// it inside `max_bytes + headroom`, which only an abandoned fill may use.
+    /// Feasibility is decided from `pinned` before anything is evicted:
+    /// completed entries can always be evicted, fills cannot, so a
+    /// reservation that cannot fit beside the fills is refused without
+    /// emptying the cache first.
     ///
     /// Accounting transitions lock `used` → `cached` → `order` →
     /// `tag_index` → `tiny`, skipping unused locks. Lookup takes only cache
     /// and policy read locks. Never acquire the cache map after the policy
     /// lock: readers and eviction must observe the same entry identity.
-    fn reserve(&self, additional: usize) -> bool {
-        if additional > self.max_bytes {
-            return false;
-        }
+    fn reserve_fill(&self, additional: usize, budget: bool, headroom: bool) -> Grant {
         let mut used = self.used.lock();
+        let pinned = self.pinned.load(Ordering::Relaxed);
+        let wanted = pinned.saturating_add(additional);
+        let (cap, grant) = if budget && wanted <= self.max_bytes {
+            (self.max_bytes, Grant::Budget)
+        } else if headroom && wanted <= self.max_bytes.saturating_add(self.headroom) {
+            (
+                self.max_bytes.saturating_add(self.headroom),
+                Grant::Headroom,
+            )
+        } else {
+            return Grant::Refused;
+        };
         let mut cached = self.cached.write();
         let mut order = self.order.write();
         let mut tag_index = self.tag_index.write();
@@ -318,18 +437,18 @@ impl BoundedStore {
             Eviction::Fifo | Eviction::Tinyufo => 0,
         };
         let mut tiny = self.tiny.as_ref().map(|policy| policy.write());
-        while used.saturating_add(additional) > self.max_bytes {
+        while used.saturating_add(additional) > cap {
             if let Some(policy) = tiny.as_mut() {
                 let victims = policy.evict();
                 if victims.is_empty() {
-                    return false;
+                    return Grant::Refused;
                 }
                 self.discard_victims(victims, &mut used, &mut cached, &mut tag_index);
                 Self::compact(policy, &cached);
                 continue;
             }
             let Some(victim) = order.pop_front() else {
-                return false;
+                return Grant::Refused;
             };
             let spared = chances > 0
                 && cached
@@ -348,17 +467,29 @@ impl BoundedStore {
             }
         }
         *used += additional;
-        true
+        self.pinned.fetch_add(additional, Ordering::Relaxed);
+        grant
     }
 
+    /// Return a fill's whole reservation. Called exactly once per fill, by
+    /// whichever of completion, handoff expiry or drop owns it.
     fn release(&self, amount: usize) {
         let mut used = self.used.lock();
         *used = used.saturating_sub(amount);
+        let pinned = self.pinned.load(Ordering::Relaxed);
+        debug_assert!(
+            pinned >= amount,
+            "released {amount} of {pinned} pinned bytes"
+        );
+        self.pinned
+            .store(pinned.saturating_sub(amount), Ordering::Relaxed);
     }
 
     /// Convert an already-accounted fill. Return an admission-rejected object
     /// to its streaming handoff; its bytes remain reserved until handoff ends.
-    fn admit(&self, key: String, mut obj: Stored) -> Option<Stored> {
+    /// An admitted fill's `accounted` bytes stop being pinned: they are now a
+    /// completed entry, which eviction may take.
+    fn admit(&self, key: String, mut obj: Stored, accounted: usize) -> Option<Stored> {
         let mut used = self.used.lock();
         let mut cached = self.cached.write();
         let mut order = self.order.write();
@@ -396,6 +527,9 @@ impl BoundedStore {
                 .insert(key.clone());
         }
         cached.insert(key.clone(), obj);
+        let pinned = self.pinned.load(Ordering::Relaxed);
+        self.pinned
+            .store(pinned.saturating_sub(accounted), Ordering::Relaxed);
         if let Some(policy) = tiny.as_mut() {
             Self::compact(policy, &cached);
         } else {
@@ -591,6 +725,19 @@ impl BoundedStore {
         purged
     }
 
+    /// Stop new readers attaching to one fill. Its existing readers keep
+    /// what they have; see `Temp::invalidated`.
+    fn invalidate_fill(&self, key: &str, id: u64) {
+        if let Some(fill) = self
+            .temp
+            .write()
+            .get_mut(key)
+            .and_then(|writes| writes.get_mut(&id))
+        {
+            fill.invalidated = true;
+        }
+    }
+
     fn remove_temp(&self, key: &str, id: u64) -> Option<Temp> {
         let mut temp = self.temp.write();
         let removed = temp.get_mut(key).and_then(|writes| writes.remove(&id));
@@ -770,7 +917,12 @@ impl Storage for BoundedStore {
         let serialized = meta.serialize()?;
         let tags_size: usize = tags.iter().map(String::len).sum();
         let meta_size = serialized.0.len() + serialized.1.len() + tags_size + path.len();
-        if !self.reserve(meta_size) {
+        if self.reserve_fill(meta_size, true, false) == Grant::Refused {
+            // Nothing has been sent downstream yet, so Pingora disables the
+            // cache for this response and serves it straight from the origin.
+            // Headroom is not offered here: it exists to finish responses
+            // already streaming, not to start new fills over budget.
+            self.note_uncached_fallback();
             return Error::e_explain(ErrorType::InternalError, "cache memory budget exhausted");
         }
         let mut temp = Temp::new(serialized, transient, tags, path);
@@ -784,6 +936,7 @@ impl Storage for BoundedStore {
             written: temp.written.clone(),
             accounted: meta_size,
             finished: false,
+            abandoned: false,
         };
         self.temp.write().entry(hash).or_default().insert(id, temp);
         Ok(Box::new(handler))
@@ -1000,16 +1153,43 @@ struct FollowableMiss {
     written: Arc<watch::Sender<Written>>,
     accounted: usize,
     finished: bool,
+    /// Ran out of budget mid-body and continued on the headroom. Never
+    /// stored; still served to the readers it has and any that attach.
+    abandoned: bool,
 }
 
 #[async_trait]
 impl HandleMiss for FollowableMiss {
     async fn write_body(&mut self, data: Bytes, eof: bool) -> Result<()> {
-        if !data.is_empty() && !self.store.reserve(data.len()) {
-            return Error::e_explain(
-                ErrorType::InternalError,
-                "cache memory budget exhausted during fill",
-            );
+        if !data.is_empty() {
+            match self.store.reserve_fill(data.len(), !self.abandoned, true) {
+                Grant::Budget => {}
+                Grant::Headroom => {
+                    if !self.abandoned {
+                        self.abandoned = true;
+                        self.store.fills_abandoned.fetch_add(1, Ordering::Relaxed);
+                        crate::telemetry::metrics::CACHE_MEMORY_PRESSURE
+                            .with_label_values(&["fill_abandoned"])
+                            .inc();
+                    }
+                }
+                Grant::Refused => {
+                    // Pingora gives up the whole request on this error: the
+                    // client sees an aborted response, never a short one
+                    // presented as complete. Hide the fill from new readers
+                    // now; the drop that follows releases its reservation and
+                    // ends the readers it has with an error.
+                    self.store.invalidate_fill(&self.key, self.id.into());
+                    self.store.fills_exhausted.fetch_add(1, Ordering::Relaxed);
+                    crate::telemetry::metrics::CACHE_MEMORY_PRESSURE
+                        .with_label_values(&["memory_exhausted"])
+                        .inc();
+                    return Error::e_explain(
+                        ErrorType::InternalError,
+                        "cache memory budget and headroom exhausted during fill",
+                    );
+                }
+            }
         }
         self.accounted += data.len();
         let so_far = self.written.borrow().bytes();
@@ -1043,7 +1223,10 @@ impl HandleMiss for FollowableMiss {
         // A finished writer no longer needs its unused leader reservation.
         temp.leader = None;
         let retired = temp.namespace.is_some() && *active != temp.namespace;
-        if temp.invalidated || retired {
+        // An abandoned fill skips the transient handoff too: its bytes are
+        // over budget, and returning them now matters more than sparing a
+        // late follower a render.
+        if temp.invalidated || retired || self.abandoned {
             self.store.release(self.accounted);
             return Ok(MissFinishType::Created(size));
         }
@@ -1081,6 +1264,7 @@ impl HandleMiss for FollowableMiss {
                     revision: 0,
                     tiny_hash: None,
                 },
+                self.accounted,
             );
             if let Some(obj) = rejected {
                 self.store
@@ -1136,6 +1320,10 @@ impl Drop for FollowableMiss {
 #[cfg(test)]
 #[path = "store_phase1_tests.rs"]
 mod phase1_tests;
+
+#[cfg(test)]
+#[path = "store_phase2_tests.rs"]
+mod phase2_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1999,9 +2187,13 @@ mod tests {
         );
     }
 
+    /// In-progress fills count toward the budget. The fill that cannot fit
+    /// is not stored, and the one after that cannot fit even in the headroom
+    /// is refused: the logical total never passes budget plus headroom.
     #[tokio::test]
     async fn in_progress_fills_count_toward_the_global_budget() {
         let store = store_of(4096);
+        assert_eq!(store.headroom(), 4096, "headroom is clamped to the budget");
         let first = CacheKey::new("/one", "");
         let second = CacheKey::new("/two", "");
         let mut a = store
@@ -2015,15 +2207,22 @@ mod tests {
             .get_miss_handler(&second, &meta(), &Span::inactive().handle())
             .await
             .unwrap();
+        b.write_body(Bytes::from(vec![b'b'; 3000]), false)
+            .await
+            .unwrap();
+        assert!(store.bytes_used() > 4096, "b is running on the headroom");
+        assert_eq!(store.memory_pressure().fill_abandoned, 1);
         assert!(
             b.write_body(Bytes::from(vec![b'b'; 3000]), false)
                 .await
                 .is_err()
         );
-        assert!(store.bytes_used() <= 4096);
+        assert!(store.bytes_used() <= 4096 + store.headroom());
+        assert_eq!(store.memory_pressure().memory_exhausted, 1);
         drop(a);
         drop(b);
         assert_eq!(store.bytes_used(), 0);
+        assert_eq!(store.bytes_pinned(), 0);
     }
     fn tiny_store(budget: usize) -> &'static BoundedStore {
         BoundedStore::new(&CacheDefaults {

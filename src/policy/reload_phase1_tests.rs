@@ -46,6 +46,7 @@ fn key(policy: &PolicySnapshot, path: &str) -> CacheKey {
         .unwrap_or_default();
     let canonical = KeyBuilder {
         scheme: "https",
+        forwarded_host: None,
         query_policy: cache.and_then(|c| c.query.as_ref()),
         variant_headers: &variants,
         deployment: policy.config.deployment.id.as_deref(),
@@ -298,6 +299,7 @@ fn reload_preserves_privacy_guards_and_framework_variants() {
             let variants: Vec<String> = hints.key_headers.iter().map(|h| h.to_string()).collect();
             let canonical = KeyBuilder {
                 scheme: "https",
+                forwarded_host: None,
                 query_policy: None,
                 variant_headers: &variants,
                 deployment: None,

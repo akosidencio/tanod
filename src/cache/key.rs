@@ -131,6 +131,10 @@ impl CacheKey {
 /// and adapter hints.
 pub struct KeyBuilder<'a> {
     pub scheme: &'a str,
+    /// The public host a trusted proxy reported, already validated by
+    /// [`crate::net::forwarded`]. `None` leaves the key exactly as it was
+    /// before host forwarding existed.
+    pub forwarded_host: Option<&'a str>,
     pub query_policy: Option<&'a QueryPolicy>,
     /// Header names from route `cache.vary` plus the framework adapter's
     /// mandatory variant headers.
@@ -152,6 +156,11 @@ impl<'a> KeyBuilder<'a> {
         // Content coding is part of the identity of a stored body. Omit it and
         // a brotli entry eventually reaches a client that only reads gzip.
         variant.push(("~encoding".into(), normalize_accept_encoding(req)));
+        // The origin sees this as `X-Forwarded-Host` and builds URLs from it,
+        // so it selects a representation exactly as the routing host does.
+        if let Some(host) = self.forwarded_host {
+            variant.push(("~forwarded-host".into(), normalize_host(host, self.scheme)));
+        }
         variant.sort();
 
         CacheKey {
@@ -313,6 +322,7 @@ mod tests {
             .collect::<Vec<_>>();
         KeyBuilder {
             scheme: "https",
+            forwarded_host: None,
             query_policy: None,
             variant_headers: &variant,
             deployment,
@@ -370,6 +380,7 @@ mod tests {
         let build = |headers: &HeaderMap| {
             KeyBuilder {
                 scheme: "https",
+                forwarded_host: None,
                 query_policy: None,
                 variant_headers: &["x-variant".to_string()],
                 deployment: None,
@@ -595,6 +606,7 @@ mod proptests {
     ) -> CacheKey {
         KeyBuilder {
             scheme,
+            forwarded_host: None,
             query_policy: None,
             variant_headers: variant,
             deployment,

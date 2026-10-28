@@ -50,6 +50,7 @@ fn build(req: &Request<'_>) -> Option<tanod::cache::CacheKey> {
     Some(
         KeyBuilder {
             scheme: req.scheme,
+            forwarded_host: None,
             query_policy: None,
             variant_headers: &variant,
             deployment: req.deployment,

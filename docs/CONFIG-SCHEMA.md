@@ -85,6 +85,7 @@ needs to change:
 | `server.h2c` | protocol coverage | `false` |
 | `server.tls` | TLS termination | absent |
 | `server.trusted_proxies` | forwarded-header trust | trusts nobody |
+| `server.trusted_proxies.host` | believing a trusted proxy's public host | `none` |
 | `origin.tls`, `origin.http_version` | origin protocol | absent / `http1` |
 | `spool.*` | the response spool | disabled |
 | `upgrade.*` | WebSocket/Upgrade | disabled, `501` when off |
@@ -123,6 +124,12 @@ Two of those are worth acting on rather than merely noting:
   configured backend is unknown until it completes the configured
   `healthy_after` success streak; readiness does not optimistically report it
   healthy during startup.
+- **`server.trusted_proxies.host` is `none` by default**, unlike `client_ip`
+  and `scheme`. With `none` the origin's `X-Forwarded-Host` is the request's
+  own `Host`; set `x_forwarded` or `forwarded` only when every trusted proxy
+  overwrites that header, typically because it rewrites `Host`. A believed host
+  enters the cache key. See
+  [forwarded headers](./OPERATIONS.md#forwarded-headers).
 - **Inbound trace context is ignored by default.** Opt into
   `from_trusted_proxies` only when every trusted proxy strips or replaces
   client-supplied `traceparent` and `tracestate`.

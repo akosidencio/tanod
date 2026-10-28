@@ -102,6 +102,22 @@ said otherwise, and is normalised to one of two values for everyone.
 `bench/forwarded.sh` (seven invented scheme values against one URL must produce
 one origin render).
 
+**C4a — Every URL-shaping header the origin receives is a function of the
+key.**
+`X-Forwarded-Proto`, `-Host` and `-Port` are restated from the scheme, the
+authority and, only when `trusted_proxies.host` is enabled and the peer is
+trusted, a validated forwarded host, which then enters the key as the
+`~forwarded-host` variant. URL-shaping aliases Tanod does not interpret
+(`X-Forwarded-Prefix`, `X-Original-URL`, ...) are removed.
+*Where:* `proxy::apply_forwarding`, `net/forwarded.rs`, `cache::key::KeyBuilder`.
+*Already asserted by:* unit tests, a proptest and the `forwarded` fuzz target
+(a believed host is always a normalised authority), `bench/forwarded.sh`
+(`/reflect`: a forged host cannot reach a shared body), and
+`bench/nextjs-forwarded.sh` against a real Next.js server.
+*Known history:* before Phase 2 an untrusted client's `X-Forwarded-Host` passed
+through to the origin unkeyed, and a cacheable page built from it was stored
+and served to the next visitor.
+
 **C5 — The authority always reaches the key, over either protocol version.**
 *Where:* `proxy::request_host`.
 *Known history:* it did not, over HTTP/2. There is no `Host` header in h2; the

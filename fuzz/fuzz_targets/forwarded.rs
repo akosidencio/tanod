@@ -15,7 +15,9 @@
 //! * the resolved scheme is always `http` or `https`, because it is a cache
 //!   key component and anything else hands an attacker an unbounded key space
 //!   — a fresh origin render per invented scheme string;
-//! * an untrusted peer never moves the answer, whatever it sends.
+//! * an untrusted peer never moves the answer, whatever it sends;
+//! * a believed public host is a plain, lowercased authority, because the
+//!   origin builds URLs from it and it enters the cache key.
 
 use tanod::config::schema::{ForwardedSource, TrustedProxies};
 use tanod::net::forwarded::{ListenerScheme, TrustPolicy};
@@ -25,6 +27,7 @@ use libfuzzer_sys::fuzz_target;
 struct Input {
     x_forwarded_for: String,
     x_forwarded_proto: String,
+    x_forwarded_host: String,
     forwarded: String,
     /// Which header family the policy is configured to read.
     use_rfc7239: bool,
@@ -43,6 +46,7 @@ fuzz_target!(|input: Input| {
         from: vec!["10.0.0.0/8".into()],
         client_ip: source,
         scheme: source,
+        host: source,
     })
     .expect("a fixed, valid trust block");
 
@@ -50,6 +54,7 @@ fuzz_target!(|input: Input| {
     for (name, value) in [
         ("x-forwarded-for", &input.x_forwarded_for),
         ("x-forwarded-proto", &input.x_forwarded_proto),
+        ("x-forwarded-host", &input.x_forwarded_host),
         ("forwarded", &input.forwarded),
     ] {
         // Only values `http` itself accepts can reach the proxy, so only those
@@ -87,6 +92,15 @@ fuzz_target!(|input: Input| {
         assert!(!facts.peer_trusted);
         assert_eq!(facts.client_ip, Some(peer));
         assert_eq!(facts.scheme, listener.as_str());
+        assert_eq!(facts.forwarded_host, None);
+    }
+
+    if let Some(host) = &facts.forwarded_host {
+        assert_eq!(
+            tanod::net::forwarded::normalize_authority(host).as_deref(),
+            Some(host.as_str()),
+            "a believed host is not a normalised authority"
+        );
     }
 
     // Resolution is a pure function of its inputs: the same request must not

@@ -218,10 +218,15 @@ pub static LIMIT: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     .expect("metric registration")
 });
 
+/// Units of origin work held by permits, weighted by route `weight`.
+///
+/// Counted at the permits rather than derived from the limiter's free
+/// capacity, so it can exceed `tanod_concurrency_limit` while a lowered limit
+/// drains: that is work genuinely still at the origin.
 pub static IN_FLIGHT: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec!(
         "tanod_origin_in_flight",
-        "Origin requests currently holding a permit",
+        "Units of origin work currently holding a permit, weighted by route weight; can exceed the limit while a lowered limit drains",
         &["limiter"]
     )
     .expect("metric registration")
@@ -495,6 +500,24 @@ pub static CACHE_EVICTED: LazyLock<IntCounter> = LazyLock::new(|| {
     .expect("metric registration")
 });
 
+/// What the cache did when its byte budget ran out. Three outcomes, by how
+/// far a response had got when it happened:
+///
+/// * `uncached_fallback` — no fill could be registered; the response was
+///   served straight from the origin and not cached.
+/// * `fill_abandoned` — the budget ran out mid-body; the response finished
+///   streaming from the bounded headroom and was not stored.
+/// * `memory_exhausted` — the headroom ran out as well; the response was
+///   aborted, never delivered short as if complete.
+pub static CACHE_MEMORY_PRESSURE: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "tanod_cache_memory_pressure_total",
+        "Responses affected by an exhausted cache budget, by outcome",
+        &["outcome"]
+    )
+    .expect("metric registration")
+});
+
 /// Completed fills rejected by the optional cache admission policy.
 pub static CACHE_ADMISSION_REJECTED: LazyLock<IntCounter> = LazyLock::new(|| {
     register_int_counter!(
@@ -564,6 +587,9 @@ pub fn preregister() {
     LazyLock::force(&CACHE_PURGED);
     LazyLock::force(&CACHE_EVICTED);
     LazyLock::force(&CACHE_ADMISSION_REJECTED);
+    for outcome in ["uncached_fallback", "fill_abandoned", "memory_exhausted"] {
+        CACHE_MEMORY_PRESSURE.with_label_values(&[outcome]);
+    }
     LazyLock::force(&CACHE_TAGS);
 }
 
