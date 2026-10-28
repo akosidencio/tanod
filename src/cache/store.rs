@@ -108,10 +108,189 @@ impl Written {
     }
 }
 
+/// The most one `read_body` call returns, from a finished entry or a fill.
+///
+/// Pingora writes each returned chunk downstream as one write, and
+/// `timeouts.downstream_write` bounds each write, so this is also what a slow
+/// reader has to accept within that timeout. Unchanged from when bodies were
+/// copied out in slices of this size.
+const READ_CHUNK: usize = 64 * 1024;
+
+/// A body write at least this large is kept as its own immutable segment.
+/// Smaller writes accumulate until they reach it, so a stream of tiny chunks
+/// costs one segment per this many bytes rather than one per write.
+const SEAL_AT: usize = 4 * 1024;
+
+/// The body of a fill in progress.
+///
+/// Readers — the leader's own response and every coalesced follower — share
+/// sealed segments by reference count rather than copying them. Only the
+/// unsealed tail, under [`SEAL_AT`] bytes, is copied out, so following a fill
+/// costs no more than a few kilobytes of copying per reader however large the
+/// body.
+///
+/// Append-only: a segment never changes or moves once sealed, which is what
+/// lets a reader keep its position as a segment index across calls.
+#[derive(Default)]
+struct FillBody {
+    sealed: Vec<Bytes>,
+    sealed_len: usize,
+    /// Writes not yet sealed, fewer than [`SEAL_AT`] bytes.
+    open: Vec<u8>,
+}
+
+/// A reader's position in a body: a byte offset, plus the segment that holds
+/// it so a read does not rescan from the start.
+#[derive(Default)]
+struct Cursor {
+    offset: usize,
+    segment: usize,
+    segment_start: usize,
+}
+
+impl Cursor {
+    fn at(offset: usize) -> Self {
+        Cursor {
+            offset,
+            ..Cursor::default()
+        }
+    }
+
+    /// Up to `limit` bytes from the sealed segments at this position, without
+    /// copying, or `None` once the position is past every sealed segment.
+    fn slice(&mut self, segments: &[Bytes], limit: usize) -> Option<Bytes> {
+        while let Some(segment) = segments.get(self.segment) {
+            let from = self.offset.checked_sub(self.segment_start)?;
+            if from < segment.len() {
+                let chunk = segment.slice(from..segment.len().min(from + limit));
+                self.offset += chunk.len();
+                return Some(chunk);
+            }
+            self.segment_start += segment.len();
+            self.segment += 1;
+        }
+        None
+    }
+}
+
+impl FillBody {
+    fn len(&self) -> usize {
+        self.sealed_len + self.open.len()
+    }
+
+    /// Append one write. `owned` is `data` already copied into its own exact
+    /// allocation — done by the caller before taking the body lock — when the
+    /// write is large enough to become a segment by itself.
+    ///
+    /// Always a copy, never the caller's `Bytes`: an upstream chunk can be a
+    /// slice of a larger receive buffer (HTTP/2 frames are), and retaining it
+    /// would keep that whole buffer alive behind a few accounted bytes.
+    fn append(&mut self, data: &[u8], owned: Option<Bytes>) {
+        match owned {
+            Some(segment) => {
+                self.seal_open();
+                self.sealed_len += segment.len();
+                self.sealed.push(segment);
+            }
+            None => {
+                self.open.extend_from_slice(data);
+                if self.open.len() >= SEAL_AT {
+                    self.seal_open();
+                }
+            }
+        }
+    }
+
+    fn seal_open(&mut self) {
+        if self.open.is_empty() {
+            return;
+        }
+        let segment = Bytes::copy_from_slice(&self.open);
+        self.open.clear();
+        self.sealed_len += segment.len();
+        self.sealed.push(segment);
+    }
+
+    /// The next chunk at `cursor`, ending no later than `available`: what the
+    /// writer had published when the reader looked. Sealed bytes are shared;
+    /// tail bytes are copied.
+    fn read(&self, cursor: &mut Cursor, available: usize) -> Option<Bytes> {
+        let available = available.min(self.len());
+        if cursor.offset >= available {
+            return None;
+        }
+        let limit = READ_CHUNK.min(available - cursor.offset);
+        if let Some(chunk) = cursor.slice(&self.sealed, limit) {
+            return Some(chunk);
+        }
+        let from = cursor.offset.checked_sub(self.sealed_len)?;
+        let tail = self.open.get(from..from + limit)?;
+        cursor.offset += tail.len();
+        Some(Bytes::copy_from_slice(tail))
+    }
+
+    /// The finished body, for storage. Seals the tail first; followers still
+    /// reading this fill keep their positions, because sealing moves bytes
+    /// from the tail into a segment without changing any offset.
+    ///
+    /// A body whose segments would make a hit take more downstream writes
+    /// than a contiguous body is compacted into [`READ_CHUNK`]-sized segments,
+    /// once, here. One copy per fill buys every later hit the fewest writes:
+    /// a 16 KiB page that arrived in two upstream reads is otherwise two
+    /// writes on every hit, which measured slower than the copy it saves. A
+    /// body already laid out for the fewest writes is shared with no copy.
+    fn freeze(&mut self) -> Frozen {
+        self.seal_open();
+        let len = self.sealed_len;
+        let fewest = len.div_ceil(READ_CHUNK);
+        let writes: usize = self
+            .sealed
+            .iter()
+            .map(|s| s.len().div_ceil(READ_CHUNK))
+            .sum();
+        if writes <= fewest {
+            return Frozen {
+                segments: self.sealed.clone(),
+                len,
+            };
+        }
+        let mut segments = Vec::with_capacity(fewest);
+        let mut remaining = len;
+        // Never a zero capacity: the copy below advances by the room left.
+        let mut current = Vec::with_capacity(READ_CHUNK.min(remaining).max(1));
+        for segment in &self.sealed {
+            let mut rest = segment.as_ref();
+            while !rest.is_empty() {
+                let take = (current.capacity() - current.len()).min(rest.len());
+                let (head, tail) = rest.split_at(take);
+                current.extend_from_slice(head);
+                rest = tail;
+                if current.len() == current.capacity() {
+                    remaining = remaining.saturating_sub(current.len());
+                    segments.push(Bytes::from(std::mem::replace(
+                        &mut current,
+                        Vec::with_capacity(READ_CHUNK.min(remaining).max(1)),
+                    )));
+                }
+            }
+        }
+        if !current.is_empty() {
+            segments.push(Bytes::from(current));
+        }
+        Frozen { segments, len }
+    }
+}
+
+/// A finished body. Immutable, so hits read it with no lock at all.
+struct Frozen {
+    segments: Vec<Bytes>,
+    len: usize,
+}
+
 /// A finished entry.
 struct Stored {
-    meta: BinaryMeta,
-    body: Arc<RwLock<Vec<u8>>>,
+    meta: Arc<BinaryMeta>,
+    body: Arc<Frozen>,
     /// The request path this entry answers, so it can be purged by path.
     ///
     /// Empty when the path was too long to remember; see
@@ -131,8 +310,10 @@ struct Stored {
     /// here. A relaxed store is enough — losing one bit under contention costs
     /// an entry one extra chance, not correctness.
     visited: AtomicBool,
-    /// TinyUFO's revision distinguishes replacements from retired queue
-    /// records; the shared hash avoids allocating a lookup key on every hit.
+    /// Distinguishes this admission from earlier ones under the same key, so
+    /// a retired queue record cannot evict a replacement: TinyUFO's policy
+    /// revision, or under CLOCK and FIFO the [`EvictionQueue`] ticket. The
+    /// shared hash avoids allocating a lookup key on every TinyUFO hit.
     revision: u64,
     tiny_hash: Option<Arc<str>>,
 }
@@ -141,7 +322,7 @@ impl Stored {
     fn size(&self) -> usize {
         self.meta.0.len()
             + self.meta.1.len()
-            + self.body.read().len()
+            + self.body.len
             + self.path.len()
             + self.tags.iter().map(String::len).sum::<usize>()
     }
@@ -149,8 +330,8 @@ impl Stored {
 
 /// A write in progress. Readers attach to this and follow it.
 struct Temp {
-    meta: BinaryMeta,
-    body: Arc<RwLock<Vec<u8>>>,
+    meta: Arc<BinaryMeta>,
+    body: Arc<RwLock<FillBody>>,
     written: Arc<watch::Sender<Written>>,
     transient: bool,
     tags: Vec<String>,
@@ -170,8 +351,8 @@ impl Temp {
     fn new(meta: BinaryMeta, transient: bool, tags: Vec<String>, path: String) -> Self {
         let (tx, rx) = watch::channel(Written::Partial(0));
         Temp {
-            meta,
-            body: Arc::new(RwLock::new(Vec::new())),
+            meta: Arc::new(meta),
+            body: Arc::new(RwLock::new(FillBody::default())),
             written: Arc::new(tx),
             transient,
             tags,
@@ -227,7 +408,7 @@ pub struct BoundedStore {
     /// Eviction queue. Front is the next candidate; under
     /// [`Eviction::Clock`] an entry that has been read gets requeued at the
     /// back instead of being discarded.
-    order: RwLock<VecDeque<String>>,
+    order: RwLock<EvictionQueue>,
     /// Reverse index from invalidation tag to the entries carrying it.
     ///
     /// A reverse index rather than a scan because purging is the operation an
@@ -295,7 +476,7 @@ impl BoundedStore {
         Box::leak(Box::new(BoundedStore {
             lifecycle: RwLock::new(None),
             cached: RwLock::new(HashMap::new()),
-            order: RwLock::new(VecDeque::new()),
+            order: RwLock::new(EvictionQueue::default()),
             tag_index: RwLock::new(HashMap::new()),
             temp: RwLock::new(HashMap::new()),
             used: Mutex::new(0),
@@ -409,6 +590,11 @@ impl BoundedStore {
     /// `tag_index` → `tiny`, skipping unused locks. Lookup takes only cache
     /// and policy read locks. Never acquire the cache map after the policy
     /// lock: readers and eviction must observe the same entry identity.
+    ///
+    /// A reservation that fits without evicting takes `used` alone. The map
+    /// locks are only for choosing and removing victims, and taking them for
+    /// every body chunk of every fill made each chunk wait out — and block —
+    /// every concurrent lookup's read of the cache map.
     fn reserve_fill(&self, additional: usize, budget: bool, headroom: bool) -> Grant {
         let mut used = self.used.lock();
         let pinned = self.pinned.load(Ordering::Relaxed);
@@ -423,6 +609,14 @@ impl BoundedStore {
         } else {
             return Grant::Refused;
         };
+        // Exactly what the eviction loop below would conclude after zero
+        // iterations; `used` is held throughout, so nothing can change it in
+        // between.
+        if used.saturating_add(additional) <= cap {
+            *used += additional;
+            self.pinned.fetch_add(additional, Ordering::Relaxed);
+            return grant;
+        }
         let mut cached = self.cached.write();
         let mut order = self.order.write();
         let mut tag_index = self.tag_index.write();
@@ -433,7 +627,7 @@ impl BoundedStore {
         // taken in FIFO order, which is the correct degradation: if everything
         // is hot, arrival order is as good a tiebreak as any.
         let mut chances = match self.policy {
-            Eviction::Clock => order.len().saturating_add(1),
+            Eviction::Clock => order.records.len().saturating_add(1),
             Eviction::Fifo | Eviction::Tinyufo => 0,
         };
         let mut tiny = self.tiny.as_ref().map(|policy| policy.write());
@@ -447,16 +641,17 @@ impl BoundedStore {
                 Self::compact(policy, &cached);
                 continue;
             }
-            let Some(victim) = order.pop_front() else {
+            let Some((victim, ticket)) = order.records.pop_front() else {
                 return Grant::Refused;
             };
-            let spared = chances > 0
-                && cached
-                    .get(&victim)
-                    .is_some_and(|entry| entry.visited.swap(false, Ordering::Relaxed));
-            if spared {
+            // A record whose entry was replaced or purged since it was queued
+            // is retired here rather than searched for at the time.
+            let Some(entry) = cached.get(&victim).filter(|entry| entry.revision == ticket) else {
+                continue;
+            };
+            if chances > 0 && entry.visited.swap(false, Ordering::Relaxed) {
                 chances -= 1;
-                order.push_back(victim);
+                order.records.push_back((victim, ticket));
                 continue;
             }
             if let Some(entry) = cached.remove(&victim) {
@@ -498,11 +693,13 @@ impl BoundedStore {
         if let Some(old) = cached.remove(&key) {
             *used = used.saturating_sub(old.size());
             unindex_tags(&mut tag_index, &key, &old.tags);
+            // Under CLOCK and FIFO the old entry's queue record is left to be
+            // retired when it reaches the front: removing it here meant a
+            // scan of the whole queue, under every cache write lock, on every
+            // replacement — every expiry of a microcached page.
             if let Some(policy) = tiny.as_mut() {
                 policy.remove(&key, old.revision);
                 policy.invalidate();
-            } else {
-                order.retain(|existing| existing != &key);
             }
         }
         if let Some(policy) = tiny.as_mut() {
@@ -526,14 +723,18 @@ impl BoundedStore {
                 .or_default()
                 .insert(key.clone());
         }
-        cached.insert(key.clone(), obj);
+        if tiny.is_none() {
+            obj.revision = order.ticket();
+            order.records.push_back((key.clone(), obj.revision));
+        }
+        cached.insert(key, obj);
         let pinned = self.pinned.load(Ordering::Relaxed);
         self.pinned
             .store(pinned.saturating_sub(accounted), Ordering::Relaxed);
         if let Some(policy) = tiny.as_mut() {
             Self::compact(policy, &cached);
         } else {
-            order.push_back(key);
+            order.compact_if_needed(&cached);
         }
         None
     }
@@ -717,12 +918,41 @@ impl BoundedStore {
             Self::compact(policy, &cached);
         }
         if !doomed.is_empty() {
-            let removed: HashSet<&String> = doomed.iter().collect();
-            order.retain(|key| !removed.contains(key));
+            order.compact_if_needed(&cached);
             self.purged
                 .fetch_add(purged.entries as u64, Ordering::Relaxed);
         }
         purged
+    }
+
+    /// A hit on a finished entry, if there is one. The caller holds the
+    /// read side of `lifecycle`.
+    ///
+    /// Recording the read here rather than in the hit handler is deliberate:
+    /// this is the point at which the entry demonstrably had value, whether
+    /// or not the client goes on to read the whole body.
+    fn completed(&self, hash: &str) -> Result<Option<(CacheMeta, HitHandler)>> {
+        let found = {
+            let cached = self.cached.read();
+            cached.get(hash).map(|obj| {
+                obj.visited.store(true, Ordering::Relaxed);
+                if let (Some(policy), Some(hash)) = (&self.tiny, &obj.tiny_hash) {
+                    policy.read().hit(hash, obj.revision);
+                }
+                (obj.meta.clone(), obj.body.clone())
+            })
+        };
+        let Some((meta, body)) = found else {
+            return Ok(None);
+        };
+        let meta = CacheMeta::deserialize(&meta.0, &meta.1)?;
+        Ok(Some((
+            meta,
+            Box::new(CompleteHit {
+                body,
+                cursor: Cursor::default(),
+            }),
+        )))
     }
 
     /// Stop new readers attaching to one fill. Its existing readers keep
@@ -745,6 +975,42 @@ impl BoundedStore {
             temp.remove(key);
         }
         removed
+    }
+}
+
+/// The CLOCK/FIFO eviction queue: one record per stored entry, plus records
+/// for entries since replaced or purged, which are skipped when they reach
+/// the front.
+///
+/// A record names its entry by key and ticket. The ticket is the entry's
+/// `revision`, unique per admission, so a replacement under the same key is
+/// never mistaken for the entry an older record was queued for. Victims are
+/// chosen in exactly the order an eagerly cleaned queue would give.
+#[derive(Default)]
+struct EvictionQueue {
+    records: VecDeque<(String, u64)>,
+    next_ticket: u64,
+}
+
+impl EvictionQueue {
+    fn ticket(&mut self) -> u64 {
+        self.next_ticket = self.next_ticket.wrapping_add(1);
+        self.next_ticket
+    }
+
+    /// Drop retired records once they outnumber live entries, so a cache
+    /// that is replaced or purged faster than it evicts cannot grow its queue
+    /// without bound. Amortized: each rebuild is paid for by the retirements
+    /// that made it necessary.
+    fn compact_if_needed(&mut self, cached: &HashMap<String, Stored>) {
+        if self.records.len() <= cached.len().saturating_mul(2).saturating_add(64) {
+            return;
+        }
+        self.records.retain(|(key, ticket)| {
+            cached
+                .get(key)
+                .is_some_and(|entry| entry.revision == *ticket)
+        });
     }
 }
 
@@ -777,22 +1043,8 @@ impl Storage for BoundedStore {
         let _lifecycle = self.lifecycle.read();
         let hash = key.combined();
 
-        // Recording the read here rather than in the hit handler is
-        // deliberate: this is the point at which the entry demonstrably had
-        // value, whether or not the client goes on to read the whole body.
-        let found = {
-            let cached = self.cached.read();
-            cached.get(&hash).map(|obj| {
-                obj.visited.store(true, Ordering::Relaxed);
-                if let (Some(policy), Some(hash)) = (&self.tiny, &obj.tiny_hash) {
-                    policy.read().hit(hash, obj.revision);
-                }
-                (obj.meta.clone(), obj.body.clone())
-            })
-        };
-        if let Some((meta, body)) = found {
-            let meta = CacheMeta::deserialize(&meta.0, &meta.1)?;
-            return Ok(Some((meta, Box::new(CompleteHit { body, read: 0 }))));
+        if let Some(hit) = self.completed(&hash)? {
+            return Ok(Some(hit));
         }
 
         // Nothing finished — but a write may be in progress, and this is the
@@ -822,7 +1074,14 @@ impl Storage for BoundedStore {
             })
         };
         let Some((meta, body, written)) = partial else {
-            return Ok(None);
+            // Completion does not exclude lookups: it admits the entry to
+            // `cached` and only then removes the fill from `temp`. A lookup
+            // can therefore miss `cached` just before the admission and miss
+            // `temp` just after the removal. Missing `temp` means any such
+            // completion has already admitted, so a second look at `cached`
+            // finds the entry unless it was genuinely evicted or purged. Only
+            // a full miss pays for it.
+            return self.completed(&hash);
         };
         let meta = CacheMeta::deserialize(&meta.0, &meta.1)?;
         Ok(Some((
@@ -830,7 +1089,7 @@ impl Storage for BoundedStore {
             Box::new(PartialHit {
                 body,
                 written,
-                read: 0,
+                cursor: Cursor::default(),
             }),
         )))
     }
@@ -884,7 +1143,7 @@ impl Storage for BoundedStore {
             Box::new(PartialHit {
                 body,
                 written,
-                read: 0,
+                cursor: Cursor::default(),
             }),
         )))
     }
@@ -1014,7 +1273,7 @@ impl Storage for BoundedStore {
                 .or_default()
                 .insert(hash.clone());
         }
-        obj.meta = replacement;
+        obj.meta = Arc::new(replacement);
         obj.tags = replacement_tags;
         let mut tiny = self.tiny.as_ref().map(|policy| policy.write());
         if let Some(policy) = tiny.as_mut() {
@@ -1038,24 +1297,16 @@ impl Storage for BoundedStore {
     }
 }
 
-/// Reads a finished entry.
+/// Reads a finished entry: slices of an immutable body, never a copy.
 struct CompleteHit {
-    body: Arc<RwLock<Vec<u8>>>,
-    read: usize,
+    body: Arc<Frozen>,
+    cursor: Cursor,
 }
 
 #[async_trait]
 impl HandleHit for CompleteHit {
     async fn read_body(&mut self) -> Result<Option<Bytes>> {
-        const CHUNK: usize = 64 * 1024;
-        let body = self.body.read();
-        if self.read >= body.len() {
-            return Ok(None);
-        }
-        let end = (self.read + CHUNK).min(body.len());
-        let chunk = Bytes::copy_from_slice(&body[self.read..end]);
-        self.read = end;
-        Ok(Some(chunk))
+        Ok(self.cursor.slice(&self.body.segments, READ_CHUNK))
     }
 
     async fn finish(
@@ -1072,7 +1323,7 @@ impl HandleHit for CompleteHit {
     }
 
     fn seek(&mut self, start: usize, _end: Option<usize>) -> Result<()> {
-        self.read = start.min(self.body.read().len());
+        self.cursor = Cursor::at(start.min(self.body.len));
         Ok(())
     }
 
@@ -1091,9 +1342,9 @@ impl HandleHit for CompleteHit {
 /// receives the leader's first chunk as soon as the leader produces it, rather
 /// than waiting for the whole render to finish.
 struct PartialHit {
-    body: Arc<RwLock<Vec<u8>>>,
+    body: Arc<RwLock<FillBody>>,
     written: watch::Receiver<Written>,
-    read: usize,
+    cursor: Cursor,
 }
 
 #[async_trait]
@@ -1101,12 +1352,10 @@ impl HandleHit for PartialHit {
     async fn read_body(&mut self) -> Result<Option<Bytes>> {
         loop {
             let state = *self.written.borrow_and_update();
-            let available = state.bytes();
-            if available > self.read {
-                // Copy out under the lock, then release it before awaiting.
-                let end = (self.read + 64 * 1024).min(available);
-                let chunk = Bytes::copy_from_slice(&self.body.read()[self.read..end]);
-                self.read = end;
+            // Taken and released before awaiting: the guard is held only
+            // while a segment is sliced or a tail of at most `SEAL_AT` bytes
+            // is copied.
+            if let Some(chunk) = self.body.read().read(&mut self.cursor, state.bytes()) {
                 return Ok(Some(chunk));
             }
             if state.done() {
@@ -1149,7 +1398,7 @@ struct FollowableMiss {
     store: &'static BoundedStore,
     key: String,
     id: U64WriteId,
-    body: Arc<RwLock<Vec<u8>>>,
+    body: Arc<RwLock<FillBody>>,
     written: Arc<watch::Sender<Written>>,
     accounted: usize,
     finished: bool,
@@ -1192,9 +1441,14 @@ impl HandleMiss for FollowableMiss {
             }
         }
         self.accounted += data.len();
-        let so_far = self.written.borrow().bytes();
-        self.body.write().extend_from_slice(&data);
-        let total = so_far + data.len();
+        // A chunk large enough to be its own segment is copied before the
+        // body lock is taken, so no reader waits on that copy.
+        let owned = (data.len() >= SEAL_AT).then(|| Bytes::copy_from_slice(&data));
+        let total = {
+            let mut body = self.body.write();
+            body.append(&data, owned);
+            body.len()
+        };
         self.written.send_replace(if eof {
             Written::Complete(total)
         } else {
@@ -1205,56 +1459,46 @@ impl HandleMiss for FollowableMiss {
 
     async fn finish(mut self: Box<Self>) -> Result<MissFinishType> {
         let id: u64 = self.id.into();
-        // Make sure any follower that has not drained yet sees the end.
-        let total = self.written.borrow().bytes();
-        self.written.send_replace(Written::Complete(total));
+        // Seal the body and make sure any follower that has not drained yet
+        // sees the end. Sealing moves no byte to a new offset, so followers
+        // keep their positions.
+        let frozen = self.body.write().freeze();
+        let size = frozen.len;
+        self.written.send_replace(Written::Complete(size));
 
-        // Completion atomically moves a fill into completed storage or its
-        // transient handoff. Lookups must not see the remove/reinsert gap,
-        // regardless of eviction policy. Hold this only for the transition;
-        // never while streaming bytes or awaiting work.
-        let active = self.store.lifecycle.write();
-        let mut temp = self
-            .store
-            .remove_temp(&self.key, id)
-            .ok_or_else(|| Error::explain(ErrorType::InternalError, "write vanished"))?;
-        let size = self.body.read().len();
-        self.finished = true;
-        // A finished writer no longer needs its unused leader reservation.
-        temp.leader = None;
-        let retired = temp.namespace.is_some() && *active != temp.namespace;
-        // An abandoned fill skips the transient handoff too: its bytes are
-        // over budget, and returning them now matters more than sparing a
-        // late follower a render.
-        if temp.invalidated || retired || self.abandoned {
-            self.store.release(self.accounted);
-            return Ok(MissFinishType::Created(size));
-        }
-        if temp.transient {
-            self.store
-                .temp
-                .write()
-                .entry(self.key.clone())
-                .or_default()
-                .insert(id, temp);
-            let store = self.store;
-            let key = self.key.clone();
-            let accounted = self.accounted;
-            tokio::spawn(async move {
-                tokio::time::sleep(TRANSIENT_HANDOFF).await;
-                if store.remove_temp(&key, id).is_some() {
-                    store.release(accounted);
-                }
-            });
-        } else {
-            let body = temp.body;
-            let rejected = self.store.admit(
-                self.key.clone(),
-                Stored {
-                    meta: temp.meta,
-                    body,
-                    tags: temp.tags,
-                    path: temp.path,
+        // The read side of `lifecycle` excludes purge and namespace
+        // retirement for the whole transition: a fill a purge has marked is
+        // never admitted, and a purge never sees one half admitted. Lookups
+        // share the read side and are not held up by it. They cannot observe
+        // a gap either: the fill stays attachable in `temp` until `cached`
+        // holds the entry, and a lookup that misses `temp` looks at `cached`
+        // again (see `lookup`). Hold this only for the transition; never
+        // while streaming bytes or awaiting work.
+        let active = self.store.lifecycle.read();
+        let completion = {
+            let mut temp = self.store.temp.write();
+            let Some(fill) = temp.get_mut(&self.key).and_then(|w| w.get_mut(&id)) else {
+                return Err(Error::explain(ErrorType::InternalError, "write vanished"));
+            };
+            // A finished writer no longer needs its unused leader reservation.
+            fill.leader = None;
+            let retired = fill.namespace.is_some() && *active != fill.namespace;
+            // An abandoned fill skips the transient handoff too: its bytes are
+            // over budget, and returning them now matters more than sparing a
+            // late follower a render.
+            if fill.invalidated || retired || self.abandoned {
+                Completion::Discard
+            } else if fill.transient {
+                Completion::Handoff
+            } else {
+                // Purge cannot read this fill's tags or path while `lifecycle`
+                // is held, so the entry can take them; a rejection below puts
+                // them back.
+                Completion::Admit(Stored {
+                    meta: fill.meta.clone(),
+                    body: Arc::new(frozen),
+                    tags: std::mem::take(&mut fill.tags),
+                    path: std::mem::take(&mut fill.path),
                     // A freshly stored entry starts unvisited. The request
                     // that filled it does not count as a read: one arrival is
                     // exactly the evidence FIFO already has, and crediting it
@@ -1263,45 +1507,74 @@ impl HandleMiss for FollowableMiss {
                     visited: AtomicBool::new(false),
                     revision: 0,
                     tiny_hash: None,
-                },
-                self.accounted,
-            );
-            if let Some(obj) = rejected {
-                self.store
-                    .temp
-                    .write()
-                    .entry(self.key.clone())
-                    .or_default()
-                    .insert(
-                        id,
-                        Temp {
-                            meta: obj.meta,
-                            body: obj.body,
-                            written: self.written.clone(),
-                            transient: true,
-                            tags: obj.tags,
-                            path: obj.path,
-                            invalidated: false,
-                            namespace: temp.namespace,
-                            leader: None,
-                        },
-                    );
-                let store = self.store;
-                let key = self.key.clone();
-                let accounted = self.accounted;
-                tokio::spawn(async move {
-                    tokio::time::sleep(TRANSIENT_HANDOFF).await;
-                    if store.remove_temp(&key, id).is_some() {
-                        store.release(accounted);
+                })
+            }
+        };
+        self.finished = true;
+        match completion {
+            Completion::Discard => {
+                self.store.remove_temp(&self.key, id);
+                self.store.release(self.accounted);
+            }
+            // Already in `temp`, where the late followers look for it.
+            Completion::Handoff => self.schedule_handoff(id),
+            Completion::Admit(stored) => {
+                match self.store.admit(self.key.clone(), stored, self.accounted) {
+                    None => {
+                        self.store.remove_temp(&self.key, id);
                     }
-                });
+                    // TinyUFO declined it. What is already streaming finishes
+                    // from the fill, which becomes a transient handoff and
+                    // keeps its bytes reserved until the handoff ends.
+                    Some(rejected) => {
+                        if let Some(fill) = self
+                            .store
+                            .temp
+                            .write()
+                            .get_mut(&self.key)
+                            .and_then(|w| w.get_mut(&id))
+                        {
+                            fill.transient = true;
+                            fill.tags = rejected.tags;
+                            fill.path = rejected.path;
+                        }
+                        self.schedule_handoff(id);
+                    }
+                }
             }
         }
+        drop(active);
         Ok(MissFinishType::Created(size))
     }
 
     fn streaming_write_tag(&self) -> Option<&[u8]> {
         Some(self.id.as_bytes())
+    }
+}
+
+/// What finishing a fill does with it.
+enum Completion {
+    /// Purged, retired or abandoned: never stored, reservation released now.
+    Discard,
+    /// Transient: kept briefly for the cache-lock waiters already woken.
+    Handoff,
+    Admit(Stored),
+}
+
+impl FollowableMiss {
+    /// Keep a finished fill attachable for [`TRANSIENT_HANDOFF`], then
+    /// release it. Its reservation is returned by whichever of this timer or
+    /// a competing removal takes the fill out of `temp`.
+    fn schedule_handoff(&self, id: u64) {
+        let store = self.store;
+        let key = self.key.clone();
+        let accounted = self.accounted;
+        tokio::spawn(async move {
+            tokio::time::sleep(TRANSIENT_HANDOFF).await;
+            if store.remove_temp(&key, id).is_some() {
+                store.release(accounted);
+            }
+        });
     }
 }
 
@@ -1324,6 +1597,10 @@ mod phase1_tests;
 #[cfg(test)]
 #[path = "store_phase2_tests.rs"]
 mod phase2_tests;
+
+#[cfg(test)]
+#[path = "store_phase3_tests.rs"]
+mod phase3_tests;
 
 #[cfg(test)]
 mod tests {

@@ -80,6 +80,16 @@ pub struct Server {
     /// classification and cache keying both read.
     #[serde(default)]
     pub h2c: bool,
+    /// Worker threads serving the proxy listeners.
+    ///
+    /// Absent means one per CPU this process may use, which on Linux honours
+    /// a container's CPU quota as well as its cpuset. Pingora's own default,
+    /// which Tanod inherited until this key existed, is one thread for the
+    /// whole proxy: every request then shares a single core however many the
+    /// host has, and throughput stops at what that core can do. Set it lower
+    /// to leave cores to an origin on the same host.
+    #[serde(default)]
+    pub threads: Option<usize>,
     /// Terminate TLS here rather than in front of Tanod.
     #[serde(default)]
     pub tls: Option<ServerTls>,
@@ -97,6 +107,7 @@ impl Default for Server {
         Server {
             listen: default_listen(),
             h2c: false,
+            threads: None,
             tls: None,
             trusted_proxies: TrustedProxies::default(),
             graceful: Graceful::default(),
@@ -185,6 +196,15 @@ fn default_upgrade_socket() -> String {
 
 fn default_listen() -> String {
     "0.0.0.0:8080".into()
+}
+
+impl Server {
+    /// The worker thread count the proxy actually runs with.
+    pub fn effective_threads(&self) -> usize {
+        self.threads.unwrap_or_else(|| {
+            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

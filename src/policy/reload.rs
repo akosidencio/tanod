@@ -157,6 +157,14 @@ impl Reloader {
                     .to_string(),
             );
         }
+        if cfg.server.threads != current.config.server.threads {
+            return Err(
+                "server.threads changed; the proxy's worker threads are started once with the \
+                 process, so a reload would report success while the old count stayed in force; \
+                 that needs a restart (SIGQUIT performs a graceful upgrade)"
+                    .to_string(),
+            );
+        }
         if cfg.server.h2c != current.config.server.h2c
             || cfg.server.tls != current.config.server.tls
         {
@@ -469,6 +477,24 @@ routes:
         let (path, reloader, _policy) = setup(BASE);
         std::fs::write(&path.0, BASE.replace("127.0.0.1:8080", "127.0.0.1:9999")).unwrap();
         let err = reloader.reload().unwrap_err();
+        assert!(err.contains("needs a restart"), "{err}");
+    }
+
+    /// The proxy's runtime is built once; a reload cannot resize it, so it
+    /// must say so rather than report success.
+    #[test]
+    fn changing_worker_threads_is_refused_with_an_explanation() {
+        let (path, reloader, _policy) = setup(BASE);
+        std::fs::write(
+            &path.0,
+            BASE.replace(
+                "  listen: \"127.0.0.1:8080\"",
+                "  listen: \"127.0.0.1:8080\"\n  threads: 2",
+            ),
+        )
+        .unwrap();
+        let err = reloader.reload().unwrap_err();
+        assert!(err.contains("server.threads"), "{err}");
         assert!(err.contains("needs a restart"), "{err}");
     }
 

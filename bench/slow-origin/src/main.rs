@@ -28,6 +28,14 @@
 //!   active health check can express. Renders are still counted while failing,
 //!   so a benchmark can prove traffic stopped arriving rather than inferring
 //!   it from the proxy's own metrics.
+//! * `GET .../size/<bytes>` — an ordinary render whose body is exactly that
+//!   many bytes, wherever the segment appears in the path, so the performance
+//!   scenarios can sweep body sizes under any route prefix.
+//!
+//! `SLOW_ORIGIN_SLOTS=<n>` bounds how many renders run at once; the rest wait
+//! for a slot, the way requests queue behind a saturated SSR server's event
+//! loop. Unset, every render runs concurrently, as it always has.
+//!
 //! * `GET /reflect/<n>` — a cacheable page whose body contains an absolute URL
 //!   built from `X-Forwarded-Proto` and `X-Forwarded-Host`, the way an SSR
 //!   framework builds canonical links and redirects. If any header that
@@ -60,6 +68,14 @@ async fn main() -> std::io::Result<()> {
     let port: u16 = args.next().and_then(|s| s.parse().ok()).unwrap_or(3000);
     let render_ms: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(200);
 
+    // Bounded render work, for the overload scenarios in bench/perf.sh. A slot
+    // is held for the render delay only, never for transport.
+    let slots: Option<Arc<tokio::sync::Semaphore>> = std::env::var("SLOW_ORIGIN_SLOTS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .filter(|n: &usize| *n > 0)
+        .map(|n| Arc::new(tokio::sync::Semaphore::new(n)));
+
     let stats = Arc::new(Stats {
         in_flight: AtomicUsize::new(0),
         peak: AtomicUsize::new(0),
@@ -89,6 +105,7 @@ async fn main() -> std::io::Result<()> {
         let (mut sock, _) = listener.accept().await?;
         let stats = stats.clone();
         let instance = instance.clone();
+        let slots = slots.clone();
         tokio::spawn(async move {
             let mut buf = [0u8; 8192];
             // One request per connection keeps the fixture honest and simple.
@@ -294,7 +311,13 @@ async fn main() -> std::io::Result<()> {
                 return;
             }
 
-            tokio::time::sleep(Duration::from_millis(render_ms)).await;
+            {
+                let _slot = match &slots {
+                    Some(slots) => slots.acquire().await.ok(),
+                    None => None,
+                };
+                tokio::time::sleep(Duration::from_millis(render_ms)).await;
+            }
 
             if path.starts_with("/reflect") {
                 let proto =
@@ -390,7 +413,9 @@ async fn main() -> std::io::Result<()> {
             // /big/<MiB> returns a body of that size, so a test can pick one
             // large enough to exceed the socket buffers between origin and
             // client and actually block the downstream write.
-            let body = if path.starts_with("/big") {
+            let body = if let Some(size) = sized_body(&path) {
+                "x".repeat(size)
+            } else if path.starts_with("/big") {
                 let mib: usize = tail_number(&path).unwrap_or(1);
                 let filler = "x".repeat(mib * 1024 * 1024);
                 format!("<html><body>rendered {path}{filler}</body></html>")
@@ -490,6 +515,13 @@ fn tail_number(path: &str) -> Option<usize> {
         .rsplit('/')
         .next()
         .and_then(|s| s.parse().ok())
+}
+
+/// The body size a `.../size/<bytes>` path asks for.
+fn sized_body(path: &str) -> Option<usize> {
+    let rest = &path[path.find("/size/")? + "/size/".len()..];
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    rest[..digits].parse().ok()
 }
 
 /// One request header's value, matched case-insensitively.

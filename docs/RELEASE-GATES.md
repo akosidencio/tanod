@@ -162,6 +162,23 @@ before — an audit once found seven wrong or dead claims in the README.
 
 ---
 
+## Performance measurement
+
+Measurement tools, not gates — see below for why throughput is never one.
+Each records the parameters, machine and binary that produced its numbers.
+
+| Tool | Measures | Notes |
+|---|---|---|
+| [`bench/perf.sh`](../bench/perf.sh) | Full-system throughput, latency percentiles, Tanod CPU per request and RSS, origin renders, for cache hits across concurrency and body size, misses, coalescing bursts of 10–1000, a configurable production mix ([`perf-mixed.mix`](../bench/perf-mixed.mix)), origin overload direct and through Tanod, forwarding overhead alone (`passthrough`), streaming with slow readers, and memory pressure | JSON lines under `benchmark-results/perf/<label>/`, plus `environment.json`. Pins Tanod, load and origin to separate CPUs on a six-CPU machine. Driven by [`bench/loadgen`](../bench/loadgen), a closed-loop HTTP/1.1 generator in the workspace |
+| [`bench/perf-ab.sh`](../bench/perf-ab.sh) | Two binaries, interleaved trial by trial, then [`perf-compare.py`](../bench/perf-compare.py) medians and spread | Interleaving is what makes a comparison survive a busy machine: drift lands on both sides |
+| [`bench/hotpath.rs`](../bench/hotpath.rs) | In-process microbenchmarks: store hits by body size and concurrency, fills under memory pressure, refills of stored keys, coalesced followers, route resolution for 5–1000 routes, cache-key construction, metadata decoding | `cargo bench --bench hotpath`; compare two builds with [`hotpath-compare.py`](../bench/hotpath-compare.py). Under `cargo test` each scenario runs a few iterations only |
+| [`bench/alloc.sh`](../bench/alloc.sh) | Heap allocations and bytes per request by request type, counted by valgrind DHAT | Deterministic, so it compares cleanly between builds on any machine |
+
+The short `perf.sh` scenarios fit a CI runner but are not run by CI: a shared
+runner's throughput is not evidence about the change under test.
+
+---
+
 ## What is deliberately *not* a gate
 
 Naming these is part of the point: a list of gates that quietly omits its
