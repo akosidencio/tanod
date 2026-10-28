@@ -20,6 +20,23 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 pub(crate) struct CacheNamespace(pub u64);
 
 impl CacheNamespace {
+    /// The Pingora key for `key` in this namespace: exactly
+    /// `key(key.canonical_string(), path)`, rendered into one buffer instead
+    /// of two.
+    pub(crate) fn key_for(self, key: &CacheKey, path: &str) -> pingora_cache::key::CacheKey {
+        use std::fmt::Write as _;
+        let mut primary = String::with_capacity(192);
+        // Writing to a `String` cannot fail.
+        let _ = write!(primary, "tanod-policy-v1:{}:", self.0);
+        key.write_canonical(&mut primary);
+        let mut key = pingora_cache::key::CacheKey::new(primary, path);
+        key.extensions.insert(self);
+        key
+    }
+
+    /// The same key from an already rendered canonical string. Tests use it
+    /// to state the encoding independently of [`key_for`](Self::key_for).
+    #[cfg(test)]
     pub(crate) fn key(self, canonical: String, path: &str) -> pingora_cache::key::CacheKey {
         // The fixed marker, decimal number and colon have unambiguous bounds.
         let mut key = pingora_cache::key::CacheKey::new(
@@ -87,10 +104,19 @@ impl CacheKey {
     /// input at all, which is what the property test asserts.
     pub fn canonical_string(&self) -> String {
         let mut out = String::with_capacity(160);
+        self.write_canonical(&mut out);
+        out
+    }
+
+    /// [`canonical_string`](Self::canonical_string), appended to `out`.
+    fn write_canonical(&self, out: &mut String) {
+        use std::fmt::Write as _;
         let mut push = |part: &str| {
             // The separators are kept as well: they cost nothing and keep a
-            // fingerprinted key readable when one turns up in a log.
-            out.push_str(&part.len().to_string());
+            // fingerprinted key readable when one turns up in a log. The
+            // length is formatted straight into the key, not through a
+            // temporary string per component.
+            let _ = write!(out, "{}", part.len());
             out.push('\u{1e}');
             out.push_str(part);
             out.push('\u{1f}');
@@ -123,7 +149,6 @@ impl CacheKey {
             push(name);
             push(value);
         }
-        out
     }
 }
 
@@ -147,10 +172,10 @@ impl<'a> KeyBuilder<'a> {
         let mut variant: Vec<(String, String)> = self
             .variant_headers
             .iter()
-            .filter_map(|name| {
-                let lower = name.to_ascii_lowercase();
-                header_values(req, &lower).map(|v| (lower, v))
-            })
+            // Header lookup is case-insensitive, so the lowercased name is
+            // only allocated for a header the request actually carries; most
+            // requests carry none of the framework's variant headers.
+            .filter_map(|name| header_values(req, name).map(|v| (name.to_ascii_lowercase(), v)))
             .collect();
 
         // Content coding is part of the identity of a stored body. Omit it and
@@ -522,6 +547,30 @@ mod tests {
         assert_ne!(
             canonical_query("flag", None),
             canonical_query("flag=", None)
+        );
+    }
+
+    /// The exact encoding, pinned: changing it moves every stored entry to a
+    /// new key, so it must never change as a side effect of how it is built.
+    #[test]
+    fn the_canonical_encoding_is_byte_for_byte_stable() {
+        let ctx = Ctx::new().with("rsc", "1").with("accept-encoding", "gzip");
+        let key = key("/p", Some("a=1"), &ctx, &["RSC"], Some("d1"));
+        let expected = "5\u{1e}https\u{1f}16\u{1e}shop.example.com\u{1f}3\u{1e}GET\u{1f}\
+                        2\u{1e}/p\u{1f}3\u{1e}a=1\u{1f}1\u{1e}d\u{1f}2\u{1e}d1\u{1f}\
+                        1\u{1e}2\u{1f}3\u{1e}rsc\u{1f}1\u{1e}1\u{1f}\
+                        9\u{1e}~encoding\u{1f}4\u{1e}gzip\u{1f}";
+        assert_eq!(key.canonical_string(), expected);
+        let pingora = CacheNamespace(7).key_for(&key, "/p");
+        assert_eq!(
+            pingora.primary_key_str(),
+            Some(format!("tanod-policy-v1:7:{expected}").as_str())
+        );
+        assert_eq!(
+            pingora_cache::key::CacheHashKey::combined(&pingora),
+            pingora_cache::key::CacheHashKey::combined(
+                &CacheNamespace(7).key(key.canonical_string(), "/p")
+            )
         );
     }
 

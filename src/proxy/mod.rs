@@ -792,14 +792,15 @@ impl ProxyHttp for Tanod {
     fn cache_key_callback(&self, session: &Session, ctx: &mut Ctx) -> Result<PingoraCacheKey> {
         let req = session.req_header();
         let host = request_host(req);
-        let path = req.uri.path().to_string();
-        let query = req.uri.query().map(str::to_string);
+        // Borrowed: unlike `request_filter`, nothing here needs the session
+        // mutably while the key is built.
+        let path = req.uri.path();
 
         let meta = RequestMetadata {
             method: &req.method,
             host: &host,
-            path: &path,
-            query: query.as_deref(),
+            path,
+            query: req.uri.query(),
             headers: &req.headers,
         };
 
@@ -830,7 +831,7 @@ impl ProxyHttp for Tanod {
         // sole authority on that, which the test below pins.
         Ok(
             crate::cache::key::CacheNamespace(ctx.policy.cache_namespace)
-                .key(key.canonical_string(), purgeable_path(&path)),
+                .key_for(&key, purgeable_path(path)),
         )
     }
 

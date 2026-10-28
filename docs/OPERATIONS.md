@@ -14,6 +14,7 @@ is named.
 - [systemd](#systemd)
 - [Kubernetes](#kubernetes)
 - [Reloading configuration](#reloading-configuration)
+- [Worker threads](#worker-threads)
 - [Sizing the queue](#sizing-the-queue)
 - [Tracing and correlation](#tracing-and-correlation)
 - [What to alert on](#what-to-alert-on)
@@ -526,6 +527,19 @@ Already attached readers can retain detached body Arcs after those bytes leave
 the logical cache budget; it is not a bound on process RSS or downstream socket
 buffers. Purging/reloading does not truncate those readers to reclaim memory.
 
+**How bodies are held.** A fill's body is kept as immutable segments: a write
+of 4 KiB or more becomes its own segment, and smaller writes accumulate until
+they reach 4 KiB. Every write is copied once into an exactly sized allocation,
+never kept as the upstream's buffer, which for HTTP/2 can be a slice of a
+larger receive buffer. A finished entry is read by sharing those segments, so
+a cache hit, the leader's own response and every coalesced follower are handed
+the stored bytes by reference rather than each receiving a copy; only a
+follower reading the still-unsealed tail of a fill (under 4 KiB) copies it. A
+body that arrived as many small writes is compacted into 64 KiB segments once,
+when the fill completes, so later hits write it downstream in as few writes as
+before. Each segment carries a few tens of bytes of bookkeeping beyond its
+accounted body bytes; the 4 KiB floor keeps that under 2% of the body.
+
 ### When the cache budget runs out
 
 A full cache must not fail a good origin response. What Tanod can do depends on
@@ -571,6 +585,34 @@ four cases through a real proxy.
 | `tanod_cache_purged_total{scope="all"}` rising | Somebody is purging everything, repeatedly. That is a stampede generator, not an invalidation strategy. |
 | `tanod_cache_evicted_total` rising while `tanod_cache_bytes` sits at its ceiling | The working set does not fit. More memory, a shorter TTL, or a narrower key. |
 | `tanod_cache_tags` growing without bound | The origin mints a tag per revision. The index is bounded by the entries pointing at it, but a tag per render means a tag index the size of the cache. |
+
+---
+
+## Worker threads
+
+`server.threads` sets how many worker threads serve the proxy listeners. The
+default is one per CPU the process may use: the process's CPU affinity
+(`taskset`, a Kubernetes static CPU policy) and, on Linux, a cgroup CPU quota
+(`resources.limits.cpu`) both lower it. Tanod prints the number it chose on
+startup: `tanod listening on 0.0.0.0:8080 (4 worker threads)`.
+
+Before the key existed the proxy ran on one thread whatever the host, so cache
+hits, coalesced followers and forwarding all shared one core. On a six-CPU
+machine with Tanod pinned to three of them, 1 KiB cache hits went from about
+22,000–24,000 requests per second on that one core to 44,000–58,000 with
+three threads at 32–512 connections, measured with
+[`bench/perf.sh`](../bench/perf.sh); see the
+[Phase 3 report](./PHASE3-PERFORMANCE-SCALABILITY.md). Several threads cost
+some CPU per request — 7–30% on small cache hits in that measurement — in
+exchange for using the cores at all.
+
+When the origin runs on the same host — `origin.command`, or a sidecar
+sharing a CPU limit — leave it the cores it needs: set `threads` to what Tanod
+should take, not to the host's count. A render-bound origin starved of CPU
+renders slower, which Tanod's admission then reads as a slower origin.
+`threads: 1` restores the old behaviour exactly. The admin and metrics
+listeners keep one thread each regardless. Changing `threads` needs a
+restart; a reload that changes it is refused.
 
 ---
 

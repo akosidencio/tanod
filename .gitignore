@@ -52,3 +52,6 @@ compatibility-results/
 docs/PHASE1-CACHE-CORRECTNESS.md
 docs/PHASE2-OPERATIONAL-HARDENING.md
 benchmark-results/
+# The Phase 3 report is published: the operations guide cites its measured
+# figures, and a claim the tree cannot show is not a claim it can support.
+!docs/PHASE3-PERFORMANCE-SCALABILITY.md

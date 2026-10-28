@@ -1,0 +1,13 @@
+[package]
+name = "loadgen"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# A closed-loop HTTP/1.1 load generator for the performance scenarios in
+# bench/perf.sh. Hand-rolled for the same reason as slow-origin: a benchmark
+# tool should not drag an HTTP client stack into the workspace, and none of
+# wrk, oha or h2load can be assumed on a contributor's machine or a CI runner.
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync"] }

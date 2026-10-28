@@ -1,0 +1,15 @@
+# The default traffic mix for `bench/perf.sh mixed`. One target per line:
+#   weight | path | Header: value | ...
+# `{n:K}` is a uniformly random integer below K; `{u}` is unique per request.
+# Override with PERF_MIX=<file> to model a different site.
+
+# 40% cacheable SSR documents over a 1000-page catalogue.
+40 | /products/{n:1000}/size/32768
+# 20% static assets and pre-rendered content.
+20 | /_next/static/chunks/{n:50}/size/8192
+# 20% authenticated, personalised pages: never shared.
+20 | /account/{n:100}/size/16384 | Cookie: session=perf-{n:100000}
+# 10% RSC payloads for the same catalogue (client navigations).
+10 | /products/{n:1000}/size/8192 | RSC: 1
+# 10% uncached dynamic requests.
+10 | /api/search/size/4096?q={u}
