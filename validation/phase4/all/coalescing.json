@@ -1,1 +1,0 @@
-{"benchmark":"coalescing","started_at":"2026-10-29T03:50:30Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"25c4bec","concurrency":"40","render_ms":"800"},"results":{"served":"40","origin_renders":"1"}}

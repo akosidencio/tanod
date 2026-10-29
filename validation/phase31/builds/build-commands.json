@@ -1,7 +1,0 @@
-{
-  "baseline": "cargo build --workspace --release --locked --bins --bench hotpath",
-  "candidate": "cargo build --workspace --release --locked --bins --bench hotpath",
-  "candidate-production": "cargo build --workspace --release --locked",
-  "root_features": "none for plain-HTTP benchmark binaries; development dependency features may be unified by benchmark target selection",
-  "tls_reproduction": "cargo build --release --locked --bin tanod --features tls"
-}

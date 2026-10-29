@@ -1,1 +1,0 @@
-{"benchmark":"admission","started_at":"2026-10-29T05:10:23Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"ae83e2b","concurrency":"40","render_ms":"800","ceiling":"10"},"results":{"direct":"40","direct_wall_s":"1","governed":"10","governed_wall_s":"3"}}

@@ -368,7 +368,7 @@ That result is a workload-specific observation, not a general speed claim. Separ
 
 ## Project status and roadmap
 
-The 0.4.0 candidate includes the core proxy, admission controls, local cache, request coalescing, telemetry, and application supervision. The [changelog](./CHANGELOG.md) records release history; the [roadmap](./docs/ROADMAP.md) tracks remaining work. Candidate validation and outstanding gates are recorded in the [Phase 3.1 hardening report](./PHASE3.1-FINAL-HARDENING.md) and [Phase 4 readiness report](./PHASE4-PRODUCTION-READINESS.md).
+The 0.4.0 candidate includes the core proxy, admission controls, local cache, request coalescing, telemetry, and application supervision. The [changelog](./CHANGELOG.md) records release history; the [roadmap](./docs/ROADMAP.md) tracks remaining work. See the [release gates](./docs/RELEASE-GATES.md) for the candidate's current status and publication requirements.
 
 Current boundaries and validation gaps include:
 

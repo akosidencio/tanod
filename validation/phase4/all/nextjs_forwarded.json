@@ -1,1 +1,0 @@
-{"benchmark":"nextjs_forwarded","started_at":"2026-10-29T04:04:19Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"0adfa2a","image":"tanod-next-origin:reference","next_version":"16.4.0"},"results":{}}

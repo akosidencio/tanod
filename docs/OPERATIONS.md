@@ -939,8 +939,7 @@ all operator ports private; a loopback host port does not prevent peer container
 from connecting on their internal network. Restrict configuration and signal
 access too: SIGHUP is the reload authorization boundary.
 
-The historical Phase 3 timed figures above predate the Phase 3.1 load-generator
-boundary correction. Use the replacement final-source distributions in
-`PHASE3.1-FINAL-HARDENING.md` for assessment; high-latency samples could previously
-lose a whole connection's accumulated tally. No isolated-host latency guarantee
-is implied by either desktop campaign.
+Historical Phase 3 timed figures predate a load-generator boundary correction:
+high-latency samples could lose a whole connection's accumulated tally. Measure
+the deployed binary with the current harness before choosing capacity or latency
+targets; desktop campaigns do not establish isolated-host latency guarantees.

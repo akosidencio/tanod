@@ -1,5 +1,0 @@
-{"quota":0.5,"workers":1,"memory_limit_mib":64,"image":"sha256:613a3c50ce08b64aa4d26d6d69e575b0e6edafb6b35c9c3507fbf220b13ed3b0"}
-{"quota":1,"workers":1,"memory_limit_mib":64,"image":"sha256:613a3c50ce08b64aa4d26d6d69e575b0e6edafb6b35c9c3507fbf220b13ed3b0"}
-{"quota":1.5,"workers":1,"memory_limit_mib":64,"image":"sha256:613a3c50ce08b64aa4d26d6d69e575b0e6edafb6b35c9c3507fbf220b13ed3b0"}
-{"quota":2,"workers":2,"memory_limit_mib":64,"image":"sha256:613a3c50ce08b64aa4d26d6d69e575b0e6edafb6b35c9c3507fbf220b13ed3b0"}
-{"quota":4,"workers":4,"memory_limit_mib":64,"image":"sha256:613a3c50ce08b64aa4d26d6d69e575b0e6edafb6b35c9c3507fbf220b13ed3b0"}

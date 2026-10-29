@@ -8,6 +8,9 @@ __pycache__/
 # Local overrides
 *.local.yaml
 
+# Private engineering reports, validation evidence and study notes.
+/intenal_docs/
+
 # Fuzzing: cargo-fuzz's build output, generated corpora and crash artifacts.
 # The targets themselves are checked in; what a run produces is not.
 fuzz/target/
@@ -52,4 +55,7 @@ compatibility-results/
 # Internal implementation and validation reports stay local. Public operator,
 # security and release references are explicitly allowed above.
 docs/PHASE*.md
+/PHASE*-*.md
+/validation/
+spike/pingora-cache/FINDINGS.md
 benchmark-results/

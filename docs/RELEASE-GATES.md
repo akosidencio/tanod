@@ -4,8 +4,7 @@ What has to be true before a tag is cut, and what runs where.
 
 The current 0.4 candidate is **NOT READY**: both required hour-long runs observed
 an origin peak of 10 against a ceiling of 8. Keep that assertion unchanged and
-resolve the disconnect/work-lifetime boundary before repeating the gates. See
-the [completed validation report](../PHASE4-PRODUCTION-READINESS.md).
+resolve the disconnect/work-lifetime boundary before repeating the gates.
 
 The distinction that matters: **a gate is something that fails the build**, not
 something a person reads afterwards. Every item below either exits non-zero on
