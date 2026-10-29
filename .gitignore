@@ -49,10 +49,7 @@ docs/data/*
 # Local compatibility evidence; CI uploads it as an artifact.
 compatibility-results/
 
-# Internal implementation reports and local benchmark evidence.
-docs/PHASE1-CACHE-CORRECTNESS.md
-docs/PHASE2-OPERATIONAL-HARDENING.md
+# Internal implementation and validation reports stay local. Public operator,
+# security and release references are explicitly allowed above.
+docs/PHASE*.md
 benchmark-results/
-# The Phase 3 report is published: the operations guide cites its measured
-# figures, and a claim the tree cannot show is not a claim it can support.
-!docs/PHASE3-PERFORMANCE-SCALABILITY.md

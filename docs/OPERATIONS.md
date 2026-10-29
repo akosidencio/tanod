@@ -596,15 +596,12 @@ default is one per CPU the process may use: the process's CPU affinity
 (`resources.limits.cpu`) both lower it. Tanod prints the number it chose on
 startup: `tanod listening on 0.0.0.0:8080 (4 worker threads)`.
 
-Before the key existed the proxy ran on one thread whatever the host, so cache
-hits, coalesced followers and forwarding all shared one core. On a six-CPU
-machine with Tanod pinned to three of them, 1 KiB cache hits went from about
-22,000–24,000 requests per second on that one core to 44,000–58,000 with
-three threads at 32–512 connections, measured with
-[`bench/perf.sh`](../bench/perf.sh); see the
-[Phase 3 report](./PHASE3-PERFORMANCE-SCALABILITY.md). Several threads cost
-some CPU per request — 7–30% on small cache hits in that measurement — in
-exchange for using the cores at all.
+Before this setting existed, cache hits, coalesced followers and forwarding
+shared one proxy worker. Multiple workers can use more CPU capacity, but can
+also increase CPU per request and tail latency, especially for large bodies.
+Compare explicit one/two-worker settings with the default on your workload
+using [`bench/perf.sh`](../bench/perf.sh). Record throughput, successful-response
+latency, CPU and RSS together; a higher request rate alone is not a tuning goal.
 
 When the origin runs on the same host — `origin.command`, or a sidecar
 sharing a CPU limit — leave it the cores it needs: set `threads` to what Tanod
