@@ -61,7 +61,7 @@ BASE="http://127.0.0.1:$LISTEN_PORT"
 # One worker's request mix. Each arm is here because it is a path that has
 # leaked something in this codebase or in the dependency before.
 worker() { # id, end-epoch, results-file
-  local id=$1 end=$2 out=$3 n=0
+  local id=$1 end=$2 out=$3 n=0 exchange code bytes curl_status
   while [ "$(date +%s)" -lt "$end" ]; do
     n=$((n + 1))
     case $((n % 6)) in
@@ -79,13 +79,25 @@ worker() { # id, end-epoch, results-file
       # Hang up part-way through a 1MiB body. Historically the path that leaked
       # a permit, because upstream end-of-stream never arrives on it.
       #
-      # One marker line, not curl's status code: a timed-out curl prints `000`
-      # *and* exits non-zero, so writing both would record every deliberate
-      # disconnect twice — once as a marker and once as an unexplained failure.
-      5)   if curl -s -o /dev/null --max-time 0.05 "$BASE/big/1?abort=$id-$n" >/dev/null 2>&1; then
-             echo "abort-raced"
+      # Rate-limit the reader: a fast 1MiB response otherwise finishes inside
+      # 50ms and the entire run can miss the disconnect path. Count a timeout
+      # after receiving actual 200 body bytes separately from one before the
+      # body, and retain unexpected transport/HTTP errors as failures.
+      # One marker per request avoids double-counting curl's 000 + exit code.
+      5)   exchange=$(curl -s -o /dev/null --limit-rate 16k --max-time 0.05 \
+               -w '%{http_code} %{size_download}' "$BASE/big/1?abort=$id-$n")
+           curl_status=$?
+           read -r code bytes <<< "$exchange"
+           if [ "$curl_status" -eq 0 ]; then
+             if [ "$code" = 200 ]; then echo 'abort-raced'; else echo "$code"; fi
+           elif [ "$curl_status" -eq 28 ] && [ "$code" = 200 ] && \
+                [ "${bytes%%.*}" -gt 0 ] && [ "${bytes%%.*}" -lt 1048576 ]; then
+             echo 'aborted'
+           elif [ "$curl_status" -eq 28 ] && [ "${bytes%%.*}" -eq 0 ] && \
+                { [ "$code" = 000 ] || [ "$code" = 200 ]; }; then
+             echo 'aborted-before-body'
            else
-             echo "aborted"
+             echo "abort-error-$code-$curl_status"
            fi ;;
     esac >> "$out" 2>/dev/null
   done
@@ -121,10 +133,11 @@ TOTAL=$(cat "$BENCH_DIR"/results-* 2>/dev/null | wc -l | tr -d ' ')
 OK=$(cat "$BENCH_DIR"/results-* 2>/dev/null | grep -c '^200$' || true)
 SHED=$(cat "$BENCH_DIR"/results-* 2>/dev/null | grep -c '^503$' || true)
 ABORTED=$(cat "$BENCH_DIR"/results-* 2>/dev/null | grep -c '^aborted$' || true)
+BEFORE_BODY=$(cat "$BENCH_DIR"/results-* 2>/dev/null | grep -c '^aborted-before-body$' || true)
 # The same arm, on the occasions the whole 1MiB body arrived inside the 50ms
 # deadline. Deliberate, and not evidence of the disconnect path being taken.
 RACED=$(cat "$BENCH_DIR"/results-* 2>/dev/null | grep -c '^abort-raced$' || true)
-OTHER=$((TOTAL - OK - SHED - ABORTED - RACED))
+OTHER=$((TOTAL - OK - SHED - ABORTED - BEFORE_BODY - RACED))
 
 echo
 echo "traffic"
@@ -132,12 +145,16 @@ echo "  requests               $TOTAL"
 echo "  200                    $OK"
 echo "  503 (shed, by design)  $SHED"
 echo "  aborted (by design)    $ABORTED"
+echo "  timeout before body    $BEFORE_BODY"
 echo "  abort arm raced        $RACED"
 echo "  anything else          $OTHER"
 bench_result requests "$TOTAL"
 bench_result ok "$OK"
 bench_result shed "$SHED"
 bench_result unexpected "$OTHER"
+bench_result aborted_mid_body "$ABORTED"
+bench_result aborted_before_body "$BEFORE_BODY"
+bench_result abort_raced "$RACED"
 bench_assert_gt "$TOTAL" 100 "requests issued (too few to soak anything)"
 # The disconnect arm has to actually disconnect, or the path this soak exists
 # to watch is never taken.
