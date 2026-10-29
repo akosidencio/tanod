@@ -1,0 +1,65 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 3.17kB done
+#1 DONE 0.1s
+
+#2 resolve image config for docker-image://docker.io/docker/dockerfile:1
+#2 DONE 1.6s
+
+#3 docker-image://docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+#3 resolve docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e 0.1s done
+#3 CACHED
+
+#4 [internal] load metadata for docker.io/library/rust:1.98-alpine
+#4 DONE 1.1s
+
+#5 [internal] load .dockerignore
+#5 transferring context: 352B done
+#5 DONE 0.1s
+
+#6 [internal] load build context
+#6 DONE 0.0s
+
+#7 [builder 1/6] FROM docker.io/library/rust:1.98-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f
+#7 resolve docker.io/library/rust:1.98-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f 0.1s done
+#7 DONE 0.1s
+
+#6 [internal] load build context
+#6 transferring context: 39.47kB 0.0s done
+#6 DONE 0.1s
+
+#8 [builder 3/6] WORKDIR /src
+#8 CACHED
+
+#9 [builder 4/6] COPY . .
+#9 CACHED
+
+#10 [builder 5/6] RUN --mount=type=cache,id=tanod-cargo-registry-musl,target=/usr/local/cargo/registry     --mount=type=cache,id=tanod-target-musl,target=/src/target     target="$(uname -m)-unknown-linux-musl"     && cargo build --release --locked --bin tanod --target "$target"       --features "tls"     && cp "/src/target/$target/release/tanod" /tmp/tanod     && strip /tmp/tanod
+#10 CACHED
+
+#11 [runtime 1/2] COPY --from=builder /rootfs/ /
+#11 CACHED
+
+#12 [builder 2/6] RUN apk add --no-cache musl-dev cmake clang perl make linux-headers binutils
+#12 CACHED
+
+#13 [builder 6/6] RUN mkdir -p /rootfs/etc/ssl/certs /rootfs/etc/tanod /rootfs/run/tanod /rootfs/tmp     && cp /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/     && echo 'tanod:x:10001:10001:tanod:/nonexistent:/sbin/nologin' > /rootfs/etc/passwd     && echo 'tanod:x:10001:' > /rootfs/etc/group     && chown 10001:10001 /rootfs/etc/tanod /rootfs/run/tanod     && chmod 0750 /rootfs/etc/tanod /rootfs/run/tanod     && chmod 1777 /rootfs/tmp     && /tmp/tanod version
+#13 CACHED
+
+#14 [runtime 2/2] COPY --from=builder /tmp/tanod /usr/local/bin/tanod
+#14 CACHED
+
+#15 exporting to image
+#15 exporting layers
+#15 exporting layers done
+#15 exporting manifest sha256:81481e9c8b2c55a2d2b6f27159992d4245ab604e1da8a8aaf747360bdf093adf 0.0s done
+#15 exporting config sha256:93523e4d6fa10620eb806e409afc16486a1d662d0b0e41dca8b19d982957226a 0.0s done
+#15 exporting attestation manifest sha256:e487a268257783e729656b429a57a357ac41f8aefdf3aa1aac887cf0d15de004
+#15 exporting attestation manifest sha256:e487a268257783e729656b429a57a357ac41f8aefdf3aa1aac887cf0d15de004 0.1s done
+#15 exporting manifest list sha256:7b5fe0d747b9ae6e29d4de366bdcc47ab821b786a81b689941cdc6ecdfb89b88 0.1s done
+#15 naming to docker.io/library/tanod:phase4-validation
+#15 naming to docker.io/library/tanod:phase4-validation 0.0s done
+#15 unpacking to docker.io/library/tanod:phase4-validation
+#15 unpacking to docker.io/library/tanod:phase4-validation 0.2s done
+#15 DONE 0.5s

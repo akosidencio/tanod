@@ -1,0 +1,14 @@
+{
+  "policy": "clock",
+  "pid": 187871,
+  "binary_sha256": "cbb746235ecb80b2616fb5632a97c4f4f2eb9ab412d5b5418ff2c520bff66cb5",
+  "columns": [
+    "epoch_seconds",
+    "rss_kib",
+    "cache_bytes",
+    "in_flight_weighted_units"
+  ],
+  "status": "complete",
+  "source": "/tmp/tanod-bench-hgdHhG/samples",
+  "sample_lines": 1664
+}

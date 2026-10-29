@@ -1,0 +1,1 @@
+{"benchmark":"protocol","started_at":"2026-10-29T05:11:57Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"ae83e2b","render_ms":"300"},"results":{"head_get_bytes":"53","range_full_bytes":"54","conditional_renders":"1","truncated_renders":"2","badchunk_renders":"2","disconnect_status":"200","checks":"14"}}

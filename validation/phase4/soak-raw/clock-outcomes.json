@@ -1,0 +1,36 @@
+{
+  "policy": "clock",
+  "status": "complete",
+  "requests": 787044,
+  "outcomes": {
+    "200": 655874,
+    "aborted-before-body": 71773,
+    "aborted": 59397
+  },
+  "worker_file_sha256": {
+    "results-1": "3dbb494cb98b31969b79989e0c17acfe9fa9aeeb52e32f708c797202a94a9bc6",
+    "results-10": "e6035061f34c296f9824a82cfcd4ffee75d5638a01cf4160f6af2fe0010c2b06",
+    "results-11": "807812648133778da63a13b58c447624ceed4aff97ffccd1032c95d01343610d",
+    "results-12": "0b2a193761ac915b5af52ca5790d34d4ba5906da9f43485cfb6447b3578ec138",
+    "results-13": "77db27efac59005d6dd61e3f89aedbe698bacdf4d3a9eb554d893176b53ac83c",
+    "results-14": "0c2b62e3d37e5d5fba0b05ab67a23d7e3e7a506f416549ae453b2767fc25747f",
+    "results-15": "f9affd02a7eb20177739afccbb4a09725d57ecd101584b315e3fb8d49a5f9c93",
+    "results-16": "2dc4606e546f62e83d9bb612d6fc5d88cd7b6cf23b252662e701ed2294c48c9e",
+    "results-17": "2dc5bd6451c22243ab3ad075588d5d6477a1db608d2f75419784b050447ab094",
+    "results-18": "92276c83f39f5d8d302b6a5b27d47a074abc120f791467c6af810f8cb9921374",
+    "results-19": "cddbee7b8407af2e9b71c25e389ed7cd7442f171239a9758958a156593caa4e5",
+    "results-2": "a2c750dabdc9b1ff7ee52257960454b3f36b7533a59ef0c671eae4f204700993",
+    "results-20": "3a978c4abffdc151a4cd4a6a398c86ce8df227e751890e718380e1897a4ce99f",
+    "results-21": "d3d73a172e6bd0aff7cb1bc0bf576ead768fe9898c0967081c034d8b8e8721d6",
+    "results-22": "d128b0ec2a869c09590ef49a49179d138f93fab339d27f1af8ea24ad5bfe0a38",
+    "results-23": "33b5ba2e0ad84097197621545f25c05f9edf9fbe7f3360082882fcb6b60ec26f",
+    "results-24": "76cf3f9f808d6cd25dfd5407e328efbd06ab0c7acb1902dc18d031682301f892",
+    "results-3": "c58f9b8879a7bb662850fc555333b05d78e1cef3d4e5e0f0a34bc131a60ec8a4",
+    "results-4": "a2ee16defb7e61ebb5b1a2b6c05742cc47e3424a024ddb379394bbf17ee743e2",
+    "results-5": "150489c5e9567df2df40648304a7bb4ee77d046bb2aa81089fd563346168d684",
+    "results-6": "aad3e23b17276ae352a5f31316ac51eba69123952c89c50d9f1ae7fb671baa63",
+    "results-7": "fe9800ccdc350697d27750a44f017449a075cda827ed709b2d77862181dd759c",
+    "results-8": "3f046749ae70faa1206e953420613c2d093f7933ef75b3994c6c84f86e5bf8ec",
+    "results-9": "e8af86edacfef8a65862868145ee73ba3f292089ebf0ecadef3395fbfbf4374b"
+  }
+}

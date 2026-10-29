@@ -1,0 +1,26 @@
+baseline RSS             23872 KiB
+
+cache plus global spool: complete bodies on both miss and hit
+
+phase 1: 640 unique 1MiB entries against an 8MiB cache
+  peak cache bytes       7341987
+
+phase 2: a 4MiB body against a 2MiB max_body_size
+  status                 200
+  bytes delivered        4194345
+  origin renders for 2   2
+
+phase 3: 64 slow readers against a 4MiB spool budget
+  spool bytes now        0
+  spools completed       29
+  spools budget-refused  35
+
+memory (RSS KiB)
+  baseline               23872
+  peak under pressure    63928
+  after                  59952
+  serving afterwards     200
+
+parameters: os=Linux, arch=x86_64, cpus=6, rustc=1.98.0, profile=debug, cache_eviction=tinyufo, commit=ae83e2b, rounds=40, slow_readers=64, cache_budget_bytes=8388608, spool_budget_bytes=4194304, max_body_bytes=2097152, rss_ceiling_kb=393216
+
+PASS: peak RSS 63928KiB with a cache peaking at 7341987 against its 8MiB budget, a 4MiB body served without being stored, and 64 slow readers against a 4MiB spool

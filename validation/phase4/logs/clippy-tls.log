@@ -1,0 +1,8 @@
+    Checking pingora-core v0.9.0
+    Checking pingora-cache v0.9.0
+    Checking pingora-prometheus v0.9.0
+    Checking pingora-load-balancing v0.9.0
+    Checking pingora-proxy v0.9.0
+    Checking spike-pingora-cache v0.0.0 (/home/dennispaler/Documents/OpenSource/tanod/spike/pingora-cache)
+    Checking tanod v0.4.0 (/home/dennispaler/Documents/OpenSource/tanod)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.38s

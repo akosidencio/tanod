@@ -1,0 +1,1 @@
+{"benchmark":"reload","started_at":"2026-10-29T05:10:53Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"ae83e2b","burst":"6","initial_ceiling":"1","raised_ceiling":"6","render_ms":"400"},"results":{"initial_peak":"1","refused_peak":"1","raised_peak":"6"}}

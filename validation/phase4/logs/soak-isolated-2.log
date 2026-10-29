@@ -1,0 +1,30 @@
+soaking for 60s with 12 workers
+
+traffic
+  requests               7574
+  200                    6318
+  503 (shed, by design)  0
+  aborted (by design)    643
+  timeout before body    613
+  abort arm raced        0
+  anything else          0
+
+memory (RSS KiB)
+  first quarter, median  59728
+  last quarter, median   61208
+  peak                   63092
+  growth allowance       184992
+
+cache
+  peak bytes             16753700
+  budget                 16777216
+  origin peak concurrency 8 (ceiling 8)
+
+after the traffic stops
+  in-flight permits      0
+  readiness              200
+
+parameters: os=Linux, arch=x86_64, cpus=6, rustc=1.98.0, profile=debug, cache_eviction=tinyufo, commit=ae83e2b, seconds=60, workers=12, render_ms=25, cache_budget_bytes=16777216, rss_ceiling_kb=786432
+
+PASS: 7574 requests over 60s: RSS 59728→61208 KiB (peak 63092), cache peaked at 16753700 within its 16MiB budget, no permit left held, no panic
+  (working directory kept at /tmp/tanod-bench-IZ0KgH)

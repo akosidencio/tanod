@@ -1,0 +1,104 @@
+chaos, 10 round(s)
+
+round 1
+  killing one backend of two
+    /health/live         200
+  killing the second
+    request while down   502
+  reloading config while the origin is down
+  bringing both backends back
+    serving again        yes
+
+round 2
+  killing one backend of two
+    /health/live         200
+  killing the second
+    request while down   502
+  reloading config while the origin is down
+  bringing both backends back
+    serving again        yes
+
+round 3
+  killing one backend of two
+    /health/live         200
+  killing the second
+    request while down   502
+  reloading config while the origin is down
+  bringing both backends back
+    serving again        yes
+
+round 4
+  killing one backend of two
+    /health/live         200
+  killing the second
+    request while down   502
+  reloading config while the origin is down
+  bringing both backends back
+    serving again        yes
+
+round 5
+  killing one backend of two
+    /health/live         200
+  killing the second
+    request while down   502
+  reloading config while the origin is down
+  bringing both backends back
+    serving again        yes
+
+round 6
+  killing one backend of two
+    /health/live         200
+  killing the second
+    request while down   502
+  reloading config while the origin is down
+  bringing both backends back
+    serving again        yes
+
+round 7
+  killing one backend of two
+    /health/live         200
+  killing the second
+    request while down   502
+  reloading config while the origin is down
+  bringing both backends back
+    serving again        yes
+
+round 8
+  killing one backend of two
+    /health/live         200
+  killing the second
+    request while down   502
+  reloading config while the origin is down
+  bringing both backends back
+    serving again        yes
+
+round 9
+  killing one backend of two
+    /health/live         200
+  killing the second
+    request while down   502
+  reloading config while the origin is down
+  bringing both backends back
+    serving again        yes
+
+round 10
+  killing one backend of two
+    /health/live         200
+  killing the second
+    request while down   502
+  reloading config while the origin is down
+  bringing both backends back
+    serving again        yes
+
+after the chaos
+  requests               1916
+  200                    1366
+  admin samples          116/116 answered 200
+  session cookies        148 distinct of 148
+  in-flight permits      0
+  readiness              200
+  a fresh request        200
+
+parameters: os=Linux, arch=x86_64, cpus=6, rustc=1.98.0, profile=debug, commit=ae83e2b, rounds=10, backends=2, render_ms=30
+
+PASS: survived 10 round(s) of backend loss and reloads: 148/148 sessions stayed distinct, the admin surface answered 116/116 samples throughout, and no permit leaked

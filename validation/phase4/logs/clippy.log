@@ -1,0 +1,5 @@
+    Checking tanod v0.4.0 (/home/dennispaler/Documents/OpenSource/tanod)
+    Checking spike-pingora-cache v0.0.0 (/home/dennispaler/Documents/OpenSource/tanod/spike/pingora-cache)
+    Checking loadgen v0.0.0 (/home/dennispaler/Documents/OpenSource/tanod/bench/loadgen)
+    Checking slow-origin v0.0.0 (/home/dennispaler/Documents/OpenSource/tanod/bench/slow-origin)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.92s

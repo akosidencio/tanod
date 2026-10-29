@@ -2,6 +2,11 @@
 
 What has to be true before a tag is cut, and what runs where.
 
+The current 0.4 candidate is **NOT READY**: both required hour-long runs observed
+an origin peak of 10 against a ceiling of 8. Keep that assertion unchanged and
+resolve the disconnect/work-lifetime boundary before repeating the gates. See
+the [completed validation report](../PHASE4-PRODUCTION-READINESS.md).
+
 The distinction that matters: **a gate is something that fails the build**, not
 something a person reads afterwards. Every item below either exits non-zero on
 its own or does not belong on this list. An earlier version of this project's
@@ -216,8 +221,10 @@ runs bounded fuzz campaigns, both cache policies, memory pressure, repeated
 policy reload/purge cycles, local lifecycle schedules, ten-minute soaks and the
 non-root read-only container/CPU-quota probe with a real Next.js origin. Fuzz
 corpora and crash artifacts are retained. This workflow needs no publication
-permissions or new secrets. Its schedule runs on the repository default branch;
-use workflow_dispatch on a candidate branch before it reaches that branch.
+permissions or new secrets. Its schedule runs on the repository default branch.
+Once the workflow is registered there, dispatch a candidate branch explicitly;
+before that, run the local commands below. See the
+[workflow_dispatch requirements](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch).
 It also captures three short hit/fill performance samples per policy, without
 shared-runner throughput thresholds. Memory runs use 40 rounds and 64 slow
 readers. Release-candidate runs use the 20-second upgrade and ten-round chaos

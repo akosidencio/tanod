@@ -1,0 +1,7 @@
+# Keep captured logs, measurements, plots and source patches byte-for-byte.
+# Their producer formatting is evidence, rather than editable source style.
+*.log -text -whitespace
+*.csv -text -whitespace
+*.svg -text -whitespace
+*.patch -text -whitespace
+*.txt -text -whitespace

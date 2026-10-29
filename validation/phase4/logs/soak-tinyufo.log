@@ -1,0 +1,22 @@
+soaking for 3600s with 24 workers
+
+traffic
+  requests               693833
+  200                    578196
+  503 (shed, by design)  0
+  aborted (by design)    31227
+  timeout before body    84410
+  abort arm raced        0
+  anything else          0
+
+memory (RSS KiB)
+  first quarter, median  62008
+  last quarter, median   51456
+  peak                   67624
+  growth allowance       189552
+
+cache
+  peak bytes             16769956
+  budget                 16777216
+  origin peak concurrency 10 (ceiling 8)
+FAIL: origin peak concurrency over the whole soak: expected at most 8, observed 10

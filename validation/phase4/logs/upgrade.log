@@ -1,0 +1,23 @@
+pre-flight: tanod run --test
+  valid config           exit 0
+  invalid config         exit 1
+
+old process pid 2591935 on 25310, admin on 28089
+
+automatic drain on SIGTERM
+  readiness while alive 503
+  requests still served 10/10
+
+starting the new process with --upgrade
+  new process pid        2598450
+  SIGQUIT to             2596243
+  old process exited     yes
+
+traffic across the handover
+  requests               370
+  200                    370
+  anything else          0
+
+parameters: os=Linux, arch=x86_64, cpus=6, rustc=1.98.0, profile=debug, commit=ae83e2b, traffic_seconds=20, render_ms=20, drain_period_s=1, shutdown_timeout_s=3, mode=handover
+
+PASS: 370/370 requests served across a live socket handover; pid 2596243 drained and exited, pid 2598450 serving
