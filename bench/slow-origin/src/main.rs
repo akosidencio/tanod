@@ -46,7 +46,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::TcpSocket;
 
 struct Stats {
     in_flight: AtomicUsize,
@@ -85,7 +85,14 @@ async fn main() -> std::io::Result<()> {
         failing: AtomicBool::new(false),
     });
 
-    let listener = TcpListener::bind(("127.0.0.1", port)).await?;
+    // Mio's default backlog is 128. A 512-client fill burst can overflow
+    // that queue and wait for a SYN retransmit beyond Tanod's connect timeout,
+    // measuring dropped handshakes rather than cache fill throughput. This
+    // fixture accepts the burst; SLOW_ORIGIN_SLOTS still bounds render work.
+    let socket = TcpSocket::new_v4()?;
+    socket.set_reuseaddr(true)?;
+    socket.bind(([127, 0, 0, 1], port).into())?;
+    let listener = socket.listen(4096)?;
     eprintln!("slow-origin on 127.0.0.1:{port}, {render_ms}ms per render");
 
     // Identifies *this* process, so that ids minted here cannot collide with

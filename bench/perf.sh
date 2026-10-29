@@ -202,6 +202,11 @@ record() { # scenario, trial, extra-json, loadgen args...
   local raw
   # shellcheck disable=SC2046
   raw=$($(pin "$LOAD_CPUS") "$LOADGEN" "$@") || bench_fail "loadgen failed in $scenario"
+  # Preserve failing samples too; an assertion must not erase the evidence
+  # needed to distinguish admission, origin and cache-pressure failures.
+  printf '%s\n' "$raw" \
+    | jq -c --arg s "$scenario" --argjson t "$trial" --argjson x "$extra" \
+        '. + {scenario: $s, trial: $t} + $x' >> "$OUT/$scenario.jsonl"
   printf '%s\n' "$raw" | jq -e '.requests > 0' >/dev/null \
     || bench_fail "no completed requests in $scenario"
   if [ "$scenario" != pressure ]; then
@@ -213,9 +218,6 @@ record() { # scenario, trial, extra-json, loadgen args...
     *) printf '%s\n' "$raw" | jq -e '.status["4xx"] + .status["5xx"] == 0' >/dev/null \
          || bench_fail "unexpected HTTP failures in $scenario" ;;
   esac
-  printf '%s\n' "$raw" \
-    | jq -c --arg s "$scenario" --argjson t "$trial" --argjson x "$extra" \
-        '. + {scenario: $s, trial: $t} + $x' >> "$OUT/$scenario.jsonl"
   printf '%s\n' "$raw" | jq -r --arg s "$scenario" \
     '"  \($s) \(.label): \(.rps|floor) rps, p50 \(.latency_us.p50)us p99 \(.latency_us.p99)us, errors \(.errors), non-2xx \(.status["4xx"] + .status["5xx"]), tanod cpu \(.processes[0].cpu_cores // "-")"'
 }
