@@ -79,13 +79,14 @@ worker() { # id, end-epoch, results-file
       # Hang up part-way through a 1MiB body. Historically the path that leaked
       # a permit, because upstream end-of-stream never arrives on it.
       #
-      # Rate-limit the reader: a fast 1MiB response otherwise finishes inside
-      # 50ms and the entire run can miss the disconnect path. Count a timeout
+      # Four 256KiB chunks, spaced 25ms apart, cannot finish before the 50ms
+      # disconnect deadline. Rate-limit the reader too, so it retains a partial
+      # body even on a fast loopback connection. Count a timeout
       # after receiving actual 200 body bytes separately from one before the
       # body, and retain unexpected transport/HTTP errors as failures.
       # One marker per request avoids double-counting curl's 000 + exit code.
       5)   exchange=$(curl -s -o /dev/null --limit-rate 16k --max-time 0.05 \
-               -w '%{http_code} %{size_download}' "$BASE/big/1?abort=$id-$n")
+               -w '%{http_code} %{size_download}' "$BASE/bigstream/4?abort=$id-$n")
            curl_status=$?
            read -r code bytes <<< "$exchange"
            if [ "$curl_status" -eq 0 ]; then
