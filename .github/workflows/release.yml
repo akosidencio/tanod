@@ -275,7 +275,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-cyclonedx
-        run: cargo install cargo-cyclonedx --locked
+        run: cargo install cargo-cyclonedx --version 0.5.9 --locked
       - name: Generate
         run: |
           version="$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
@@ -367,6 +367,12 @@ jobs:
       - name: Smoke test the pushed image
         run: |
           image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}"
+          # BuildKit attaches provenance metadata; this is not a signed
+          # GitHub artifact attestation. Refuse a missing attachment.
+          docker buildx imagetools inspect "$image" \
+            --format '{{ json .Provenance.SLSA }}' > "$RUNNER_TEMP/provenance.json"
+          jq -e 'type == "object" and ((.buildType // .buildDefinition.buildType) | type == "string" and length > 0)' \
+            "$RUNNER_TEMP/provenance.json" > /dev/null
           docker run --rm "$image" version
           docker run --rm -v "$PWD/tanod.yaml:/etc/tanod/tanod.yaml:ro" \
             "$image" check --config /etc/tanod/tanod.yaml
@@ -461,14 +467,18 @@ jobs:
             sha256sum --ignore-missing -c SHA256SUMS
             ```
 
-            The container image carries build provenance and its own SBOM as
-            attestations:
+            The container image includes BuildKit provenance metadata and an
+            SBOM. Inspect the metadata for the reviewed image digest:
 
             ```bash
-            gh attestation verify \
-              "oci://ghcr.io/${{ github.repository }}:${{ steps.collect.outputs.version }}" \
-              --repo ${{ github.repository }}
+            docker buildx imagetools inspect \
+              "ghcr.io/${{ github.repository }}:${{ steps.collect.outputs.version }}" \
+              --format '{{ json .Provenance.SLSA }}'
             ```
+
+            Compare its inputs and revision with the reviewed source. These
+            OCI attachments do not establish a signed GitHub builder identity;
+            this workflow does not generate GitHub artifact attestations.
 
             `tanod-${{ steps.collect.outputs.version }}.cdx.json` is a
             CycloneDX SBOM of the resolved Rust dependency tree. It lists what
@@ -479,8 +489,8 @@ jobs:
             [scripts/reproducible-build.sh](https://github.com/${{ github.repository }}/blob/${{ inputs.tag || github.ref_name }}/scripts/reproducible-build.sh).
             The `.tar.gz` archive is not: gzip stores a modification time, so
             compare the checksum of the binary inside it. The image digest is
-            not reproducible either — verify the image through its provenance
-            attestation instead.
+            not reproducible either — pin its reviewed digest and inspect its
+            recorded provenance instead.
 
   # The npm packages, last: @tanod/linux-x64 (the musl binary) and then
   # @tanod/next, which pins it as an optional dependency.

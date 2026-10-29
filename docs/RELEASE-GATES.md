@@ -142,8 +142,12 @@ is exactly the untrustworthy evidence this project spent a phase removing.
   that installs it.
 - `SHA256SUMS` is present and covers every published archive.
 - The CycloneDX SBOM is attached.
-- The image's provenance attestation verifies:
-  `gh attestation verify "oci://ghcr.io/OWNER/tanod:<version>" --repo OWNER/tanod`
+- The image has BuildKit provenance metadata and an SBOM. Inspect the reviewed
+  digest with `docker buildx imagetools inspect IMAGE@sha256:DIGEST --format '{{ json .Provenance.SLSA }}'`
+  and compare its inputs/revision with the release source. The workflow rejects
+  missing provenance. These OCI attachments are not signed GitHub artifact
+  attestations; `gh attestation verify` is not a verification gate provided here.
+  See [BuildKit provenance](https://docs.docker.com/build/metadata/attestations/slsa-provenance/).
 - A Linux release binary reproduces from a clean checkout of the tag —
   [`scripts/reproducible-build.sh`](../scripts/reproducible-build.sh).
 
