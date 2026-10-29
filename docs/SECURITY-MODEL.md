@@ -55,12 +55,18 @@ in the same active namespace. See [operations](OPERATIONS.md).
 
 ## Resource limits and remaining assumptions
 
-Admission permits track requests still held by the proxy. An uncached response,
-including a cache-pressure fallback, can release its permit after disconnect
-while the backend continues work. A strict bound on such backend jobs requires
-cooperative cancellation or an origin-side job limit. The current hour-long
-validation observed an origin peak of 10 against an eight-unit ceiling and
-remains a release blocker; see the [release gates](RELEASE-GATES.md).
+An admitted request holds its origin permit until the origin's response ends,
+including after its client disconnects: Tanod reads the rest of the response
+and discards it, bounded by `timeouts.origin`
+([details](OPERATIONS.md#what-the-origin-ceiling-guarantees)). A client can
+therefore no longer free origin capacity, and so admit more concurrent origin
+work, by hanging up. What a proxy cannot bound is work an origin continues
+after its own response ended, or past the drain deadline
+(`tanod_origin_disconnect_drains_total{outcome="deadline"}`); a strict bound
+on those needs an origin-side limit. The drain path is carried as a reviewed
+patch to Pingora's proxy crate in `vendor/pingora-proxy`, which `cargo audit`
+cannot see; `scripts/check-vendored-pingora.sh` ties it to the published crate's
+checksum.
 
 Admission bounds proxy-held origin work units, queue count and queue time. Upgrade slots
 are separate and off by default. Cache bodies, cache logical bytes and spool

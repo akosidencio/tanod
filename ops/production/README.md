@@ -36,7 +36,10 @@ Compose bridge. A loopback host publication does not isolate container peers.
   replica. Purge every replica; use path-stable ingress where reuse matters.
   Label the ingress, monitoring and operator namespaces with the labels used
   by the shipped NetworkPolicy. Its enforcement, kubelet probes and rolling
-  behavior require cluster validation.
+  behavior require cluster validation: follow
+  [KUBERNETES-STAGING.md](KUBERNETES-STAGING.md). Keep `shutdown_timeout`
+  above `timeouts.origin`, so responses still draining for disconnected
+  clients finish before the process exits.
   See the [StatefulSet lifecycle](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/)
   and [force-deletion requirements](https://kubernetes.io/docs/tasks/run-application/force-delete-stateful-set-pod/).
 * Trusted reverse proxy: pair `trusted-proxy-tanod.yaml` with `nginx.conf`

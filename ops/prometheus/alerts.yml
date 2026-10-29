@@ -189,6 +189,23 @@ groups:
             aborted mid-body. Raise cache.max_memory, or keep large streamed
             responses off cacheable routes.
 
+      # A drain that hits its deadline releases a permit without knowing the
+      # origin stopped, so the ceiling no longer bounds that work.
+      - alert: TanodOriginWorkOutlivedDeadline
+        expr: sum by (job, instance) (increase(tanod_origin_disconnect_drains_total{outcome="deadline"}[15m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Origin work for disconnected clients on {{ $labels.instance }} outlived timeouts.origin"
+          description: >-
+            Tanod kept reading responses for clients that had gone, and the
+            origin had still not finished at timeouts.origin. Those permits
+            were released without confirmation that the work stopped, so the
+            origin may briefly run more renders than the configured ceiling.
+            Look for renders slower than timeouts.origin, or bound concurrency
+            inside the origin as well.
+
       # Costs traces, never requests. Included because it is easy to miss and
       # the fix is one number.
       - alert: TanodDroppingSpans
