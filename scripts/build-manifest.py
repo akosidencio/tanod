@@ -31,6 +31,7 @@ def main():
     parser.add_argument('--source-only', action='store_true', help='print the input digest for image build labels')
     parser.add_argument('--profile', default='release')
     parser.add_argument('--features', default='')
+    parser.add_argument('--build-command', help='exact command used, including workspace and benchmark target selection')
     args = parser.parse_args()
     root = Path(command('git', 'rev-parse', '--show-toplevel'))
     paths = subprocess.check_output(
@@ -60,6 +61,7 @@ def main():
         'rustc': command('rustc', '-Vv'),
         'profile': args.profile,
         'features': args.features,
+        'build_command': args.build_command,
         'rustflags': os.environ.get('RUSTFLAGS', ''),
         'platform': platform.platform(),
         'cpu_affinity': sorted(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else None,
