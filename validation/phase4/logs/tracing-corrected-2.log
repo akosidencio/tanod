@@ -1,0 +1,32 @@
+propagation to the origin
+  no inbound context     00-ef6c311beabcc646ff1017af30a9f894-5c0cdb075c74f71a-01
+  trusted inbound        00-4bf92f3577b34da6a3ce929d0e0e4736-ec8a791f9d283afb-01
+  tracestate             vendor=abc
+  malformed inbound      00-059c4d5ebf5a3a728b3b94094d5e5263-734eb799e7670e08-01
+
+trust_incoming: never, applied by SIGHUP
+  inbound now ignored    00-663281f64797d720f8091312b5e38291-b0031f86aabeb14a-01
+
+access log
+  trace_id               663281f64797d720f8091312b5e38291
+  generation             2
+
+span export
+  batches received       2
+  server spans           4
+  origin-fetch spans     4
+  log id present in spans
+
+metrics
+  exported               8
+  export_failed          0
+  dropped                0
+
+a dead collector does not affect traffic
+  requests 200           15/15
+  wall time              1365ms
+
+parameters: os=Linux, arch=x86_64, cpus=6, rustc=1.98.0, profile=debug, commit=0adfa2a, render_ms=20, sample_mode=always
+
+PASS: traces propagated and continued correctly, 4 server and 4 origin spans exported and joinable to the access log, and a dead collector cost nothing
+  (working directory kept at /tmp/tanod-bench-szwQBj)

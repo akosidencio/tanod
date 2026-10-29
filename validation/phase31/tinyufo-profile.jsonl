@@ -1,0 +1,10 @@
+{"scenario":"fill/tinyufo/fill-only","concurrency":1,"workers":1,"ops_per_s":52857,"done":52857,"refused":0,"aborted":0,"bytes_used":8374215,"pinned":0}
+{"scenario":"fill/tinyufo/fill-only","concurrency":8,"workers":6,"ops_per_s":74817,"done":74817,"refused":0,"aborted":0,"bytes_used":8374716,"pinned":0}
+{"scenario":"fill/tinyufo/fill-only","concurrency":32,"workers":6,"ops_per_s":39566,"done":39566,"refused":0,"aborted":0,"bytes_used":8374716,"pinned":0}
+{"scenario":"fill/tinyufo/fill-only","concurrency":128,"workers":6,"ops_per_s":17533,"done":17533,"refused":0,"aborted":0,"bytes_used":8374716,"pinned":0}
+{"scenario":"fill/tinyufo/fill-only","concurrency":512,"workers":6,"ops_per_s":5768,"done":5768,"refused":0,"aborted":0,"bytes_used":8374716,"pinned":0}
+{"scenario":"fill/tinyufo/fill-10pct","concurrency":1,"workers":1,"ops_per_s":163672,"done":163672,"refused":0,"aborted":0,"bytes_used":8373949,"pinned":0}
+{"scenario":"fill/tinyufo/fill-10pct","concurrency":8,"workers":6,"ops_per_s":279805,"done":279805,"refused":0,"aborted":0,"bytes_used":8373949,"pinned":0}
+{"scenario":"fill/tinyufo/fill-10pct","concurrency":32,"workers":6,"ops_per_s":183212,"done":183212,"refused":0,"aborted":0,"bytes_used":8373949,"pinned":0}
+{"scenario":"fill/tinyufo/fill-10pct","concurrency":128,"workers":6,"ops_per_s":91893,"done":91893,"refused":0,"aborted":0,"bytes_used":8373949,"pinned":0}
+{"scenario":"fill/tinyufo/fill-10pct","concurrency":512,"workers":6,"ops_per_s":38606,"done":38606,"refused":0,"aborted":0,"bytes_used":8373949,"pinned":0}

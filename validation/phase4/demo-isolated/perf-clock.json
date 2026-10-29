@@ -1,0 +1,1 @@
+{"benchmark":"perf-clock","started_at":"2026-10-29T05:05:24Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"release","cache_eviction":"clock","commit":"ae83e2b","label":"demonstration-isolated-clock","trials":"3","duration_s":"4","warmup_s":"5"},"results":{}}

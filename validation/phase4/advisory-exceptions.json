@@ -1,0 +1,418 @@
+[
+  {
+    "id": "RUSTSEC-2024-0388",
+    "advisory": {
+      "id": "RUSTSEC-2024-0388",
+      "package": "derivative",
+      "date": "2024-06-26",
+      "url": "https://github.com/mcarton/rust-derivative/issues/117",
+      "informational": "unmaintained"
+    },
+    "versions": {
+      "patched": []
+    },
+    "source": "crates/derivative/RUSTSEC-2024-0388.md"
+  },
+  {
+    "id": "RUSTSEC-2024-0449",
+    "advisory": {
+      "id": "RUSTSEC-2024-0449",
+      "package": "unsafe-libyaml",
+      "date": "2024-03-25",
+      "informational": "unmaintained",
+      "url": "https://github.com/dtolnay/unsafe-libyaml"
+    },
+    "versions": {
+      "patched": [],
+      "unaffected": []
+    },
+    "source": "crates/unsafe-libyaml/RUSTSEC-2024-0449.md"
+  },
+  {
+    "id": "RUSTSEC-2025-0134",
+    "advisory": {
+      "id": "RUSTSEC-2025-0134",
+      "package": "rustls-pemfile",
+      "date": "2025-11-28",
+      "url": "https://github.com/rustls/pemfile/issues/61",
+      "informational": "unmaintained"
+    },
+    "versions": {
+      "patched": []
+    },
+    "source": "crates/rustls-pemfile/RUSTSEC-2025-0134.md"
+  },
+  {
+    "id": "RUSTSEC-2026-0391",
+    "advisory": {
+      "id": "RUSTSEC-2026-0391",
+      "package": "zstd",
+      "date": "2026-10-16",
+      "url": "https://github.com/gyscos/zstd-rs/commit/74ace2dcdca62a2ce0f034895d6079458311e003",
+      "references": [
+        "https://github.com/gyscos/zstd-rs/pull/384"
+      ],
+      "categories": [
+        "memory-exposure"
+      ],
+      "keywords": [
+        "information-leak",
+        "context-reuse"
+      ]
+    },
+    "versions": {
+      "patched": [
+        ">= 0.14.3"
+      ],
+      "unaffected": [
+        "< 0.13.2"
+      ]
+    },
+    "source": "crates/zstd/RUSTSEC-2026-0391.md"
+  },
+  {
+    "id": "RUSTSEC-2026-0398",
+    "advisory": {
+      "id": "RUSTSEC-2026-0398",
+      "package": "zstd-safe",
+      "date": "2026-10-16",
+      "url": "https://github.com/gyscos/zstd-rs/commit/80506be743fae2ed0c2fe8b21c374c6a2eab0be7",
+      "references": [
+        "https://github.com/gyscos/zstd-rs/pull/384"
+      ],
+      "categories": [
+        "memory-exposure",
+        "memory-corruption"
+      ],
+      "keywords": [
+        "seekable",
+        "out-of-bounds"
+      ]
+    },
+    "versions": {
+      "patched": [
+        ">= 8.2.0"
+      ],
+      "unaffected": [
+        "< 7.2.2"
+      ]
+    },
+    "source": "crates/zstd-safe/RUSTSEC-2026-0398.md"
+  },
+  {
+    "id": "RUSTSEC-2026-0403",
+    "advisory": {
+      "id": "RUSTSEC-2026-0403",
+      "package": "zstd-safe",
+      "date": "2026-10-16",
+      "url": "https://github.com/gyscos/zstd-rs/commit/006e1d1ad1eeaf6b5d4c28329e70217adabcec43",
+      "references": [
+        "https://github.com/gyscos/zstd-rs/pull/384"
+      ],
+      "categories": [
+        "memory-exposure"
+      ],
+      "keywords": [
+        "uninitialized-memory",
+        "decompression",
+        "legacy"
+      ]
+    },
+    "versions": {
+      "patched": [
+        ">= 8.2.0"
+      ],
+      "unaffected": [
+        "< 4.0.0"
+      ]
+    },
+    "source": "crates/zstd-safe/RUSTSEC-2026-0403.md"
+  },
+  {
+    "id": "RUSTSEC-2026-0395",
+    "advisory": {
+      "id": "RUSTSEC-2026-0395",
+      "package": "zstd-safe",
+      "date": "2026-10-16",
+      "url": "https://github.com/gyscos/zstd-rs/commit/53a8a290d8cfb52ff5b29fb6e04a40b5a174cc65",
+      "references": [
+        "https://github.com/gyscos/zstd-rs/pull/384"
+      ],
+      "informational": "unsound",
+      "categories": [
+        "memory-exposure"
+      ],
+      "keywords": [
+        "use-after-free",
+        "experimental"
+      ]
+    },
+    "versions": {
+      "patched": [
+        ">= 8.2.0"
+      ],
+      "unaffected": [
+        "< 4.1.0"
+      ]
+    },
+    "source": "crates/zstd-safe/RUSTSEC-2026-0395.md"
+  },
+  {
+    "id": "RUSTSEC-2026-0396",
+    "advisory": {
+      "id": "RUSTSEC-2026-0396",
+      "package": "zstd-safe",
+      "date": "2026-10-16",
+      "url": "https://github.com/gyscos/zstd-rs/commit/a9626069d6f2e90b782b8f627f57a361cfe8ef85",
+      "references": [
+        "https://github.com/gyscos/zstd-rs/pull/384"
+      ],
+      "informational": "unsound",
+      "categories": [
+        "memory-corruption"
+      ],
+      "keywords": [
+        "seekable",
+        "null-pointer"
+      ]
+    },
+    "versions": {
+      "patched": [
+        ">= 8.2.0"
+      ],
+      "unaffected": [
+        "< 7.2.2"
+      ]
+    },
+    "source": "crates/zstd-safe/RUSTSEC-2026-0396.md"
+  },
+  {
+    "id": "RUSTSEC-2026-0397",
+    "advisory": {
+      "id": "RUSTSEC-2026-0397",
+      "package": "zstd-safe",
+      "date": "2026-10-16",
+      "url": "https://github.com/gyscos/zstd-rs/commit/5827de2459b8ac430e87e860f00c7f3c13023833",
+      "references": [
+        "https://github.com/gyscos/zstd-rs/pull/384"
+      ],
+      "informational": "unsound",
+      "categories": [
+        "memory-exposure"
+      ],
+      "keywords": [
+        "uninitialized-memory"
+      ]
+    },
+    "versions": {
+      "patched": [
+        ">= 8.2.0"
+      ],
+      "unaffected": [
+        "< 4.0.0"
+      ]
+    },
+    "source": "crates/zstd-safe/RUSTSEC-2026-0397.md"
+  },
+  {
+    "id": "RUSTSEC-2026-0399",
+    "advisory": {
+      "id": "RUSTSEC-2026-0399",
+      "package": "zstd-safe",
+      "date": "2026-10-16",
+      "url": "https://github.com/gyscos/zstd-rs/commit/e00e7928e3e98953fc43418af6d73f6aae2378fb",
+      "references": [
+        "https://github.com/gyscos/zstd-rs/pull/384"
+      ],
+      "informational": "unsound",
+      "categories": [
+        "memory-corruption"
+      ],
+      "keywords": [
+        "use-after-free",
+        "lifetime",
+        "dictionary"
+      ]
+    },
+    "versions": {
+      "patched": [
+        ">= 8.2.0"
+      ],
+      "unaffected": [
+        "< 3.0.0"
+      ]
+    },
+    "source": "crates/zstd-safe/RUSTSEC-2026-0399.md"
+  },
+  {
+    "id": "RUSTSEC-2026-0400",
+    "advisory": {
+      "id": "RUSTSEC-2026-0400",
+      "package": "zstd-safe",
+      "date": "2026-10-16",
+      "url": "https://github.com/gyscos/zstd-rs/commit/d34502a0ed07f80ab2aa4c65059578e0466f2467",
+      "references": [
+        "https://github.com/gyscos/zstd-rs/pull/384"
+      ],
+      "informational": "unsound",
+      "categories": [
+        "memory-exposure"
+      ],
+      "keywords": [
+        "use-after-free",
+        "dictionary"
+      ]
+    },
+    "versions": {
+      "patched": [
+        ">= 8.2.0"
+      ],
+      "unaffected": [
+        "< 3.0.1"
+      ]
+    },
+    "source": "crates/zstd-safe/RUSTSEC-2026-0400.md"
+  },
+  {
+    "id": "RUSTSEC-2026-0401",
+    "advisory": {
+      "id": "RUSTSEC-2026-0401",
+      "package": "zstd-safe",
+      "date": "2026-10-16",
+      "url": "https://github.com/gyscos/zstd-rs/commit/781ea454191dbf178d09c1daf6fc896d15fbaa2f",
+      "references": [
+        "https://github.com/gyscos/zstd-rs/pull/384"
+      ],
+      "informational": "unsound",
+      "categories": [
+        "memory-exposure"
+      ],
+      "keywords": [
+        "integer-overflow",
+        "out-of-bounds",
+        "dictionary"
+      ]
+    },
+    "versions": {
+      "patched": [
+        ">= 8.2.0"
+      ]
+    },
+    "source": "crates/zstd-safe/RUSTSEC-2026-0401.md"
+  },
+  {
+    "id": "RUSTSEC-2026-0402",
+    "advisory": {
+      "id": "RUSTSEC-2026-0402",
+      "package": "zstd-safe",
+      "date": "2026-10-16",
+      "url": "https://github.com/gyscos/zstd-rs/commit/682b8b2967cf4aba5cfe2d940d1e381a3e23211a",
+      "references": [
+        "https://github.com/gyscos/zstd-rs/pull/384"
+      ],
+      "informational": "unsound",
+      "categories": [
+        "memory-corruption"
+      ],
+      "keywords": [
+        "buffer-overflow",
+        "experimental",
+        "zstdmt"
+      ]
+    },
+    "versions": {
+      "patched": [
+        ">= 8.2.0"
+      ],
+      "unaffected": [
+        "< 4.1.4"
+      ]
+    },
+    "source": "crates/zstd-safe/RUSTSEC-2026-0402.md"
+  },
+  {
+    "id": "RUSTSEC-2026-0404",
+    "advisory": {
+      "id": "RUSTSEC-2026-0404",
+      "package": "zstd-safe",
+      "date": "2026-10-16",
+      "url": "https://github.com/gyscos/zstd-rs/commit/cee6529b553ec600a8e152aaca15a91598820ecf",
+      "references": [
+        "https://github.com/gyscos/zstd-rs/pull/384"
+      ],
+      "informational": "unsound",
+      "categories": [
+        "memory-corruption"
+      ],
+      "keywords": [
+        "double-free",
+        "experimental"
+      ]
+    },
+    "versions": {
+      "patched": [
+        ">= 8.2.0"
+      ],
+      "unaffected": [
+        "< 4.1.4"
+      ]
+    },
+    "source": "crates/zstd-safe/RUSTSEC-2026-0404.md"
+  },
+  {
+    "id": "RUSTSEC-2026-0405",
+    "advisory": {
+      "id": "RUSTSEC-2026-0405",
+      "package": "zstd-safe",
+      "date": "2026-10-16",
+      "url": "https://github.com/gyscos/zstd-rs/commit/20d397c0d68d8b4300c5493875ebfa10e355fcdd",
+      "references": [
+        "https://github.com/gyscos/zstd-rs/pull/384"
+      ],
+      "informational": "unsound",
+      "categories": [
+        "memory-exposure"
+      ],
+      "keywords": [
+        "seekable",
+        "out-of-bounds"
+      ]
+    },
+    "versions": {
+      "patched": [
+        ">= 8.2.0"
+      ],
+      "unaffected": [
+        "< 7.2.2"
+      ]
+    },
+    "source": "crates/zstd-safe/RUSTSEC-2026-0405.md"
+  },
+  {
+    "id": "RUSTSEC-2026-0406",
+    "advisory": {
+      "id": "RUSTSEC-2026-0406",
+      "package": "zstd-safe",
+      "date": "2026-10-16",
+      "url": "https://github.com/gyscos/zstd-rs/commit/e224018a2389915d68ed17f30109bebad36e9734",
+      "references": [
+        "https://github.com/gyscos/zstd-rs/pull/384"
+      ],
+      "informational": "unsound",
+      "categories": [
+        "memory-corruption"
+      ],
+      "keywords": [
+        "use-after-free",
+        "zstdmt",
+        "dictionary"
+      ]
+    },
+    "versions": {
+      "patched": [
+        ">= 8.2.0"
+      ]
+    },
+    "source": "crates/zstd-safe/RUSTSEC-2026-0406.md"
+  }
+]

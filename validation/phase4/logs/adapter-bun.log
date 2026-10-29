@@ -1,0 +1,113 @@
+
+> @tanod/next@0.4.0 test:bun
+> bun test test/
+
+bun test v1.4.4 (38afee6c8)
+
+test/cache-handler.test.js:
+(pass) shared cache tag invalidations merge across concurrent origins [76.32ms]
+
+test/calibration.test.js:
+(pass) all failed requests produce no recommendation and stop after the baseline [1.59ms]
+(pass) connection failures cannot establish a capacity recommendation [0.28ms]
+(pass) the first failing step bounds the recommendation and stops increasing load [124.93ms]
+(pass) healthy samples apply the margin without claiming unobserved saturation [199.67ms]
+(pass) an explicit latency target can reject even a successful baseline [62.63ms]
+(pass) rising full-response latency stops the load ramp at the prior healthy step [672.86ms]
+(pass) too few samples return an inconclusive result [13.96ms]
+(pass) warm-up is separate from the sustained measurement and workload routes are preserved [145.51ms]
+(pass) warm-up failures remain visible and prevent a healthy classification [75.12ms]
+(pass) latency includes consuming the streamed body [15.39ms]
+(pass) invalid measurement settings are rejected before any load is sent [1.10ms]
+(pass) IPv6 loopback is a local calibration target [62.35ms]
+(pass) the CLI emits an inconclusive JSON report and returns nonzero [46.74ms]
+(pass) the installed CLI calibrates a real local origin and returns usable JSON [247.45ms]
+
+test/capacity.test.js:
+(pass) a global budget is partitioned conservatively across replicas [2.54ms]
+(pass) static partition inputs are complete and mutually exclusive [0.29ms]
+(pass) complete output still requires an explicit local or group ceiling [0.07ms]
+
+test/cli.test.js:
+(pass) direct CLI execution compares complete paths [0.08ms]
+(pass) direct CLI execution resolves an installed bin symlink [0.06ms]
+(pass) direct CLI execution supports Windows path separators [57.18ms]
+
+test/config-hook.test.js:
+(pass) a production build writes the config on the way out [22.16ms]
+(pass) silent means silent [20.75ms]
+(pass) a failed build generates nothing [16.10ms]
+(pass) a build that cannot be read fails rather than warns [18.75ms]
+(pass) a configuration Tanod would reject fails the build that produced it [22.11ms]
+(pass) a failed check preserves the last valid config and removes its temporary file [80.78ms]
+(pass) a good configuration passes the check and the build succeeds [35.78ms]
+(pass) a complete generated config requires an explicit measured ceiling [19.03ms]
+(pass) a group budget writes its conservative allocation into config and identity [22.54ms]
+
+test/generate.test.js:
+(pass) reads a real Next build [0.09ms]
+(pass) the manifest verification history matches the committed build fixture [0.06ms]
+(pass) a missing build is refused with an explanation, not guessed at [0.27ms]
+(skip) the committed fixture still matches the storefront it was copied from
+(pass) dynamic segments become the glob Tanod actually compiles [0.10ms]
+(pass) an optional catch-all also matches its bare parent, as it does in Next [0.04ms]
+(pass) route ids are readable, safe and unique [0.12ms]
+(pass) the build id becomes the deployment id [0.05ms]
+(pass) a stable Next deployment id takes precedence over the data build id [0.40ms]
+(pass) the image route carries the Accept vary that makes it cache at all [0.05ms]
+(pass) prerendered routes are the only ones granted a public class [0.16ms]
+(pass) every dynamically rendered page is private [0.11ms]
+(pass) the catch-all is last, because first match wins [0.14ms]
+(pass) route ids in the output are unique [0.06ms]
+(pass) routes-only output omits what a fragment must not carry [0.36ms]
+(pass) a value from a manifest cannot break out of its YAML position [0.06ms]
+
+test/policy.test.js:
+(pass) a checked-in policy makes an explicitly asserted dynamic page public [2.51ms]
+(pass) inspect names operator evidence and highlights a public override [0.56ms]
+(pass) Pages Router data payloads inherit the document policy [0.46ms]
+(pass) rollout stages preserve privacy while changing reuse behavior [0.94ms]
+(pass) unknown fields and unmatched routes are refused [0.40ms]
+(pass) unsafe public assertions fail closed [0.47ms]
+(pass) redundant prerender and public route-handler assertions are refused [0.25ms]
+(pass) explain is local, shows barriers, and redacts credentials [0.95ms]
+(pass) calibration requires explicit load authorization and route scope [0.30ms]
+(pass) doctor cannot report success when every deployment check was skipped [1.08ms]
+
+test/purge.test.js:
+(pass) the token travels in a header, never in the URL [0.76ms]
+(pass) redirects are refused rather than followed [0.22ms]
+(pass) it POSTs, because a GET that invalidates a cache gets crawled [0.10ms]
+(pass) values are encoded once and delimiters cannot alter the purge query [0.29ms]
+(pass) tags and paths travel in one request [0.11ms]
+(pass) a replicated purge reaches every local Tanod cache [0.23ms]
+(pass) a partial replicated purge is reported as a failure [0.18ms]
+(pass) duplicates collapse [0.10ms]
+(pass) purging everything is spelled out [0.11ms]
+(pass) a value that could not have matched is refused [0.23ms]
+(pass) an empty list is a no-op rather than a purge of everything [0.17ms]
+(pass) a failed purge throws rather than leaving stale content served quietly [0.13ms]
+(pass) a malformed HTTP success response throws rather than pretending the purge worked [0.36ms]
+(pass) revalidateTag immediately expires Next before purging Tanod [10.92ms]
+(pass) it refuses to start without an endpoint or a token [0.19ms]
+
+test/start.test.js:
+(pass) the origin starts first, tanod once it is listening, and SIGTERM stops tanod before the origin [307.29ms]
+(pass) tanod dying stops the origin and passes on its exit code [345.60ms]
+(pass) an origin that exits before listening never gets a tanod in front of it [56.12ms]
+(pass) a missing tanod binary is reported and the origin is stopped [243.91ms]
+(pass) the binary is found explicitly, then via TANOD_BIN, then the platform package, then PATH [0.25ms]
+(pass) start options are checked [0.33ms]
+
+test/tanod-check.test.js:
+(pass) the generated configuration passes `tanod check` [14.32ms]
+(pass) a routes-only fragment is deliberately not a complete config [7.15ms]
+(pass) a small statically partitioned group passes `tanod check` [11.84ms]
+
+1 tests skipped:
+(skip) the committed fixture still matches the storefront it was copied from
+
+ 79 pass
+ 1 skip
+ 0 fail
+Ran 80 tests across 10 files. [3.44s]

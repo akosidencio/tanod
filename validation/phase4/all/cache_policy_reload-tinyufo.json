@@ -1,0 +1,1 @@
+{"benchmark":"cache_policy_reload-tinyufo","started_at":"2026-10-29T04:00:05Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","cache_eviction":"tinyufo","commit":"0adfa2a","render_ms":"20"},"results":{"reloads":"9"}}

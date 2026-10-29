@@ -1,0 +1,14 @@
+   Compiling spike-pingora-cache v0.0.0 (/home/dennispaler/Documents/OpenSource/tanod/spike/pingora-cache)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.69s
+   Doc-tests spike_pingora_cache
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tanod
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

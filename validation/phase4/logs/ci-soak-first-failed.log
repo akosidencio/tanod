@@ -1,0 +1,13 @@
+2026-10-29T03:28:25.8696034Z   soak.sh 45 8
+2026-10-29T03:28:25.8696292Z ==================================================================
+2026-10-29T03:28:26.1929231Z soaking for 45s with 8 workers
+2026-10-29T03:29:13.0300198Z 
+2026-10-29T03:29:13.0300704Z traffic
+2026-10-29T03:29:13.0301419Z   requests               10312
+2026-10-29T03:29:13.0301894Z   200                    8592
+2026-10-29T03:29:13.0302200Z   503 (shed, by design)  0
+2026-10-29T03:29:13.0302496Z   aborted (by design)    0
+2026-10-29T03:29:13.0302781Z   abort arm raced        1720
+2026-10-29T03:29:13.0303081Z   anything else          0
+2026-10-29T03:29:13.0307921Z FAIL: requests aborted mid-body (the disconnect path was never exercised): expected more than 0, observed 0
+

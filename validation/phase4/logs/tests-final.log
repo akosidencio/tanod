@@ -1,0 +1,714 @@
+   Compiling slow-origin v0.0.0 (/home/dennispaler/Documents/OpenSource/tanod/bench/slow-origin)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.54s
+     Running unittests src/main.rs (target/debug/deps/loadgen-afd9bd3f87829f6d)
+
+running 1 test
+test tests::window_end_preserves_samples_when_the_last_response_hangs ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
+
+     Running unittests src/main.rs (target/debug/deps/slow_origin-7d43613c6337ced5)
+
+running 3 tests
+test tests::base64_pads_every_remainder ... ok
+test tests::sha1_matches_the_published_vectors ... ok
+test tests::the_accept_key_matches_the_rfc_6455_example ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/spike_pingora_cache-3fbd581ece0610fd)
+
+running 6 tests
+test tests::a_malformed_write_tag_is_a_miss_not_a_crash ... ok
+test tests::a_streaming_lookup_for_a_vanished_write_does_not_panic ... ok
+test tests::question_1b_an_oversized_body_is_not_stored ... ok
+test tests::question_3_collapse_with_nothing_retained ... ok
+test tests::question_1_we_can_own_the_store_and_bound_it ... ok
+test tests::question_2_a_waiter_gets_the_first_chunk_before_the_render_finishes ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests src/lib.rs (target/debug/deps/tanod-eb45bcd46b86c048)
+
+running 588 tests
+test admin::drain::tests::a_fresh_state_is_not_draining ... ok
+test admin::drain::tests::fast_shutdown_is_not_delayed_or_reported_as_a_drain ... ok
+test admin::drain::tests::the_manual_watcher_exits_when_the_server_broadcasts_shutdown ... ok
+test admin::drain::tests::without_a_supervised_origin_sigquit_is_still_an_upgrade ... ok
+test admin::drain::tests::beginning_a_drain_records_when_and_why ... ok
+test admin::drain::tests::a_second_drain_does_not_restart_the_clock ... ok
+test admin::tests::a_fresh_instance_is_ready ... ok
+test admin::tests::backend_state_in_the_status_document_tracks_health_checking ... ok
+test admin::tests::an_unhealthy_pool_only_fails_readiness_when_asked_for ... ok
+test admin::tests::draining_makes_readiness_fail_before_anything_stops_serving ... ok
+test admin::tests::purge_accepts_paths_beside_tags ... ok
+test admin::tests::liveness_does_not_follow_readiness ... ok
+test admin::tests::purge_bounds_how_many_paths_one_request_may_name ... ok
+test admin::tests::purge_bounds_how_many_tags_one_request_may_name ... ok
+test admin::tests::purge_authorises_before_it_parses ... ok
+test admin::tests::purge_accepts_a_correct_token ... ok
+test admin::tests::purge_query_parsing_rejects_what_it_does_not_understand ... ok
+test admin::tests::purge_does_not_exist_without_a_token ... ok
+test admin::tests::purge_needs_to_be_told_what_to_purge ... ok
+test admin::tests::purge_refuses_a_relative_path ... ok
+test admin::tests::purge_refuses_percent_decoded_values_that_are_not_utf8 ... ok
+test admin::tests::purge_values_are_percent_decoded_once ... ok
+test admin::tests::secret_comparison_is_length_then_constant_time ... ok
+test admin::tests::purge_refuses_a_missing_or_wrong_token ... ok
+test admin::tests::the_drain_reason_is_a_closed_set_not_free_text ... ok
+test admin::tests::status_reports_running_work_above_a_lowered_limit ... ok
+test admin::tests::the_status_document_is_parseable_json_with_the_operational_fields ... ok
+test admin::tests::the_status_document_exposes_the_replica_group_budget ... ok
+test admin::tests::the_status_document_reports_health_and_ejection_separately ... ok
+test admin::tests::the_status_document_reports_the_live_generation_not_the_startup_one ... ok
+test admission::limiter::tests::a_ceiling_bounds_units_of_work_rather_than_requests ... ok
+test admission::limiter::tests::a_partial_debt_settlement_releases_the_whole_weight_from_in_flight ... ok
+test admin::drain::tests::with_a_supervised_origin_sigquit_drains_and_stops_instead_of_upgrading ... ok
+test admission::limiter::tests::a_queued_waiter_is_counted_once_admitted ... ok
+test admission::limiter::tests::a_released_permit_admits_the_next_request ... ok
+test admission::limiter::tests::a_request_cancelled_while_admitted_releases_its_units ... ok
+test admission::limiter::tests::a_waiter_cancelled_in_the_queue_takes_no_units ... ok
+test admission::limiter::tests::a_weighted_request_occupies_its_whole_weight ... ok
+test admin::tests::the_status_document_says_whether_purge_is_enabled ... ok
+test admission::limiter::tests::a_weighted_return_settles_shrink_debt_unit_by_unit ... ok
+test admission::limiter::tests::a_zero_weight_still_takes_a_slot ... ok
+test admission::limiter::tests::admits_up_to_the_limit_and_no_further ... ok
+test admission::limiter::tests::growing_after_a_shrink_counts_new_work_on_top_of_the_old ... ok
+test admission::limiter::tests::growing_by_less_than_the_debt_leaves_the_remainder_owed ... ok
+test admission::limiter::tests::growing_cancels_a_pending_shrink ... ok
+test admission::limiter::tests::growing_the_limit_admits_more_immediately ... ok
+test admission::limiter::tests::in_flight_counts_weighted_units_not_requests ... ok
+test admission::limiter::tests::concurrent_releases_and_resizes_never_lose_or_invent_units ... ok
+test admission::limiter::tests::a_queue_timeout_takes_no_units ... ok
+test admission::limiter::tests::releasing_a_weighted_permit_returns_every_unit ... ok
+test admission::limiter::tests::repeated_grow_and_shrink_cycles_settle_exactly ... ok
+test admission::limiter::tests::shed_metric_labels_match_the_reason ... ok
+test admission::limiter::tests::shrinking_a_full_limiter_keeps_reporting_the_work_still_running ... ok
+test admin::tests::status_reports_tinyufo_and_admission_rejections ... ok
+test admission::limiter::tests::shrinking_below_occupancy_reports_more_than_the_limit_until_drained ... ok
+test admission::limiter::tests::shrinking_never_over_admits_while_requests_are_in_flight ... ok
+test admission::tests::a_global_refusal_after_route_and_tier_admission_leaves_no_units_behind ... ok
+test admission::tests::a_heavier_route_consumes_more_of_the_ceiling ... ok
+test admission::tests::a_retired_route_limiter_keeps_its_work_until_the_permit_returns ... ok
+test admission::tests::a_route_removed_from_config_leaves_the_registry ... ok
+test admission::tests::a_route_slot_is_returned_when_the_global_limit_refuses ... ok
+test admission::tests::a_tier_ceiling_never_exceeds_the_global_one ... ok
+test admission::tests::a_tier_share_that_rounds_to_nothing_still_admits_one_request ... ok
+test admission::tests::a_tier_slot_is_returned_when_the_global_limit_refuses ... ok
+test admission::tests::admission_requires_both_route_and_global_capacity ... ok
+test admission::tests::an_oversubscribing_reload_reports_running_work_at_every_layer ... ok
+test admission::tests::every_permit_a_weighted_request_took_is_returned_together ... ok
+test admission::tests::low_priority_traffic_cannot_consume_the_reserved_capacity ... ok
+test admission::limiter::tests::queue_deadline_sheds_rather_than_waiting_forever ... ok
+test admission::tests::reload_resizes_in_place_and_keeps_the_same_limiter ... ok
+test admission::tests::reload_resizes_the_tiers_along_with_the_global_ceiling ... ok
+test admission::tests::static_and_streaming_bypass_the_permit_entirely ... ok
+test admission::tests::the_default_priorities_let_every_tier_use_the_whole_ceiling ... ok
+test admission::limiter::tests::queue_is_bounded_and_refuses_immediately_when_full ... ok
+test admission::tests::weight_is_charged_to_the_route_and_the_tier_as_well ... ok
+test admin::drain::tests::a_manual_pre_drain_is_not_paid_twice_on_sigterm ... ok
+test admission::limiter::tests::shrinking_absorbs_a_returned_permit_before_a_waiter_can_take_it ... ok
+test cache::eviction::tests::repeated_removal_compacts_lazy_queue_records ... ok
+test admission::tests::the_shorter_global_queue_deadline_wins_over_a_route_deadline ... ok
+test cache::key::proptests::canonical_query_is_idempotent ... ok
+test admin::drain::tests::graceful_termination_waits_before_pingora_sees_the_signal ... ok
+test cache::eviction::tests::pressure_handles_large_weight_gaps_with_bounded_tokens ... ok
+test cache::key::proptests::a_separator_in_a_component_cannot_shift_a_boundary ... ok
+test admission::tests::origin_concurrency_never_exceeds_the_configured_maximum ... ok
+test cache::key::proptests::a_separator_in_a_variant_value_cannot_forge_an_extra_variant ... ok
+test cache::key::proptests::distinct_accept_encodings_do_not_share_an_entry ... ok
+test cache::key::proptests::include_policy_admits_only_listed_keys ... ok
+test cache::key::proptests::exclude_policy_removes_every_listed_key ... ok
+test cache::key::tests::an_empty_deployment_id_is_not_the_same_as_none ... ok
+test cache::key::tests::brotli_and_gzip_clients_get_separate_entries ... ok
+test cache::key::tests::canonical_string_cannot_confuse_component_boundaries ... ok
+test cache::key::tests::canonical_string_matches_key_equality ... ok
+test cache::key::tests::deployment_id_prevents_reuse_across_builds ... ok
+test cache::key::tests::different_paths_are_different_keys ... ok
+test cache::key::tests::duplicate_query_parameter_order_is_preserved ... ok
+test cache::key::tests::encoding_preference_order_remains_distinct ... ok
+test cache::key::tests::exclude_policy_drops_only_listed_parameters ... ok
+test cache::key::tests::explicitly_refused_encoding_is_not_selected ... ok
+test cache::key::tests::fingerprint_is_stable_and_distinguishing ... ok
+test cache::key::tests::host_case_and_default_port_normalize ... ok
+test cache::key::tests::include_policy_drops_unlisted_parameters ... ok
+test cache::key::tests::no_policy_keeps_every_parameter ... ok
+test cache::key::tests::non_default_ports_are_not_removed ... ok
+test cache::key::tests::query_parameter_order_does_not_split_the_entry ... ok
+test cache::key::tests::rsc_variant_separates_flight_payload_from_document ... ok
+test cache::key::tests::the_canonical_encoding_is_byte_for_byte_stable ... ok
+test cache::key::tests::valueless_and_empty_query_parameters_are_distinct ... ok
+test cache::key::tests::variant_values_that_are_not_ascii_still_separate_entries ... ok
+test cache::key::proptests::deployment_ids_never_share_an_entry ... ok
+test cache::policy::proptests::cookie_bearing_requests_bypass_unless_a_route_overrides ... ok
+test cache::key::proptests::unique_query_parameters_are_order_insensitive ... ok
+test cache::policy::proptests::no_store_is_honoured_unless_explicitly_overridden ... ok
+test cache::policy::proptests::route_ttl_max_is_never_exceeded ... ok
+test cache::policy::proptests::origin_ttl_binds_unless_overridden ... ok
+test cache::policy::proptests::s_maxage_outranks_max_age ... ok
+test cache::policy::proptests::uncacheable_statuses_are_never_stored ... ok
+test cache::key::proptests::variant_values_cannot_forge_another_key ... ok
+test cache::policy::proptests::unknown_directives_do_not_change_the_parse ... ok
+test cache::policy::proptests::vary_outside_the_key_is_never_shareable ... ok
+test cache::policy::tests::coalesce_only_shares_the_flight_without_storing ... ok
+test cache::policy::tests::coalesce_override_can_share_no_store_for_one_flight_only ... ok
+test cache::policy::tests::coalescing_can_remain_enabled_when_persistent_caching_is_off ... ok
+test cache::policy::tests::disabling_cache_and_coalescing_bypasses_pingora_cache_entirely ... ok
+test cache::policy::tests::origin_vary_inside_the_key_is_fine ... ok
+test cache::policy::tests::origin_vary_outside_the_key_blocks_storage ... ok
+test cache::policy::tests::override_lets_a_no_store_next_route_microcache ... ok
+test cache::policy::tests::parses_cache_control_directives ... ok
+test cache::policy::tests::private_response_is_never_stored ... ok
+test cache::policy::tests::route_ttl_ceiling_shrinks_but_never_grows_origin_ttl ... ok
+test cache::policy::tests::s_maxage_outranks_max_age_for_a_shared_cache ... ok
+test cache::policy::tests::set_cookie_beats_every_override ... ok
+test cache::policy::tests::silent_origin_means_no_storage ... ok
+test cache::policy::tests::uncacheable_status_is_not_shared ... ok
+test cache::policy::tests::vary_star_is_never_shareable ... ok
+test cache::store::phase1_tests::a_post_purge_replacement_survives_old_writer_completion ... ok
+test cache::store::phase1_tests::cancellation_after_purge_wakes_waiting_followers_and_releases_once ... ok
+test cache::policy::proptests::vary_star_is_never_shareable ... ok
+test cache::store::phase1_tests::completion_and_purge_in_both_orders_never_resurrect_a_fill ... ok
+test cache::key::proptests::malformed_metadata_never_panics ... ok
+test cache::store::phase1_tests::late_retired_transient_writer_leaves_no_handoff ... ok
+test cache::store::phase1_tests::purge_between_pingora_registration_and_leader_handoff_is_safe ... ok
+test cache::store::phase1_tests::purge_closes_attachment_but_existing_followers_keep_streaming ... ok
+test cache::store::phase2_tests::a_budget_exhausted_before_the_first_body_byte_still_serves_the_response ... ok
+test cache::store::phase2_tests::a_doomed_metadata_reservation_does_not_empty_the_cache ... ok
+test cache::store::phase2_tests::a_fill_that_runs_out_mid_body_completes_for_every_reader_and_is_not_stored ... ok
+test cache::store::phase2_tests::a_purge_during_an_abandoned_fill_keeps_its_readers_and_its_accounting ... ok
+test cache::store::phase2_tests::an_abandoned_transient_fill_skips_the_handoff ... ok
+test cache::store::phase2_tests::an_oversized_body_is_cut_off_at_the_bound ... ok
+test cache::store::phase2_tests::cancellation_at_every_stage_releases_exactly_once ... ok
+test cache::store::phase2_tests::completed_entries_never_make_the_store_refuse_new_fills ... ok
+test cache::store::phase2_tests::eviction_under_pressure_respects_each_bound ... ok
+test cache::store::phase2_tests::exhausting_the_headroom_ends_the_fill_and_its_readers_without_hanging ... ok
+test cache::policy::proptests::set_cookie_is_never_shareable ... ok
+test cache::store::phase2_tests::metadata_larger_than_the_budget_is_refused_without_side_effects ... ok
+test cache::store::phase2_tests::namespace_retirement_during_an_abandoned_fill ... ok
+test cache::store::phase1_tests::competing_lookup_completion_and_purge_preserve_accounting ... ok
+test cache::store::phase2_tests::simultaneous_fills_share_one_budget_and_one_headroom ... ok
+test cache::store::phase31_tests::completion_between_the_two_map_reads_is_visible ... ok
+test cache::store::phase31_tests::late_retired_fill_only_transfers_its_reserved_leader ... ok
+test cache::store::phase31_tests::dropping_an_unpolled_finish_releases_the_writer_once ... ok
+test cache::store::phase31_tests::eviction_between_admission_and_removal_preserves_attached_readers ... ok
+test cache::store::phase31_tests::purge_and_retirement_before_completion_block_admission ... ok
+test cache::store::phase31_tests::purge_and_retirement_after_admission_remove_the_completed_entry ... ok
+test cache::store::phase3_tests::a_large_write_seals_the_tail_before_it_and_keeps_order ... ok
+test cache::store::phase3_tests::a_reader_never_sees_past_what_was_published ... ok
+test cache::store::phase3_tests::a_replacement_is_not_evicted_through_its_old_queue_record ... ok
+test cache::policy::proptests::cache_control_parsing_never_panics ... ok
+test cache::key::proptests::canonical_string_is_injective ... ok
+test cache::store::phase3_tests::concurrent_fast_and_slow_reservations_never_overcommit ... ok
+test cache::store::phase1_tests::lookup_during_transient_completion_cannot_observe_a_handoff_gap ... ok
+test cache::store::phase3_tests::freezing_an_empty_body_yields_an_empty_entry ... ok
+test cache::store::phase3_tests::freezing_large_segments_shares_them_without_copying ... ok
+test cache::store::phase3_tests::freezing_many_small_segments_compacts_them ... ok
+test cache::store::phase3_tests::hits_share_the_stored_body_instead_of_copying_it ... ok
+test cache::store::phase3_tests::followers_and_later_hits_receive_the_exact_body ... ok
+test cache::store::phase3_tests::retired_queue_records_stay_bounded ... ok
+test cache::store::phase3_tests::sealing_the_tail_keeps_a_reader_mid_tail_at_its_offset ... ok
+test cache::store::phase3_tests::seeking_a_finished_entry_reads_from_any_offset ... ok
+test cache::store::phase3_tests::small_writes_accumulate_and_seal_at_the_threshold ... ok
+test cache::store::phase3_tests::completions_racing_purges_leave_consistent_accounting ... ok
+test cache::store::phase3_tests::two_small_segments_are_joined_so_a_hit_is_one_write ... ok
+test cache::store::tests::a_path_purge_also_cleans_the_tag_index ... ok
+test cache::store::tests::a_path_purge_prevents_a_matching_in_progress_fill_from_being_admitted ... ok
+test cache::store::tests::a_re_stored_entry_does_not_leave_a_stale_tag_pointing_at_it ... ok
+test cache::store::tests::a_re_stored_entry_keeps_tags_shared_by_both_revisions ... ok
+test cache::store::tests::a_streaming_tag_never_falls_back_to_an_unrelated_entry ... ok
+test cache::store::tests::a_tag_pointing_at_nothing_is_dropped_from_the_index ... ok
+test cache::store::tests::a_tag_purge_prevents_a_matching_in_progress_fill_from_being_admitted ... ok
+test cache::store::tests::a_transient_entry_is_never_persistently_indexed ... ok
+test cache::store::tests::an_entry_is_indexed_under_every_tag_the_origin_declared ... ok
+test cache::store::tests::an_entry_with_no_remembered_path_is_not_purged_by_an_empty_path ... ok
+test cache::store::tests::an_in_process_hit_costs_microseconds_not_milliseconds ... ok
+test cache::store::tests::carrying_the_path_does_not_change_the_cache_key ... ok
+test cache::store::phase31_tests::thousands_of_completions_on_distinct_keys_balance_reservations ... ok
+test cache::store::tests::clock_spares_an_entry_that_has_been_read ... ok
+test cache::store::tests::dropping_an_incomplete_fill_releases_memory_and_removes_the_temp_entry ... ok
+test cache::store::tests::eviction_also_cleans_the_tag_index ... ok
+test cache::store::tests::eviction_terminates_when_every_entry_is_hot ... ok
+test cache::store::tests::fifo_ignores_reads_entirely ... ok
+test cache::store::tests::in_progress_fills_count_toward_the_global_budget ... ok
+test cache::store::tests::lookup_prefers_a_finished_entry_over_a_new_write ... ok
+test cache::store::tests::lookup_serves_a_write_that_is_still_in_progress ... ok
+test cache::store::tests::lookup_still_misses_when_there_is_nothing_at_all ... ok
+test cache::store::tests::metadata_updates_replace_the_tag_index_membership ... ok
+test cache::store::tests::pingoras_purge_hook_invalidates_a_fill_in_progress ... ok
+test cache::store::tests::pingoras_purge_hook_removes_an_entry_for_either_kind_of_target ... ok
+test cache::store::tests::purge_all_prevents_old_deployment_fills_from_being_admitted_late ... ok
+test cache::store::tests::purging_a_path_is_exact_not_a_prefix ... ok
+test cache::store::tests::purging_a_path_removes_every_variant_of_it ... ok
+test cache::store::tests::purging_a_path_returns_its_bytes_to_the_budget ... ok
+test cache::store::tests::purging_a_tag_removes_every_entry_carrying_it ... ok
+test cache::store::tests::purging_an_unknown_path_changes_nothing ... ok
+test cache::store::tests::purging_an_unknown_tag_changes_nothing ... ok
+test cache::store::tests::purging_everything_empties_the_cache_and_the_index ... ok
+test cache::store::tests::purging_returns_the_bytes_to_the_budget ... ok
+test cache::store::tests::purging_several_paths_at_once ... ok
+test cache::store::tests::tag_parsing_is_bounded_on_every_axis ... ok
+test cache::store::tests::tinyufo_abandoned_and_invalidated_fills_release_their_reservations ... ok
+test cache::store::tests::tinyufo_can_purge_and_replace_the_same_key_without_stale_queue_records ... ok
+test cache::store::phase3_tests::lookup_during_stored_completion_cannot_observe_a_gap ... ok
+test cache::store::tests::tinyufo_metadata_growth_shrink_and_new_tags_remain_accounted ... ok
+test cache::store::tests::tinyufo_preserves_expiry_and_stale_windows_through_revalidation ... ok
+test cache::store::tests::tinyufo_pressure_evicts_completed_entries_for_a_large_streaming_fill ... ok
+test cache::store::tests::tinyufo_concurrent_fills_purges_and_reads_preserve_accounting ... ok
+test cache::store::tests::tinyufo_purge_hides_a_rejected_handoff_from_new_readers ... ok
+test cache::store::tests::tinyufo_rejected_fills_keep_a_bounded_follower_handoff ... ok
+test cache::tests::only_an_oversized_response_is_remembered ... ok
+test classifier::generic::tests::a_websocket_handshake_is_an_upgrade_not_a_document ... ok
+test classifier::generic::tests::accept_header_cannot_bypass_admission ... ok
+test classifier::generic::tests::an_upgrade_is_never_shareable_and_never_holds_a_render_permit ... ok
+test classifier::generic::tests::an_upgrade_outranks_the_cookie_and_query_rules ... ok
+test classifier::generic::tests::authorization_is_always_private ... ok
+test classifier::generic::tests::cookies_are_private_by_default ... ok
+test classifier::generic::tests::plain_get_is_a_public_document ... ok
+test classifier::generic::tests::query_string_demotes_to_public_dynamic ... ok
+test classifier::generic::tests::streaming_does_not_consume_an_origin_permit ... ok
+test classifier::generic::tests::writes_are_mutations ... ok
+test classifier::nextjs::tests::a_non_ascii_byte_elsewhere_in_the_header_cannot_hide_the_draft_cookie ... ok
+test classifier::nextjs::tests::a_plain_document_keys_absent_rsc_variant_headers ... ok
+test classifier::nextjs::tests::an_unreadable_action_id_is_still_a_mutation ... ok
+test classifier::nextjs::tests::an_unreadable_prefetch_header_is_still_a_prefetch ... ok
+test classifier::nextjs::tests::draft_cookie_match_is_exact_not_substring ... ok
+test classifier::nextjs::tests::draft_mode_bypasses_even_on_a_public_looking_path ... ok
+test classifier::nextjs::tests::next_static_assets_are_static ... ok
+test classifier::nextjs::tests::prefetch_rsc_is_coalesced_but_never_stored ... ok
+test classifier::nextjs::tests::rsc_requests_put_the_variant_headers_in_the_key ... ok
+test classifier::nextjs::tests::segment_prefetch_is_also_coalesced_but_never_stored ... ok
+test classifier::nextjs::tests::server_actions_bypass_everything ... ok
+test classifier::proptests::a_present_cookie_is_always_found ... ok
+test cache::store::tests::transient_fills_exist_only_for_the_follower_handoff ... ok
+test classifier::proptests::an_absent_cookie_is_never_found ... ok
+test classifier::proptests::classification_never_panics ... ok
+test classifier::proptests::draft_mode_always_forces_a_bypass ... ok
+test cache::store::tests::clock_beats_fifo_on_a_skewed_workload ... ok
+test config::env::tests::a_backslash_before_a_multibyte_character_does_not_panic ... ok
+test config::env::tests::a_default_covers_an_unset_or_empty_variable ... ok
+test config::env::tests::a_dollar_dollar_escape_is_a_literal ... ok
+test config::env::tests::a_reference_is_filled_from_the_environment ... ok
+test classifier::proptests::cookies_spread_over_repeated_headers_are_found ... ok
+test config::env::tests::a_value_cannot_change_the_document_structure ... ok
+test config::env::tests::an_unset_variable_is_an_error_naming_it_and_its_line ... ok
+test config::env::tests::comments_are_left_alone ... ok
+test classifier::proptests::server_actions_are_always_mutations ... ok
+test config::env::tests::malformed_references_are_refused ... ok
+test config::env::tests::a_reference_is_replaced_and_nothing_else ... ok
+test config::env::tests::text_without_references_is_unchanged ... ok
+test config::units::tests::parses_binary_sizes ... ok
+test config::units::tests::parses_each_duration_unit ... ok
+test config::units::tests::rejects_decimal_size_units ... ok
+test config::units::tests::rejects_unitless_duration ... ok
+test config::units::tests::rejects_unknown_duration_unit ... ok
+test config::validation::tests::a_batch_larger_than_the_queue_is_refused ... ok
+test config::validation::tests::a_breaker_that_trips_on_the_first_failure_is_refused ... ok
+test config::validation::tests::a_breaker_with_one_upstream_is_refused_rather_than_left_inert ... ok
+test config::validation::tests::a_failure_threshold_outside_a_percentage_is_refused ... ok
+test config::validation::tests::a_malformed_admin_address_is_refused ... ok
+test config::validation::tests::a_malformed_tag_header_name_is_refused ... ok
+test config::validation::tests::a_priority_share_outside_a_percentage_is_refused ... ok
+test config::validation::tests::a_priority_share_that_rounds_to_no_capacity_is_refused ... ok
+test config::validation::tests::a_purge_token_that_cannot_travel_in_a_header_is_refused ... ok
+test config::validation::tests::a_purge_token_without_an_admin_listener_is_refused ... ok
+test config::validation::tests::a_request_header_as_the_tag_source_is_refused ... ok
+test config::validation::tests::a_retry_budget_above_one_hundred_percent_is_refused ... ok
+test config::validation::tests::a_retry_budget_of_nothing_at_all_is_refused ... ok
+test config::validation::tests::a_retry_setting_that_can_never_retry_is_refused ... ok
+test config::validation::tests::a_route_priority_is_accepted_once_the_tiers_differ ... ok
+test config::validation::tests::a_route_priority_with_no_tier_shares_set_is_refused ... ok
+test config::validation::tests::a_short_purge_token_is_refused ... ok
+test config::validation::tests::a_tracing_block_without_export_is_accepted ... ok
+test config::validation::tests::a_weight_larger_than_its_own_route_ceiling_is_refused ... ok
+test config::validation::tests::a_weight_larger_than_its_priority_tier_is_refused ... ok
+test config::validation::tests::a_weight_larger_than_the_global_ceiling_is_refused ... ok
+test config::validation::tests::a_wildcard_admin_listener_may_not_cover_a_specific_metrics_listener ... ok
+test config::validation::tests::a_zero_shutdown_timeout_is_refused ... ok
+test config::validation::tests::a_zero_weight_is_refused ... ok
+test config::validation::tests::absent_worker_threads_means_every_available_cpu ... ok
+test config::validation::tests::accepts_a_configured_breaker_retry_budget_and_priorities ... ok
+test config::validation::tests::accepts_a_conservative_static_replica_partition ... ok
+test config::validation::tests::accepts_a_customised_overload_page ... ok
+test config::validation::tests::accepts_a_minimal_config ... ok
+test config::validation::tests::accepts_a_properly_fenced_override ... ok
+test config::validation::tests::accepts_a_purge_token_alongside_an_admin_listener ... ok
+test config::validation::tests::accepts_a_supervised_origin_on_loopback ... ok
+test config::validation::tests::accepts_ipv4_ipv6_and_bare_addresses_in_the_trust_list ... ok
+test config::env::tests::text_without_a_dollar_is_unchanged ... ok
+test config::validation::tests::accepts_least_loaded_selection ... ok
+test config::validation::tests::accepts_requeue_now_that_lock_timeouts_have_an_implemented_path ... ok
+test config::validation::tests::accepts_prior_knowledge_h2c_to_the_origin ... ok
+test config::validation::tests::accepts_the_next_js_cache_tag_header ... ok
+test config::validation::tests::accepts_respect_origin_true_because_that_is_the_behaviour ... ok
+test config::validation::tests::an_ambiguous_sample_ratio_is_refused ... ok
+test config::validation::tests::all_eviction_policies_are_accepted ... ok
+test config::validation::tests::an_ejection_cap_that_rounds_to_no_backends_is_refused ... ok
+test config::validation::tests::an_ipv4_wildcard_does_not_claim_a_specific_ipv6_address ... ok
+test config::validation::tests::an_https_otlp_endpoint_needs_the_tls_feature_rather_than_being_downgraded ... ok
+test config::validation::tests::an_unknown_schema_version_is_refused_and_names_both_numbers ... ok
+test config::validation::tests::an_ipv6_wildcard_is_conservatively_treated_as_dual_stack ... ok
+test config::validation::tests::rejects_a_body_limit_larger_than_the_cache_budget ... ok
+test config::validation::tests::rejects_a_forwarded_source_with_nobody_to_believe ... ok
+test config::validation::tests::rejects_a_queue_deadline_longer_than_the_maximum ... ok
+test config::validation::tests::metric_export_settings_are_checked ... ok
+test config::validation::tests::rejects_a_replica_partition_that_multiplies_the_global_budget ... ok
+test config::validation::tests::rejects_a_spool_ceiling_that_can_never_be_met ... ok
+test config::validation::tests::rejects_alpn_negotiation_over_cleartext ... ok
+test config::validation::tests::rejects_an_empty_replica_capacity_contract ... ok
+test config::validation::tests::rejects_a_supervised_origin_that_cannot_be_the_upstream ... ok
+test config::validation::tests::rejects_an_origin_ca_that_the_connector_would_ignore ... ok
+test config::validation::tests::rejects_an_oversized_overload_page_file ... ok
+test config::validation::tests::rejects_an_unparseable_trusted_proxy_block ... ok
+test config::validation::tests::rejects_an_upgrade_ceiling_that_admits_nothing ... ok
+test config::validation::tests::rejects_cache_override_on_private_route ... ok
+test config::validation::tests::rejects_an_overload_page_that_would_misbehave ... ok
+test config::validation::tests::rejects_cache_override_without_declared_class ... ok
+test config::validation::tests::rejects_coalesce_wait_shorter_than_origin_timeout ... ok
+test config::validation::tests::rejects_cache_override_without_ttl_ceiling ... ok
+test config::validation::tests::rejects_config_that_would_silently_do_nothing ... ok
+test config::validation::tests::rejects_duplicate_route_ids ... ok
+test config::validation::tests::rejects_hostname_verification_without_chain_verification ... ok
+test config::validation::tests::rejects_invalid_listeners_and_upstreams_before_pingora_can_panic ... ok
+test config::validation::tests::rejects_invalid_or_duplicate_vary_headers ... ok
+test config::validation::tests::rejects_concurrency_values_above_tokios_semaphore_maximum ... ok
+test config::validation::tests::rejects_queue_without_deadline ... ok
+test config::validation::tests::rejects_spooling_a_streaming_route ... ok
+test config::validation::tests::rejects_tls_when_the_binary_cannot_serve_it ... ok
+test config::validation::tests::rejects_unknown_keys ... ok
+test config::validation::tests::rejects_varying_on_a_credential_header ... ok
+test config::validation::tests::the_admin_listener_is_accepted_on_its_own_address ... ok
+test config::validation::tests::strict_upstream_readiness_requires_an_active_health_check ... ok
+test config::validation::tests::the_admin_listener_may_not_share_an_address_with_metrics ... ok
+test config::validation::tests::the_admin_listener_may_not_hide_under_a_wildcard_traffic_listener ... ok
+test config::validation::tests::the_default_trust_policy_is_accepted_and_believes_nobody ... ok
+test config::validation::tests::the_admin_listener_may_not_share_an_address_with_traffic ... ok
+test config::validation::tests::the_pid_file_and_upgrade_socket_may_not_be_the_same_path ... ok
+test config::validation::tests::the_longest_accepted_queue_deadline_is_a_representable_instant ... ok
+test config::validation::tests::worker_threads_must_be_between_one_and_the_ceiling ... ok
+test config::env::tests::expansion_never_panics ... ok
+test net::forwarded::proptests::an_untrusted_peer_cannot_move_the_answer ... ok
+test net::forwarded::proptests::a_believed_host_is_always_a_plain_authority ... ok
+test net::forwarded::tests::a_bare_address_is_a_single_host ... ok
+test net::forwarded::tests::a_chain_that_is_entirely_trusted_falls_back_to_the_leftmost ... ok
+test net::forwarded::tests::a_peerless_connection_does_not_become_trusted ... ok
+test net::forwarded::tests::a_single_overwritten_value_is_used_whatever_the_chain_length ... ok
+test net::forwarded::tests::a_spoofed_prefix_cannot_choose_the_scheme_or_host ... ok
+test net::forwarded::tests::a_tls_listener_reports_https_with_no_headers_at_all ... ok
+test net::forwarded::tests::a_trusted_peer_is_believed ... ok
+test net::forwarded::tests::an_invented_scheme_never_reaches_the_cache_key ... ok
+test net::forwarded::tests::an_ipv4_mapped_peer_matches_an_ipv4_block ... ok
+test net::forwarded::tests::an_unalignable_list_uses_the_peers_own_entry ... ok
+test net::forwarded::tests::an_untrusted_peer_cannot_set_the_host ... ok
+test net::forwarded::tests::an_untrusted_peer_is_the_client_whatever_it_claims ... ok
+test net::forwarded::tests::case_and_whitespace_do_not_change_the_scheme ... ok
+test net::forwarded::tests::cidr_matches_only_inside_the_prefix ... ok
+test net::forwarded::tests::entries_with_ports_and_brackets_still_parse ... ok
+test net::forwarded::tests::ipv6_blocks_and_bracketed_literals_parse ... ok
+test net::forwarded::tests::malformed_hosts_are_ignored_not_forwarded ... ok
+test net::forwarded::tests::multiple_trusted_proxies_resolve_to_the_edge_hop ... ok
+test net::forwarded::tests::nonsense_cidrs_are_rejected_at_parse_time ... ok
+test net::forwarded::tests::obfuscated_and_unknown_hops_are_skipped_not_fatal ... ok
+test net::forwarded::tests::repeated_headers_are_one_chain_in_order ... ok
+test net::forwarded::tests::rfc_7239_forwarded_is_parsed_when_selected ... ok
+test net::forwarded::tests::rfc_7239_takes_proto_and_host_from_the_chosen_element ... ok
+test net::forwarded::tests::the_default_port_is_dropped_for_the_effective_scheme_only ... ok
+test net::forwarded::tests::the_host_is_not_read_unless_configured ... ok
+test net::forwarded::tests::the_public_port_is_explicit_or_the_schemes_default ... ok
+test net::forwarded::tests::the_walk_stops_at_the_first_untrusted_hop_from_the_right ... ok
+test net::forwarded::tests::well_formed_authorities_normalise ... ok
+test net::forwarded::tests::x_forwarded_headers_are_ignored_when_forwarded_is_selected ... ok
+test policy::matcher::tests::an_invalid_method_is_a_config_error ... ok
+test policy::matcher::tests::double_star_matches_nested_paths ... ok
+test policy::matcher::tests::exact_path_does_not_match_children ... ok
+test policy::matcher::tests::host_must_match_when_specified ... ok
+test policy::matcher::tests::method_list_is_enforced ... ok
+test policy::overload_page::tests::a_browser_navigation_gets_the_page ... ok
+test policy::overload_page::tests::a_custom_template_replaces_the_built_in_one ... ok
+test policy::overload_page::tests::a_disabled_page_renders_nothing ... ok
+test policy::overload_page::tests::a_message_may_use_the_number_placeholders ... ok
+test policy::overload_page::tests::configured_text_is_escaped ... ok
+test policy::overload_page::tests::data_requests_keep_the_bare_status ... ok
+test policy::overload_page::tests::the_default_page_fills_every_placeholder ... ok
+test net::forwarded::proptests::the_scheme_is_always_http_or_https ... ok
+test policy::reload::phase1_tests::reload_preserves_privacy_guards_and_framework_variants ... ok
+test net::forwarded::proptests::parsing_never_panics ... ok
+test policy::reload::phase1_tests::unrelated_and_identical_reloads_keep_real_cache_hits ... ok
+test policy::reload::tests::a_missing_file_is_refused ... ok
+test policy::reload::tests::a_valid_change_is_applied_and_bumps_the_generation ... ok
+test policy::reload::tests::an_edit_to_a_custom_overload_page_is_picked_up_on_reload ... ok
+test policy::reload::tests::an_invalid_config_is_refused_and_the_running_one_kept ... ok
+test policy::reload::tests::an_ordinary_reload_leaves_the_cache_alone ... ok
+test policy::reload::tests::changing_priority_shares_reloads_in_place ... ok
+test policy::reload::tests::changing_startup_bound_runtime_components_is_refused ... ok
+test policy::reload::tests::changing_the_deployment_id_purges_the_previous_build ... ok
+test policy::reload::tests::changing_the_listener_is_refused_with_an_explanation ... ok
+test policy::reload::phase1_tests::rapid_reload_with_concurrent_purge_reads_and_old_completion ... ok
+test policy::reload::tests::changing_the_supervised_origin_command_is_refused ... ok
+test policy::reload::tests::changing_upstreams_is_refused_with_an_explanation ... ok
+test policy::reload::tests::changing_worker_threads_is_refused_with_an_explanation ... ok
+test policy::reload::tests::unparseable_yaml_is_refused ... ok
+test policy::tests::coalesce_wait_defaults_to_the_origin_timeout ... ok
+test policy::reload::tests::sampling_and_trace_trust_do_reload ... ok
+test policy::tests::declared_class_maps_public_ssr_to_a_document ... ok
+test policy::tests::first_matching_route_wins ... ok
+test policy::tests::route_index::small_tables_are_scanned ... ok
+test policy::tests::fingerprint_tracks_effective_config_not_reload_count ... ok
+test proxy::spool::tests::a_body_exactly_at_the_ceiling_is_still_spooled ... ok
+test proxy::spool::tests::a_body_that_fits_is_withheld_until_end_of_stream ... ok
+test proxy::spool::tests::a_budget_smaller_than_the_reservation_step_still_spools ... ok
+test proxy::spool::tests::an_empty_body_produces_no_downstream_write ... ok
+test proxy::spool::tests::an_exhausted_global_budget_degrades_instead_of_failing ... ok
+test proxy::spool::tests::an_oversized_body_flushes_in_order_and_then_passes_through ... ok
+test proxy::spool::tests::dropping_a_spool_returns_its_reservation ... ok
+test proxy::spool::tests::the_budget_is_held_past_the_flush_and_returned_when_the_request_ends ... ok
+test proxy::spool::tests::the_global_budget_is_never_overcommitted_under_contention ... ok
+test proxy::tests::a_believed_forwarded_host_separates_cache_entries ... ok
+test proxy::tests::a_response_is_credited_to_whoever_produced_it ... ok
+test proxy::tests::a_route_class_cannot_erase_an_upgrade ... ok
+test proxy::tests::a_trusted_proxys_public_url_and_cdn_identity_reach_the_origin ... ok
+test proxy::tests::an_untrusted_client_cannot_put_any_forwarding_claim_in_front_of_the_origin ... ok
+test proxy::tests::every_origin_timeout_is_applied_to_the_peer ... ok
+test proxy::tests::nothing_to_state_means_nothing_is_forwarded ... ok
+test proxy::tests::repeated_cache_policy_headers_are_combined ... ok
+test proxy::tests::route_vary_headers_are_merged_with_framework_variants ... ok
+test proxy::tests::status_classes_are_bounded ... ok
+test proxy::tests::the_authority_is_found_over_both_protocol_versions ... ok
+test proxy::tests::two_authorities_never_produce_one_key_over_http2 ... ok
+test proxy::tests::without_a_believed_host_the_origin_sees_the_requested_authority ... ok
+test supervise::tests::a_ready_origin_is_stopped_with_sigterm ... ok
+test cache::store::phase3_tests::any_chunking_round_trips ... ok
+test supervise::tests::an_origin_that_exits_before_it_is_ready_is_an_error ... ok
+test policy::reload::phase1_tests::sharing_changes_isolate_completed_active_and_late_old_fills ... ok
+test supervise::tests::an_unexpected_exit_after_ready_is_reported ... ok
+test supervise::tests::an_origin_that_ignores_sigterm_is_killed ... ok
+test supervise::tests::configured_env_overrides_the_derived_port_and_hostname ... ok
+test supervise::tests::programs_are_found_the_way_exec_finds_them ... ok
+test supervise::tests::an_origin_that_never_listens_times_out_and_is_stopped ... ok
+test supervise::tests::the_origin_gets_port_and_hostname_from_the_upstream ... ok
+test supervise::tests::the_origin_runs_in_a_process_group_of_its_own ... ok
+test supervise::tests::upstreams_are_split_and_classified ... ok
+test telemetry::json::tests::a_newline_cannot_split_a_line ... ok
+test telemetry::json::tests::a_quote_cannot_close_the_string ... ok
+test telemetry::json::tests::control_characters_become_unicode_escapes ... ok
+test telemetry::logging::tests::a_crafted_path_cannot_forge_fields ... ok
+test telemetry::logging::tests::a_quote_in_the_path_cannot_break_the_line ... ok
+test telemetry::logging::tests::control_characters_are_escaped ... ok
+test telemetry::logging::tests::every_line_carries_correlation_ids ... ok
+test telemetry::logging::tests::missing_upstream_renders_as_a_dash ... ok
+test telemetry::logging::tests::null_byte_is_escaped_as_a_unicode_sequence ... ok
+test telemetry::logging::tests::renders_a_plain_line ... ok
+test telemetry::logging::tests::text_format_escapes_attacker_controlled_values ... ok
+test telemetry::metrics::tests::a_fresh_scrape_includes_the_cache_bypass_metric ... ok
+test telemetry::metrics::tests::build_info_keeps_exactly_one_series ... ok
+test telemetry::metrics::tests::every_metric_registers_without_conflict ... ok
+test telemetry::metrics::tests::monotonic_evictions_are_exported_as_a_counter ... ok
+test telemetry::metrics::tests::no_metric_is_labelled_by_anything_client_controlled ... ok
+test telemetry::otlp::tests::a_batch_encodes_as_a_span_array ... ok
+test telemetry::otlp::tests::a_batch_reaches_a_listening_collector ... ok
+test telemetry::otlp::tests::a_full_queue_drops_spans_instead_of_blocking ... ok
+test telemetry::otlp::tests::a_non_2xx_from_the_collector_is_an_error_not_a_success ... ok
+test telemetry::otlp::tests::a_parent_span_id_is_only_emitted_when_there_is_one ... ok
+test telemetry::otlp::tests::an_endpoint_parses_into_its_parts ... ok
+test telemetry::otlp::tests::an_error_span_carries_otlp_status_error ... ok
+test telemetry::otlp::tests::an_ipv6_literal_keeps_its_brackets_in_the_host_header ... ok
+test telemetry::otlp::tests::an_unreachable_collector_does_not_stall_the_exporter ... ok
+test telemetry::otlp::tests::attacker_controlled_attribute_values_cannot_break_the_document ... ok
+test telemetry::otlp::tests::https_is_refused_rather_than_downgraded_without_tls ... ok
+test telemetry::otlp::tests::malformed_endpoints_are_refused ... ok
+test telemetry::otlp::tests::recording_after_the_exporter_is_gone_is_harmless ... ok
+test telemetry::otlp::tests::shutdown_flush_has_one_total_deadline_and_counts_the_remainder ... ok
+test telemetry::otlp::tests::the_default_port_and_path_are_otlp_http_defaults ... ok
+test telemetry::otlp::tests::the_encoded_document_has_the_otlp_shape ... ok
+test telemetry::otlp_metrics::tests::a_counter_is_a_cumulative_monotonic_sum_with_its_labels_and_ours ... ok
+test telemetry::otlp_metrics::tests::a_gauge_has_no_start_time_or_temporality ... ok
+test telemetry::otlp_metrics::tests::histogram_buckets_are_per_bucket_not_cumulative ... ok
+test telemetry::otlp_metrics::tests::label_values_cannot_break_the_document ... ok
+test telemetry::otlp_metrics::tests::tanods_own_registry_encodes ... ok
+test telemetry::otlp_metrics::tests::the_document_is_valid_json_with_the_otlp_shape ... ok
+test telemetry::otlp_metrics::tests::the_instance_id_is_never_empty ... ok
+test telemetry::trace::tests::a_believed_context_is_continued_not_restarted ... ok
+test telemetry::trace::tests::a_future_version_is_parsed_for_the_fields_it_shares ... ok
+test telemetry::trace::tests::a_garbage_context_does_not_lose_the_request ... ok
+test telemetry::trace::tests::a_valid_traceparent_round_trips ... ok
+test telemetry::trace::tests::all_zero_ids_are_rejected ... ok
+test telemetry::trace::tests::an_absent_context_starts_a_new_trace ... ok
+test telemetry::trace::tests::an_oversized_or_unprintable_tracestate_is_dropped ... ok
+test telemetry::trace::tests::an_unsampled_request_says_so_downstream ... ok
+test telemetry::trace::tests::generated_ids_are_not_all_the_same ... ok
+test telemetry::trace::tests::hex_is_lowercase_and_fixed_width ... ok
+test telemetry::trace::tests::malformed_headers_are_rejected_rather_than_guessed_at ... ok
+test telemetry::trace::tests::one_in_n_samples_roughly_one_in_n ... ok
+test telemetry::trace::tests::one_in_zero_or_one_samples_everything ... ok
+test telemetry::trace::tests::parent_sampling_follows_the_caller_when_it_can ... ok
+test telemetry::trace::tests::ratio_mode_overrides_the_caller ... ok
+test telemetry::trace::tests::the_fallback_mixer_produces_distinct_ids ... ok
+test telemetry::trace::tests::the_outbound_header_carries_the_origin_span_not_the_server_span ... ok
+test telemetry::trace::tests::the_sampled_flag_is_only_the_low_bit ... ok
+test telemetry::trace::tests::tracestate_rides_only_with_a_believed_context ... ok
+test telemetry::trace::tests::trust_gating_matches_the_forwarded_header_rules ... ok
+test telemetry::transport::tests::an_endpoint_parses_into_its_parts ... ok
+test telemetry::transport::tests::credentials_belong_in_headers_not_the_url ... ok
+test telemetry::transport::tests::headers_are_rendered_and_checked ... ok
+test telemetry::transport::tests::https_depends_on_the_tls_feature ... ok
+test upstream::breaker::tests::a_disabled_breaker_never_ejects_anything ... ok
+test upstream::breaker::tests::a_failed_probe_starts_the_period_again ... ok
+test upstream::breaker::tests::a_handful_of_failures_is_noise_not_a_signal ... ok
+test upstream::breaker::tests::a_majority_of_failures_trips ... ok
+test upstream::breaker::tests::a_minority_of_failures_does_not_trip ... ok
+test upstream::breaker::tests::a_stale_probe_result_cannot_override_the_current_probe ... ok
+test upstream::breaker::tests::a_successful_probe_closes_the_breaker ... ok
+test upstream::breaker::tests::an_open_breaker_admits_exactly_one_probe_per_period ... ok
+test upstream::breaker::tests::an_ordinary_response_in_flight_before_the_trip_cannot_close_it ... ok
+test upstream::breaker::tests::failures_age_out_of_the_window ... ok
+test upstream::breaker::tests::recovery_starts_with_a_clean_window ... ok
+test upstream::breaker::tests::trips_are_counted_for_the_status_document ... ok
+test upstream::health::tests::a_probe_to_a_dead_address_fails_rather_than_hanging ... ok
+test upstream::health::tests::a_success_resets_the_failure_streak ... ok
+test upstream::health::tests::backends_are_tracked_independently ... ok
+test upstream::health::tests::one_failed_probe_does_not_drain_a_backend ... ok
+test upstream::health::tests::pingora_accepts_200_with_a_body_and_204 ... ok
+test upstream::health::tests::pingora_rejects_failures_redirects_and_malformed_status_lines ... ok
+test upstream::health::tests::recovery_also_requires_a_streak ... ok
+test upstream::health::tests::shutdown_cancels_an_in_progress_health_check ... ok
+test upstream::health::tests::the_deadline_includes_draining_the_response_body ... ok
+test upstream::resolver::tests::a_refresh_that_finds_the_same_addresses_changes_nothing ... ok
+test upstream::retry::tests::a_refused_retry_does_not_consume_budget ... ok
+test upstream::retry::tests::a_total_outage_cannot_double_the_load_on_the_origin ... ok
+test upstream::retry::tests::connection_shaped_classes_are_never_retried ... ok
+test upstream::retry::tests::one_request_gets_at_most_max_attempts ... ok
+test upstream::retry::tests::only_safe_methods_are_ever_retried ... ok
+test supervise::tests::stop_after_an_unexpected_exit_still_reports_how_it_exited ... ok
+test upstream::retry::tests::retries_are_off_until_they_are_turned_on ... ok
+test upstream::retry::tests::the_minimum_keeps_a_quiet_deployment_from_a_zero_budget ... ok
+test upstream::retry::tests::the_budget_refills_as_the_window_slides ... ok
+test upstream::tests::a_backend_failing_real_traffic_is_ejected_even_while_it_probes_healthy ... ok
+test upstream::tests::a_fully_unhealthy_pool_still_serves ... ok
+test upstream::tests::a_lookup_returning_the_same_addresses_reports_no_change ... ok
+test upstream::tests::a_new_pool_is_unknown_until_a_probe_or_explicit_assumption ... ok
+test upstream::tests::a_failed_lookup_keeps_the_previous_addresses ... ok
+test upstream::tests::an_ejected_backend_gets_one_probe_per_period_and_can_come_back ... ok
+test upstream::tests::an_in_flight_slot_is_returned_when_its_guard_drops ... ok
+test upstream::tests::an_unhealthy_backend_is_skipped_before_its_breaker_is_consulted ... ok
+test upstream::tests::breakers_are_inert_until_they_are_turned_on ... ok
+test upstream::tests::consistent_hash_skips_unhealthy_and_ejected_backends_and_recovers ... ok
+test upstream::tests::consistent_hash_survives_reordering_and_removing_a_backend ... ok
+test upstream::tests::consistent_hash_uses_all_dns_instances_and_rebuilds_after_refresh ... ok
+test upstream::tests::ejecting_more_than_the_cap_falls_back_to_health_based_routing ... ok
+test upstream::tests::exactly_the_cap_may_be_ejected ... ok
+test upstream::tests::hash_by_path_is_stable_for_one_path ... ok
+test upstream::tests::hash_by_path_keeps_a_path_on_one_instance ... ok
+test upstream::tests::hash_by_path_spreads_distinct_paths ... ok
+test upstream::tests::instances_behind_one_name_all_receive_connections ... ok
+test upstream::tests::least_loaded_prefers_the_backend_with_fewer_requests_outstanding ... ok
+test upstream::tests::least_loaded_prefers_the_faster_backend_at_equal_depth ... ok
+test upstream::tests::least_loaded_rotates_between_backends_that_score_the_same ... ok
+test upstream::tests::least_loaded_routes_around_a_backend_that_is_up_but_slow ... ok
+test upstream::tests::round_robin_cycles_through_every_backend ... ok
+test upstream::tests::the_first_latency_observation_is_the_mean_rather_than_an_eighth_of_it ... ok
+test upstream::tests::unhealthy_backends_are_skipped ... ok
+test upstream::window::tests::a_reused_bucket_is_cleared_before_its_new_epoch_is_visible ... ok
+test upstream::window::tests::counts_totals_and_the_flagged_subset ... ok
+test upstream::window::tests::flag_returns_the_running_total_and_unflag_gives_it_back ... ok
+test upstream::window::tests::observations_age_out_after_a_full_window ... ok
+test upstream::window::tests::reset_forgets_everything ... ok
+test upstream::window::tests::the_window_slides_rather_than_expiring_all_at_once ... ok
+test upstream::window::tests::unflag_cannot_wrap_the_counter_below_zero ... ok
+test upstream::tests::consistent_hash_only_moves_paths_to_the_added_instance ... ok
+test supervise::tests::being_stopped_while_waiting_stops_the_origin_instead_of_orphaning_it ... ok
+test cache::store::phase31_tests::loom_completion_lookup_and_purge_model ... ok
+test cache::store::phase3_tests::spinning_lookups_never_miss_a_completing_fill ... ok
+test policy::tests::route_index::the_index_picks_the_route_a_linear_scan_picks ... ok
+
+test result: ok. 588 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.08s
+
+     Running unittests src/main.rs (target/debug/deps/tanod-c2c8adeb87fd949c)
+
+running 7 tests
+test tests::init_options_override_the_single_server_defaults ... ok
+test tests::pingora_attempt_ceiling_tracks_the_retry_policy_instead_of_its_default ... ok
+test tests::pingora_timeouts_round_fractional_seconds_up ... ok
+test tests::check_rejects_a_matcher_that_cannot_be_compiled ... ok
+test tests::init_rejects_zero_concurrency_and_missing_values ... ok
+test tests::init_queue_drains_in_about_one_render_time ... ok
+test tests::init_defaults_make_a_safe_valid_config ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running bench/eviction.rs (target/debug/deps/eviction-cfdceced84d957fe)
+workload,policy,trial,hits,requests,hit_ratio,peak_accounted_bytes
+equal_400B,fifo,1,2057,4000,0.5142,15520
+equal_400B,clock,1,2342,4000,0.5855,15520
+equal_400B,tinyufo,1,2499,4000,0.6248,15520
+equal_400B,tinyufo,2,2495,4000,0.6238,15520
+equal_400B,tinyufo,3,2504,4000,0.6260,15520
+equal_400B,tinyufo,4,2498,4000,0.6245,15520
+equal_400B,tinyufo,5,2498,4000,0.6245,15520
+equal_400B,tinyufo_reference,1,2656,4000,0.6640,15520
+equal_400B,tinyufo_reference,2,2656,4000,0.6640,15520
+equal_400B,tinyufo_reference,3,2656,4000,0.6640,15520
+equal_400B,tinyufo_reference,4,2656,4000,0.6640,15520
+equal_400B,tinyufo_reference,5,2656,4000,0.6640,15520
+mixed_400_to_4600B,fifo,1,913,4000,0.2283,15995
+mixed_400_to_4600B,clock,1,1083,4000,0.2707,15995
+mixed_400_to_4600B,tinyufo,1,1413,4000,0.3533,15995
+mixed_400_to_4600B,tinyufo,2,1610,4000,0.4025,15995
+mixed_400_to_4600B,tinyufo,3,1504,4000,0.3760,15995
+mixed_400_to_4600B,tinyufo,4,1544,4000,0.3860,15995
+mixed_400_to_4600B,tinyufo,5,1513,4000,0.3782,15995
+mixed_400_to_4600B,tinyufo_reference,1,1580,4000,0.3950,15995
+mixed_400_to_4600B,tinyufo_reference,2,1580,4000,0.3950,15995
+mixed_400_to_4600B,tinyufo_reference,3,1580,4000,0.3950,15995
+mixed_400_to_4600B,tinyufo_reference,4,1580,4000,0.3950,15995
+mixed_400_to_4600B,tinyufo_reference,5,1580,4000,0.3950,15995
+     Running bench/hotpath.rs (target/debug/deps/hotpath-64ecc2ed48219af1)
+{"scenario":"meta/deserialize","ns_per_op":0.1,"ops":20,"serialized_header_bytes":270,"internal_bytes":50}
+{"scenario":"meta/internal+clone","ns_per_op":0.1,"ops":20,"serialized_header_bytes":270,"internal_bytes":50}
+{"scenario":"hit/clock/1KiB","concurrency":1,"workers":1,"ops_per_s":20000000000,"ops":20,"gib_per_s":19073.49}
+{"scenario":"hit/clock/1KiB","concurrency":8,"workers":6,"ops_per_s":160000000000,"ops":160,"gib_per_s":152587.89}
+{"scenario":"hit/clock/16KiB","concurrency":1,"workers":1,"ops_per_s":20000000000,"ops":20,"gib_per_s":305175.78}
+{"scenario":"hit/clock/16KiB","concurrency":8,"workers":6,"ops_per_s":160000000000,"ops":160,"gib_per_s":2441406.25}
+{"scenario":"hit/clock/64KiB","concurrency":1,"workers":1,"ops_per_s":20000000000,"ops":20,"gib_per_s":1220703.12}
+{"scenario":"hit/clock/64KiB","concurrency":8,"workers":6,"ops_per_s":160000000000,"ops":160,"gib_per_s":9765625.00}
+{"scenario":"hit/clock/1MiB","concurrency":1,"workers":1,"ops_per_s":20000000000,"ops":20,"gib_per_s":19531250.00}
+{"scenario":"hit/clock/1MiB","concurrency":8,"workers":6,"ops_per_s":160000000000,"ops":160,"gib_per_s":156250000.00}
+{"scenario":"hit/clock/4MiB","concurrency":1,"workers":1,"ops_per_s":20000000000,"ops":20,"gib_per_s":78125000.00}
+{"scenario":"hit/clock/4MiB","concurrency":8,"workers":6,"ops_per_s":160000000000,"ops":160,"gib_per_s":625000000.00}
+{"scenario":"hit/tinyufo/1KiB","concurrency":1,"workers":1,"ops_per_s":20000000000,"ops":20,"gib_per_s":19073.49}
+{"scenario":"hit/tinyufo/1KiB","concurrency":8,"workers":6,"ops_per_s":160000000000,"ops":160,"gib_per_s":152587.89}
+{"scenario":"hit/tinyufo/16KiB","concurrency":1,"workers":1,"ops_per_s":20000000000,"ops":20,"gib_per_s":305175.78}
+{"scenario":"hit/tinyufo/16KiB","concurrency":8,"workers":6,"ops_per_s":160000000000,"ops":160,"gib_per_s":2441406.25}
+{"scenario":"hit/tinyufo/64KiB","concurrency":1,"workers":1,"ops_per_s":20000000000,"ops":20,"gib_per_s":1220703.12}
+{"scenario":"hit/tinyufo/64KiB","concurrency":8,"workers":6,"ops_per_s":160000000000,"ops":160,"gib_per_s":9765625.00}
+{"scenario":"hit/tinyufo/1MiB","concurrency":1,"workers":1,"ops_per_s":20000000000,"ops":20,"gib_per_s":19531250.00}
+{"scenario":"hit/tinyufo/1MiB","concurrency":8,"workers":6,"ops_per_s":160000000000,"ops":160,"gib_per_s":156250000.00}
+{"scenario":"hit/tinyufo/4MiB","concurrency":1,"workers":1,"ops_per_s":20000000000,"ops":20,"gib_per_s":78125000.00}
+{"scenario":"hit/tinyufo/4MiB","concurrency":8,"workers":6,"ops_per_s":160000000000,"ops":160,"gib_per_s":625000000.00}
+{"scenario":"fill/clock/fill-only","concurrency":1,"workers":1,"ops_per_s":20000000000,"done":20,"refused":0,"aborted":0,"bytes_used":334230,"pinned":0}
+{"scenario":"fill/clock/fill-only","concurrency":8,"workers":6,"ops_per_s":160000000000,"done":160,"refused":0,"aborted":0,"bytes_used":3008230,"pinned":0}
+{"scenario":"fill/clock/fill-10pct","concurrency":1,"workers":1,"ops_per_s":20000000000,"done":20,"refused":0,"aborted":0,"bytes_used":334211,"pinned":0}
+{"scenario":"fill/clock/fill-10pct","concurrency":8,"workers":6,"ops_per_s":160000000000,"done":160,"refused":0,"aborted":0,"bytes_used":1353589,"pinned":0}
+{"scenario":"fill/tinyufo/fill-only","concurrency":1,"workers":1,"ops_per_s":20000000000,"done":20,"refused":0,"aborted":0,"bytes_used":334230,"pinned":0}
+{"scenario":"fill/tinyufo/fill-only","concurrency":8,"workers":6,"ops_per_s":160000000000,"done":160,"refused":0,"aborted":0,"bytes_used":3008230,"pinned":0}
+{"scenario":"fill/tinyufo/fill-10pct","concurrency":1,"workers":1,"ops_per_s":20000000000,"done":20,"refused":0,"aborted":0,"bytes_used":334211,"pinned":0}
+{"scenario":"fill/tinyufo/fill-10pct","concurrency":8,"workers":6,"ops_per_s":160000000000,"done":160,"refused":0,"aborted":0,"bytes_used":1353589,"pinned":0}
+{"scenario":"refill/clock/1000","entries":1000,"ns_per_op":0.1,"ops":20,"stored":1000}
+{"scenario":"refill/tinyufo/1000","entries":1000,"ns_per_op":0.1,"ops":20,"stored":1000}
+{"scenario":"follow/1","rounds":1,"median_ms":1.746,"max_ms":1.746}
+{"scenario":"follow/10","rounds":1,"median_ms":2.791,"max_ms":2.791}
+{"scenario":"route/5/first","routes":5,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/5/last-section","routes":5,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/5/catchall","routes":5,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/25/first","routes":25,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/25/last-section","routes":25,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/25/catchall","routes":25,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/100/first","routes":100,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/100/last-section","routes":100,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/100/catchall","routes":100,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/500/first","routes":500,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/500/last-section","routes":500,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/500/catchall","routes":500,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/1000/first","routes":1000,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/1000/last-section","routes":1000,"ns_per_op":0.1,"ops":20}
+{"scenario":"route/1000/catchall","routes":1000,"ns_per_op":0.1,"ops":20}
+{"scenario":"key/public-ssr","ns_per_op":0.1,"ops":20}

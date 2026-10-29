@@ -1,0 +1,14 @@
+{"policy": "clock", "scenario": "idle", "exit_code": 0, "seconds": 7.036, "completed": 0}
+{"policy": "clock", "scenario": "queued-concurrency", "exit_code": 0, "seconds": 7.012, "completed": 16}
+{"policy": "clock", "scenario": "cache-fill", "exit_code": 0, "seconds": 7.044, "completed": 8}
+{"policy": "clock", "scenario": "slow-stream", "exit_code": 0, "seconds": 7.042, "completed": 8}
+{"policy": "clock", "scenario": "websocket", "exit_code": 0, "seconds": 7.033, "completed": 0}
+{"policy": "clock", "scenario": "reload-then-stop", "exit_code": 0, "seconds": 7.004, "completed": 16}
+{"policy": "clock", "scenario": "sigint", "exit_code": 0, "seconds": 0.003, "completed": 0}
+{"policy": "tinyufo", "scenario": "idle", "exit_code": 0, "seconds": 7.031, "completed": 0}
+{"policy": "tinyufo", "scenario": "queued-concurrency", "exit_code": 0, "seconds": 7.011, "completed": 16}
+{"policy": "tinyufo", "scenario": "cache-fill", "exit_code": 0, "seconds": 7.043, "completed": 8}
+{"policy": "tinyufo", "scenario": "slow-stream", "exit_code": 0, "seconds": 7.042, "completed": 8}
+{"policy": "tinyufo", "scenario": "websocket", "exit_code": 0, "seconds": 7.036, "completed": 0}
+{"policy": "tinyufo", "scenario": "reload-then-stop", "exit_code": 0, "seconds": 7.011, "completed": 16}
+{"policy": "tinyufo", "scenario": "sigint", "exit_code": 0, "seconds": 0.001, "completed": 0}

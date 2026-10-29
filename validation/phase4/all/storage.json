@@ -1,0 +1,1 @@
+{"benchmark":"storage","started_at":"2026-10-29T03:58:49Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"0adfa2a","samples":"60","render_ms":"200","body_mib":"1"},"results":{"median_miss_seconds":"0.219934","median_hit_seconds":"0.009197","median_small_hit_seconds":"0.006786","hit_speedup":"23.9"}}

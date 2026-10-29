@@ -1,0 +1,36 @@
+{
+  "policy": "tinyufo",
+  "status": "complete",
+  "requests": 693833,
+  "outcomes": {
+    "200": 578196,
+    "aborted-before-body": 84410,
+    "aborted": 31227
+  },
+  "worker_file_sha256": {
+    "results-1": "ac54e1cea5a88b849573c211168223b91381b91a91963380898aa661328a01ce",
+    "results-10": "7cae1620750daef11ab99825deb4059fd48a7b8d3e59b45a6654cab6eba4d2e2",
+    "results-11": "2984776384778107a71e472416117624f5afaab36f4c63ea5fbedfe7550681d0",
+    "results-12": "23acd8cb20b05357811891479d083dc2ad2eb57e77ca2f84a5976165c7d59026",
+    "results-13": "48aad2b70919825b47592a73f3675dba54bc3242fe234b9c79787f9fc95de859",
+    "results-14": "2f2121ce9883678674588acf020e3d4d945d7d7c50802fae0ca03c2adafbc68b",
+    "results-15": "662488a244d1dc097f9e9fc820c5c40ca9a87a1873349dc9de47335728554a29",
+    "results-16": "315f7aa6f5d4ebb1704c87bd43e41345bfc62bc62eb3c5bda3fabb1596012c3c",
+    "results-17": "66ce88fda1c083b633b94c315b71870e27100ca16323963ee16dc4b5e4af1d9d",
+    "results-18": "3598c20ea04e9368f00b1de64fa1b2f1d5e1332a8678ddc14700ea2daddbed02",
+    "results-19": "d8515d37ee8f40605e5e8c34fa20e405035c12720d704fef384e2dd831597536",
+    "results-2": "37830bfacc4bda31ab1ba487e1152fdd07674e025497503558f58486f512ba7d",
+    "results-20": "06fe51e326c4a12103d57e2444eb56bb35b3a2106380aa7ebafbdde93a1c8527",
+    "results-21": "fa8ead4a4bfd633e444db05de82c3e3a24be88460f19be2ab614ab8fb1f19eb8",
+    "results-22": "eb7a223b104c3daf9154a46b6a47ec5ceb54736665e92627d67996f7caba360e",
+    "results-23": "1d8023ed8ce7a27e289ec22d487ca7f7a2adab778f178836245360a4890e9ca3",
+    "results-24": "abfe00dfd322d5bfdfd3c379d360bc80ede069f9c60950153b1f3660324e0dca",
+    "results-3": "54c0aff1e7cacdfd249246600329a1fc71afc44362c2cf81c90a8a1c8f65a4eb",
+    "results-4": "815776f5d02c3aeca4c169a01d2ae81b5d281841cca24aa457f1b427e824ef4c",
+    "results-5": "9e7853fb78d4e470f76d8a0692a3f788763b6c28d315efd661c457f651bc77b9",
+    "results-6": "e1115171e907cabd03a1191d246bc713a74ea53f0bef73db6e09cf1b6f117a13",
+    "results-7": "668607d683836c5bd384d415a2fc2045521950204c1a07def34827c64ab0ea00",
+    "results-8": "76595f5908122dfe7360fb8cc602a0b6cec6e9422a30b7b4a8abeadcc0a1c107",
+    "results-9": "24562e2f3c49219c39f367bb6222bebf2ead611cbf3d2b3f31dcf77a04ebaf49"
+  }
+}

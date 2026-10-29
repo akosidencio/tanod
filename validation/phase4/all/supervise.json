@@ -1,0 +1,1 @@
+{"benchmark":"supervise","started_at":"2026-10-29T03:55:02Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"32cafb5","render_ms":"2500","drain_period":"1s","shutdown_timeout":"5s"},"results":{"plain_in_flight":"200","supervised_in_flight":"200"}}

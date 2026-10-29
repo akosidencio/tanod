@@ -1,0 +1,1 @@
+{"benchmark":"retry","started_at":"2026-10-29T05:17:31Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"ae83e2b","requests":"40","render_ms":"20"},"results":{"served_without_retries":"20","served_with_budget":"34","served_with_tight_budget":"21","retries_spent":"27","retries_refused":"19"}}

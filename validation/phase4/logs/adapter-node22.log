@@ -1,0 +1,494 @@
+
+> @tanod/next@0.4.0 test
+> node --test test/*.test.js
+
+TAP version 13
+# Subtest: shared cache tag invalidations merge across concurrent origins
+ok 1 - shared cache tag invalidations merge across concurrent origins
+  ---
+  duration_ms: 88.897398
+  type: 'test'
+  ...
+# Subtest: all failed requests produce no recommendation and stop after the baseline
+ok 2 - all failed requests produce no recommendation and stop after the baseline
+  ---
+  duration_ms: 12.099354
+  type: 'test'
+  ...
+# Subtest: connection failures cannot establish a capacity recommendation
+ok 3 - connection failures cannot establish a capacity recommendation
+  ---
+  duration_ms: 1.213742
+  type: 'test'
+  ...
+# Subtest: the first failing step bounds the recommendation and stops increasing load
+ok 4 - the first failing step bounds the recommendation and stops increasing load
+  ---
+  duration_ms: 144.834599
+  type: 'test'
+  ...
+# Subtest: healthy samples apply the margin without claiming unobserved saturation
+ok 5 - healthy samples apply the margin without claiming unobserved saturation
+  ---
+  duration_ms: 207.841623
+  type: 'test'
+  ...
+# Subtest: an explicit latency target can reject even a successful baseline
+ok 6 - an explicit latency target can reject even a successful baseline
+  ---
+  duration_ms: 68.339413
+  type: 'test'
+  ...
+# Subtest: rising full-response latency stops the load ramp at the prior healthy step
+ok 7 - rising full-response latency stops the load ramp at the prior healthy step
+  ---
+  duration_ms: 674.545975
+  type: 'test'
+  ...
+# Subtest: too few samples return an inconclusive result
+ok 8 - too few samples return an inconclusive result
+  ---
+  duration_ms: 12.653265
+  type: 'test'
+  ...
+# Subtest: warm-up is separate from the sustained measurement and workload routes are preserved
+ok 9 - warm-up is separate from the sustained measurement and workload routes are preserved
+  ---
+  duration_ms: 142.972843
+  type: 'test'
+  ...
+# Subtest: warm-up failures remain visible and prevent a healthy classification
+ok 10 - warm-up failures remain visible and prevent a healthy classification
+  ---
+  duration_ms: 77.960435
+  type: 'test'
+  ...
+# Subtest: latency includes consuming the streamed body
+ok 11 - latency includes consuming the streamed body
+  ---
+  duration_ms: 16.64439
+  type: 'test'
+  ...
+# Subtest: invalid measurement settings are rejected before any load is sent
+ok 12 - invalid measurement settings are rejected before any load is sent
+  ---
+  duration_ms: 1.534821
+  type: 'test'
+  ...
+# Subtest: IPv6 loopback is a local calibration target
+ok 13 - IPv6 loopback is a local calibration target
+  ---
+  duration_ms: 65.061901
+  type: 'test'
+  ...
+# Subtest: the CLI emits an inconclusive JSON report and returns nonzero
+ok 14 - the CLI emits an inconclusive JSON report and returns nonzero
+  ---
+  duration_ms: 145.036576
+  type: 'test'
+  ...
+# Subtest: the installed CLI calibrates a real local origin and returns usable JSON
+ok 15 - the installed CLI calibrates a real local origin and returns usable JSON
+  ---
+  duration_ms: 279.603486
+  type: 'test'
+  ...
+# Subtest: a global budget is partitioned conservatively across replicas
+ok 16 - a global budget is partitioned conservatively across replicas
+  ---
+  duration_ms: 15.009749
+  type: 'test'
+  ...
+# Subtest: static partition inputs are complete and mutually exclusive
+ok 17 - static partition inputs are complete and mutually exclusive
+  ---
+  duration_ms: 0.550075
+  type: 'test'
+  ...
+# Subtest: complete output still requires an explicit local or group ceiling
+ok 18 - complete output still requires an explicit local or group ceiling
+  ---
+  duration_ms: 0.148617
+  type: 'test'
+  ...
+# Subtest: direct CLI execution compares complete paths
+ok 19 - direct CLI execution compares complete paths
+  ---
+  duration_ms: 0.95197
+  type: 'test'
+  ...
+# Subtest: direct CLI execution resolves an installed bin symlink
+ok 20 - direct CLI execution resolves an installed bin symlink
+  ---
+  duration_ms: 0.184919
+  type: 'test'
+  ...
+# Subtest: direct CLI execution supports Windows path separators
+ok 21 - direct CLI execution supports Windows path separators
+  ---
+  duration_ms: 0.329309
+  type: 'test'
+  ...
+# Subtest: a production build writes the config on the way out
+ok 22 - a production build writes the config on the way out
+  ---
+  duration_ms: 75.865769
+  type: 'test'
+  ...
+# Subtest: silent means silent
+ok 23 - silent means silent
+  ---
+  duration_ms: 57.166654
+  type: 'test'
+  ...
+# Subtest: a failed build generates nothing
+ok 24 - a failed build generates nothing
+  ---
+  duration_ms: 48.274778
+  type: 'test'
+  ...
+# Subtest: a build that cannot be read fails rather than warns
+ok 25 - a build that cannot be read fails rather than warns
+  ---
+  duration_ms: 45.099854
+  type: 'test'
+  ...
+# Subtest: a configuration Tanod would reject fails the build that produced it
+ok 26 - a configuration Tanod would reject fails the build that produced it
+  ---
+  duration_ms: 53.531379
+  type: 'test'
+  ...
+# Subtest: a failed check preserves the last valid config and removes its temporary file
+ok 27 - a failed check preserves the last valid config and removes its temporary file
+  ---
+  duration_ms: 79.050128
+  type: 'test'
+  ...
+# Subtest: a good configuration passes the check and the build succeeds
+ok 28 - a good configuration passes the check and the build succeeds
+  ---
+  duration_ms: 64.100546
+  type: 'test'
+  ...
+# Subtest: a complete generated config requires an explicit measured ceiling
+ok 29 - a complete generated config requires an explicit measured ceiling
+  ---
+  duration_ms: 40.522393
+  type: 'test'
+  ...
+# Subtest: a group budget writes its conservative allocation into config and identity
+ok 30 - a group budget writes its conservative allocation into config and identity
+  ---
+  duration_ms: 52.208618
+  type: 'test'
+  ...
+# Subtest: reads a real Next build
+ok 31 - reads a real Next build
+  ---
+  duration_ms: 1.140209
+  type: 'test'
+  ...
+# Subtest: the manifest verification history matches the committed build fixture
+ok 32 - the manifest verification history matches the committed build fixture
+  ---
+  duration_ms: 0.189399
+  type: 'test'
+  ...
+# Subtest: a missing build is refused with an explanation, not guessed at
+ok 33 - a missing build is refused with an explanation, not guessed at
+  ---
+  duration_ms: 6.467581
+  type: 'test'
+  ...
+# Subtest: the committed fixture still matches the storefront it was copied from
+ok 34 - the committed fixture still matches the storefront it was copied from # SKIP no local next build; the committed fixture is the source of truth
+  ---
+  duration_ms: 0.169582
+  type: 'test'
+  ...
+# Subtest: dynamic segments become the glob Tanod actually compiles
+ok 35 - dynamic segments become the glob Tanod actually compiles
+  ---
+  duration_ms: 0.140261
+  type: 'test'
+  ...
+# Subtest: an optional catch-all also matches its bare parent, as it does in Next
+ok 36 - an optional catch-all also matches its bare parent, as it does in Next
+  ---
+  duration_ms: 0.1133
+  type: 'test'
+  ...
+# Subtest: route ids are readable, safe and unique
+ok 37 - route ids are readable, safe and unique
+  ---
+  duration_ms: 0.235409
+  type: 'test'
+  ...
+# Subtest: the build id becomes the deployment id
+ok 38 - the build id becomes the deployment id
+  ---
+  duration_ms: 0.112582
+  type: 'test'
+  ...
+# Subtest: a stable Next deployment id takes precedence over the data build id
+ok 39 - a stable Next deployment id takes precedence over the data build id
+  ---
+  duration_ms: 0.597559
+  type: 'test'
+  ...
+# Subtest: the image route carries the Accept vary that makes it cache at all
+ok 40 - the image route carries the Accept vary that makes it cache at all
+  ---
+  duration_ms: 1.454392
+  type: 'test'
+  ...
+# Subtest: prerendered routes are the only ones granted a public class
+ok 41 - prerendered routes are the only ones granted a public class
+  ---
+  duration_ms: 0.343643
+  type: 'test'
+  ...
+# Subtest: every dynamically rendered page is private
+ok 42 - every dynamically rendered page is private
+  ---
+  duration_ms: 0.154155
+  type: 'test'
+  ...
+# Subtest: the catch-all is last, because first match wins
+ok 43 - the catch-all is last, because first match wins
+  ---
+  duration_ms: 0.152337
+  type: 'test'
+  ...
+# Subtest: route ids in the output are unique
+ok 44 - route ids in the output are unique
+  ---
+  duration_ms: 0.115101
+  type: 'test'
+  ...
+# Subtest: routes-only output omits what a fragment must not carry
+ok 45 - routes-only output omits what a fragment must not carry
+  ---
+  duration_ms: 0.448038
+  type: 'test'
+  ...
+# Subtest: a value from a manifest cannot break out of its YAML position
+ok 46 - a value from a manifest cannot break out of its YAML position
+  ---
+  duration_ms: 0.119447
+  type: 'test'
+  ...
+# Subtest: a checked-in policy makes an explicitly asserted dynamic page public
+ok 47 - a checked-in policy makes an explicitly asserted dynamic page public
+  ---
+  duration_ms: 14.930739
+  type: 'test'
+  ...
+# Subtest: inspect names operator evidence and highlights a public override
+ok 48 - inspect names operator evidence and highlights a public override
+  ---
+  duration_ms: 0.837912
+  type: 'test'
+  ...
+# Subtest: Pages Router data payloads inherit the document policy
+ok 49 - Pages Router data payloads inherit the document policy
+  ---
+  duration_ms: 1.439582
+  type: 'test'
+  ...
+# Subtest: rollout stages preserve privacy while changing reuse behavior
+ok 50 - rollout stages preserve privacy while changing reuse behavior
+  ---
+  duration_ms: 1.540583
+  type: 'test'
+  ...
+# Subtest: unknown fields and unmatched routes are refused
+ok 51 - unknown fields and unmatched routes are refused
+  ---
+  duration_ms: 0.61638
+  type: 'test'
+  ...
+# Subtest: unsafe public assertions fail closed
+ok 52 - unsafe public assertions fail closed
+  ---
+  duration_ms: 0.452232
+  type: 'test'
+  ...
+# Subtest: redundant prerender and public route-handler assertions are refused
+ok 53 - redundant prerender and public route-handler assertions are refused
+  ---
+  duration_ms: 0.372236
+  type: 'test'
+  ...
+# Subtest: explain is local, shows barriers, and redacts credentials
+ok 54 - explain is local, shows barriers, and redacts credentials
+  ---
+  duration_ms: 2.160637
+  type: 'test'
+  ...
+# Subtest: calibration requires explicit load authorization and route scope
+ok 55 - calibration requires explicit load authorization and route scope
+  ---
+  duration_ms: 0.906148
+  type: 'test'
+  ...
+# Subtest: doctor cannot report success when every deployment check was skipped
+ok 56 - doctor cannot report success when every deployment check was skipped
+  ---
+  duration_ms: 0.860829
+  type: 'test'
+  ...
+# Subtest: the token travels in a header, never in the URL
+ok 57 - the token travels in a header, never in the URL
+  ---
+  duration_ms: 22.7471
+  type: 'test'
+  ...
+# Subtest: redirects are refused rather than followed
+ok 58 - redirects are refused rather than followed
+  ---
+  duration_ms: 1.229314
+  type: 'test'
+  ...
+# Subtest: it POSTs, because a GET that invalidates a cache gets crawled
+ok 59 - it POSTs, because a GET that invalidates a cache gets crawled
+  ---
+  duration_ms: 0.459577
+  type: 'test'
+  ...
+# Subtest: values are encoded once and delimiters cannot alter the purge query
+ok 60 - values are encoded once and delimiters cannot alter the purge query
+  ---
+  duration_ms: 1.536718
+  type: 'test'
+  ...
+# Subtest: tags and paths travel in one request
+ok 61 - tags and paths travel in one request
+  ---
+  duration_ms: 0.648856
+  type: 'test'
+  ...
+# Subtest: a replicated purge reaches every local Tanod cache
+ok 62 - a replicated purge reaches every local Tanod cache
+  ---
+  duration_ms: 0.924183
+  type: 'test'
+  ...
+# Subtest: a partial replicated purge is reported as a failure
+ok 63 - a partial replicated purge is reported as a failure
+  ---
+  duration_ms: 1.609534
+  type: 'test'
+  ...
+# Subtest: duplicates collapse
+ok 64 - duplicates collapse
+  ---
+  duration_ms: 0.676174
+  type: 'test'
+  ...
+# Subtest: purging everything is spelled out
+ok 65 - purging everything is spelled out
+  ---
+  duration_ms: 0.707704
+  type: 'test'
+  ...
+# Subtest: a value that could not have matched is refused
+ok 66 - a value that could not have matched is refused
+  ---
+  duration_ms: 0.661518
+  type: 'test'
+  ...
+# Subtest: an empty list is a no-op rather than a purge of everything
+ok 67 - an empty list is a no-op rather than a purge of everything
+  ---
+  duration_ms: 0.293502
+  type: 'test'
+  ...
+# Subtest: a failed purge throws rather than leaving stale content served quietly
+ok 68 - a failed purge throws rather than leaving stale content served quietly
+  ---
+  duration_ms: 1.480382
+  type: 'test'
+  ...
+# Subtest: a malformed HTTP success response throws rather than pretending the purge worked
+ok 69 - a malformed HTTP success response throws rather than pretending the purge worked
+  ---
+  duration_ms: 1.402872
+  type: 'test'
+  ...
+# Subtest: revalidateTag immediately expires Next before purging Tanod
+ok 70 - revalidateTag immediately expires Next before purging Tanod
+  ---
+  duration_ms: 47.837127
+  type: 'test'
+  ...
+# Subtest: it refuses to start without an endpoint or a token
+ok 71 - it refuses to start without an endpoint or a token
+  ---
+  duration_ms: 0.295143
+  type: 'test'
+  ...
+# Subtest: the origin starts first, tanod once it is listening, and SIGTERM stops tanod before the origin
+ok 72 - the origin starts first, tanod once it is listening, and SIGTERM stops tanod before the origin
+  ---
+  duration_ms: 374.553191
+  type: 'test'
+  ...
+# Subtest: tanod dying stops the origin and passes on its exit code
+ok 73 - tanod dying stops the origin and passes on its exit code
+  ---
+  duration_ms: 371.561886
+  type: 'test'
+  ...
+# Subtest: an origin that exits before listening never gets a tanod in front of it
+ok 74 - an origin that exits before listening never gets a tanod in front of it
+  ---
+  duration_ms: 70.980947
+  type: 'test'
+  ...
+# Subtest: a missing tanod binary is reported and the origin is stopped
+ok 75 - a missing tanod binary is reported and the origin is stopped
+  ---
+  duration_ms: 254.996381
+  type: 'test'
+  ...
+# Subtest: the binary is found explicitly, then via TANOD_BIN, then the platform package, then PATH
+ok 76 - the binary is found explicitly, then via TANOD_BIN, then the platform package, then PATH
+  ---
+  duration_ms: 0.322034
+  type: 'test'
+  ...
+# Subtest: start options are checked
+ok 77 - start options are checked
+  ---
+  duration_ms: 0.64228
+  type: 'test'
+  ...
+# Subtest: the generated configuration passes `tanod check`
+ok 78 - the generated configuration passes `tanod check`
+  ---
+  duration_ms: 39.283197
+  type: 'test'
+  ...
+# Subtest: a routes-only fragment is deliberately not a complete config
+ok 79 - a routes-only fragment is deliberately not a complete config
+  ---
+  duration_ms: 11.33288
+  type: 'test'
+  ...
+# Subtest: a small statically partitioned group passes `tanod check`
+ok 80 - a small statically partitioned group passes `tanod check`
+  ---
+  duration_ms: 17.644723
+  type: 'test'
+  ...
+1..80
+# tests 80
+# suites 0
+# pass 79
+# fail 0
+# cancelled 0
+# skipped 1
+# todo 0
+# duration_ms 1948.934724

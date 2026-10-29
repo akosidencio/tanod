@@ -55,7 +55,14 @@ in the same active namespace. See [operations](OPERATIONS.md).
 
 ## Resource limits and remaining assumptions
 
-Admission bounds origin work units, queue count and queue time. Upgrade slots
+Admission permits track requests still held by the proxy. An uncached response,
+including a cache-pressure fallback, can release its permit after disconnect
+while the backend continues work. A strict bound on such backend jobs requires
+cooperative cancellation or an origin-side job limit. The current hour-long
+validation observed an origin peak of 10 against an eight-unit ceiling and
+remains a release blocker; see the [readiness report](../PHASE4-PRODUCTION-READINESS.md).
+
+Admission bounds proxy-held origin work units, queue count and queue time. Upgrade slots
 are separate and off by default. Cache bodies, cache logical bytes and spool
 bytes have limits. Cache pressure falls back before registration, abandons a
 fill into bounded headroom when possible, then aborts visibly past that

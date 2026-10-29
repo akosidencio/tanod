@@ -1,0 +1,111 @@
+[
+  {
+    "id": "@tanod/next@0.4.0",
+    "name": "@tanod/next",
+    "version": "0.4.0",
+    "size": 40601,
+    "unpackedSize": 133507,
+    "shasum": "37d8499bd1cb3c9414e52915ef45a9fe2b1c1995",
+    "integrity": "sha512-qVYpGo7G1yiSugUB39XOrwA5o/zX0h2aH/TzyR8BcZnVhgXw/0KSXEx/N4nODKpeKYF/iXrj+ixSOa+vsMlhGw==",
+    "filename": "tanod-next-0.4.0.tgz",
+    "files": [
+      {
+        "path": "README.md",
+        "size": 16483,
+        "mode": 420
+      },
+      {
+        "path": "package.json",
+        "size": 1485,
+        "mode": 420
+      },
+      {
+        "path": "src/calibration.js",
+        "size": 8137,
+        "mode": 420
+      },
+      {
+        "path": "src/capacity.js",
+        "size": 1789,
+        "mode": 420
+      },
+      {
+        "path": "src/cli.js",
+        "size": 14354,
+        "mode": 493
+      },
+      {
+        "path": "src/compat.js",
+        "size": 2487,
+        "mode": 420
+      },
+      {
+        "path": "src/compatibility.json",
+        "size": 77,
+        "mode": 420
+      },
+      {
+        "path": "src/config.d.ts",
+        "size": 1021,
+        "mode": 420
+      },
+      {
+        "path": "src/config.js",
+        "size": 3312,
+        "mode": 420
+      },
+      {
+        "path": "src/generate-to-file.js",
+        "size": 5795,
+        "mode": 420
+      },
+      {
+        "path": "src/index.d.ts",
+        "size": 7121,
+        "mode": 420
+      },
+      {
+        "path": "src/index.js",
+        "size": 635,
+        "mode": 420
+      },
+      {
+        "path": "src/manifests.js",
+        "size": 4747,
+        "mode": 420
+      },
+      {
+        "path": "src/policy.js",
+        "size": 14662,
+        "mode": 420
+      },
+      {
+        "path": "src/purge.js",
+        "size": 8873,
+        "mode": 420
+      },
+      {
+        "path": "src/routes.js",
+        "size": 16028,
+        "mode": 420
+      },
+      {
+        "path": "src/start.js",
+        "size": 11366,
+        "mode": 420
+      },
+      {
+        "path": "src/workflows.js",
+        "size": 13679,
+        "mode": 420
+      },
+      {
+        "path": "src/yaml.js",
+        "size": 1456,
+        "mode": 420
+      }
+    ],
+    "entryCount": 19,
+    "bundled": []
+  }
+]

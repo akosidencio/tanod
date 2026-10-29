@@ -1,0 +1,6 @@
+{"affinity": "0", "override": null, "replicas": 1, "workers_per_replica": 1, "idle_seconds": 1, "idle_cpu_seconds": 0.0, "idle_context_switches": 0, "rss_kib": 10028, "threads": 6}
+{"affinity": "0,1", "override": null, "replicas": 1, "workers_per_replica": 2, "idle_seconds": 1, "idle_cpu_seconds": 0.0, "idle_context_switches": 0, "rss_kib": 10008, "threads": 7}
+{"affinity": "0,1,2,3", "override": null, "replicas": 1, "workers_per_replica": 4, "idle_seconds": 1, "idle_cpu_seconds": 0.0, "idle_context_switches": 0, "rss_kib": 10056, "threads": 9}
+{"affinity": "0", "override": 4, "replicas": 1, "workers_per_replica": 4, "idle_seconds": 1, "idle_cpu_seconds": 0.0, "idle_context_switches": 0, "rss_kib": 10364, "threads": 9}
+{"affinity": "0", "override": null, "replicas": 2, "workers_per_replica": 1, "idle_seconds": 1, "idle_cpu_seconds": 0.0, "idle_context_switches": 0, "rss_kib": 20380, "threads": 12}
+{"affinity": "0", "override": null, "replicas": 4, "workers_per_replica": 1, "idle_seconds": 1, "idle_cpu_seconds": 0.0, "idle_context_switches": 0, "rss_kib": 40600, "threads": 24}

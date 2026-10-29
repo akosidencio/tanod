@@ -1,0 +1,5 @@
+{"quota":0.5,"workers":1,"memory_limit_mib":64,"image":"sha256:7b5fe0d747b9ae6e29d4de366bdcc47ab821b786a81b689941cdc6ecdfb89b88"}
+{"quota":1,"workers":1,"memory_limit_mib":64,"image":"sha256:7b5fe0d747b9ae6e29d4de366bdcc47ab821b786a81b689941cdc6ecdfb89b88"}
+{"quota":1.5,"workers":1,"memory_limit_mib":64,"image":"sha256:7b5fe0d747b9ae6e29d4de366bdcc47ab821b786a81b689941cdc6ecdfb89b88"}
+{"quota":2,"workers":2,"memory_limit_mib":64,"image":"sha256:7b5fe0d747b9ae6e29d4de366bdcc47ab821b786a81b689941cdc6ecdfb89b88"}
+{"quota":4,"workers":4,"memory_limit_mib":64,"image":"sha256:7b5fe0d747b9ae6e29d4de366bdcc47ab821b786a81b689941cdc6ecdfb89b88"}

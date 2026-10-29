@@ -1,0 +1,15 @@
+{
+  "exit_code": 0,
+  "listen_counter_delta": {
+    "ListenOverflows": 0,
+    "ListenDrops": 0
+  },
+  "peak_listen_queue": 40,
+  "backlogs": [
+    4096
+  ],
+  "max_cpu_cores": {
+    "origin_max": 0.424,
+    "tanod_max": 2.486
+  }
+}
