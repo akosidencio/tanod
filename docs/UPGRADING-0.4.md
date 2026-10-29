@@ -21,6 +21,8 @@ Keep the preceding binary and configuration together for rollback. A downgrade
 starts a cold cache; in-memory namespaces do not persist across process restarts.
 
 For a fixed separate tier, count surge and terminating pods against the static
-capacity partition. For application autoscaling, prefer the existing per-app
+capacity partition. The shipped Kubernetes example uses ordered StatefulSet
+replacement; a Deployment with zero surge can still overlap terminating pods.
+Fence an old process before any forced deletion. For application autoscaling, prefer the existing per-app
 process/pod topology in the [deployment guide](DEPLOYMENT-GUIDE.md) rather than
 assuming the static separate-tier example coordinates capacity dynamically.

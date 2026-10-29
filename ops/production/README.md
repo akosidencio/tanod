@@ -27,13 +27,18 @@ Compose bridge. A loopback host publication does not isolate container peers.
   reviewed image digest, then apply `kubernetes.yaml` in a staging namespace.
   `kubectl create configmap tanod-config --from-file=tanod.yaml=ops/production/kubernetes-tanod.yaml`.
   The origin Service is `next-origin:3000`. At most two active Tanod replicas
-  share an eight-unit ceiling (four each). Do not HPA this separate tier or
-  origin pool without redesigning the budget; terminate old pods fully before
-  exceeding the declared group size. Coalescing, caches and purge are per
+  share an eight-unit ceiling (four each). The StatefulSet uses ordered
+  replacement and a headless identity Service so normal rollouts wait for each
+  old pod to terminate. A Deployment's `maxSurge: 0` would still allow overlap
+  with terminating pods. Do not HPA this separate tier or origin pool without
+  redesigning the budget. Never force-delete a pod until its old process is
+  fenced; doing so defeats the controller's identity guarantee. Coalescing, caches and purge are per
   replica. Purge every replica; use path-stable ingress where reuse matters.
   Label the ingress, monitoring and operator namespaces with the labels used
   by the shipped NetworkPolicy. Its enforcement, kubelet probes and rolling
   behavior require cluster validation.
+  See the [StatefulSet lifecycle](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/)
+  and [force-deletion requirements](https://kubernetes.io/docs/tasks/run-application/force-delete-stateful-set-pod/).
 * Trusted reverse proxy: pair `trusted-proxy-tanod.yaml` with `nginx.conf`
   inside an existing TLS virtual host. The edge overwrites every forwarding
   value. Do not use `$proxy_add_x_forwarded_for` for this single-edge example.

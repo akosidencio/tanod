@@ -1,15 +1,17 @@
 # The next-origin Service and application are managed separately. Keep its
 # pool fixed, with measured capacity >= 8 concurrent work units. This example
-# partitions that budget over at most TWO active Tanod pods, including surge.
+# partitions that budget over TWO live pod identities. Ordered replacement
+# waits for the old identity to terminate. Never force-delete an unfenced pod.
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: tanod
 spec:
+  serviceName: tanod-pods
   replicas: 2
-  strategy:
+  podManagementPolicy: OrderedReady
+  updateStrategy:
     type: RollingUpdate
-    rollingUpdate: {maxSurge: 0, maxUnavailable: 1}
   selector:
     matchLabels: {app: tanod}
   template:
@@ -65,6 +67,16 @@ spec:
           emptyDir: {medium: Memory, sizeLimit: 1Mi}
         - name: tmp
           emptyDir: {medium: Memory, sizeLimit: 8Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tanod-pods
+spec:
+  clusterIP: None
+  selector: {app: tanod}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
 ---
 apiVersion: v1
 kind: Service
