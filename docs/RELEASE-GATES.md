@@ -214,6 +214,10 @@ non-root read-only container/CPU-quota probe with a real Next.js origin. Fuzz
 corpora and crash artifacts are retained. This workflow needs no publication
 permissions or new secrets. Its schedule runs on the repository default branch;
 use workflow_dispatch on a candidate branch before it reaches that branch.
+It also captures three short hit/fill performance samples per policy, without
+shared-runner throughput thresholds. Memory runs use 40 rounds and 64 slow
+readers. Release-candidate runs use the 20-second upgrade and ten-round chaos
+parameters above; scheduled runs use six seconds and two rounds.
 
 **Tier 3 — RC:** the release workflow calls the same extended workflow on the
 explicit tag/ref, with **one hour per policy**, before its existing CI, real

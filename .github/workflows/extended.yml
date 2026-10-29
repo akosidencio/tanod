@@ -39,7 +39,10 @@ jobs:
       - name: Build the exact locked tree
         run: cargo build --workspace --release --locked --features tls
       - name: Record source and binary
-        run: python3 scripts/build-manifest.py target/release/tanod --features tls
+        run: |
+          for binary in tanod loadgen slow-origin; do
+            python3 scripts/build-manifest.py "target/release/$binary" --features tls
+          done
       - name: Lifecycle, pressure and repeated invalidation
         env:
           BENCH_PROFILE: release
@@ -49,12 +52,31 @@ jobs:
           python3 bench/lifecycle.py --tanod target/release/tanod --origin target/release/slow-origin
           for policy in clock tinyufo; do
             CACHE_EVICTION="$policy" bash bench/cache-pressure.sh
-            CACHE_EVICTION="$policy" MEMORY_ROUNDS=40 bash bench/memory.sh
+            CACHE_EVICTION="$policy" MEMORY_ROUNDS=40 MEMORY_SLOW_READERS=64 bash bench/memory.sh
             for _ in $(seq 1 5); do
               CACHE_EVICTION="$policy" bash bench/cache-policy-reload.sh
             done
             CACHE_EVICTION="$policy" SOAK_SECONDS=${{ inputs.release_candidate && '3600' || '600' }} \
               SOAK_WORKERS=24 bash bench/soak.sh
+          done
+          bash bench/upgrade.sh ${{ inputs.release_candidate && '20' || '6' }}
+          CHAOS_ROUNDS=${{ inputs.release_candidate && '10' || '2' }} bash bench/chaos.sh
+      - name: Sample performance without shared-runner thresholds
+        env:
+          TANOD_BIN: ${{ github.workspace }}/target/release/tanod
+          LOADGEN_BIN: ${{ github.workspace }}/target/release/loadgen
+          ORIGIN_BIN: ${{ github.workspace }}/target/release/slow-origin
+          PERF_OUT: ${{ github.workspace }}/benchmark-results/extended/perf
+          PERF_LABEL: extended
+          PERF_DURATION: '2'
+          PERF_WARMUP: '1'
+          PERF_TRIALS: '3'
+          PERF_CONNECTIONS: '1 8 32'
+          PERF_MISS_CONNECTIONS: '8 32'
+        run: |
+          set -euo pipefail
+          for policy in clock tinyufo; do
+            CACHE_EVICTION="$policy" bash bench/perf.sh hit miss
           done
       - name: Rebuild and test the hardened image
         env:
@@ -83,6 +105,8 @@ jobs:
           path: |
             benchmark-results/extended/
             target/release/tanod.build.json
+            target/release/loadgen.build.json
+            target/release/slow-origin.build.json
           if-no-files-found: error
   fuzz:
     runs-on: ubuntu-latest

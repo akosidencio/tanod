@@ -11,6 +11,9 @@ IMAGE_ID=$(docker image inspect "$TANOD_IMAGE" --format '{{.Id}}') || bench_fail
 bench_param image "$IMAGE_ID"
 bench_param origin_image "$(docker image inspect "$SSR_IMAGE" --format '{{.Id}}')"
 bench_param cgroup_version "$(docker info --format '{{.CgroupVersion}}')"
+HOST_CPUS=$(docker info --format '{{.NCPU}}')
+bench_assert_int "$HOST_CPUS" 'Docker host CPU count'
+bench_param docker_host_cpus "$HOST_CPUS"
 PROJECT="tanod-production-check-$$"
 CONTAINER=""
 COMPOSE=(docker compose -p "$PROJECT" -f "$BENCH_ROOT/ops/production/compose.yaml")
@@ -36,6 +39,9 @@ YAML
 # library detection is verified here rather than reimplemented in Tanod.
 for quota in 0.5 1 1.5 2 4; do
   case "$quota" in 0.5|1|1.5) expected=1 ;; *) expected=$quota ;; esac
+  # A quota is a ceiling, not an allocation of additional physical CPUs.
+  # The daemon may run on a two-core CI host even when --cpus=4 is accepted.
+  [ "$expected" -le "$HOST_CPUS" ] || expected=$HOST_CPUS
   CONTAINER="$PROJECT-quota-${quota//./-}"
   docker run -d --name "$CONTAINER" --network none --read-only \
     --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges \
