@@ -156,6 +156,20 @@ bench_result unexpected "$OTHER"
 bench_result aborted_mid_body "$ABORTED"
 bench_result aborted_before_body "$BEFORE_BODY"
 bench_result abort_raced "$RACED"
+if [ -n "${BENCH_REPORT_DIR:-}" ]; then
+  mkdir -p "$BENCH_REPORT_DIR"
+  curl -fsS --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics" \
+    > "$BENCH_REPORT_DIR/$BENCH_NAME-metrics.prom" || bench_fail 'final soak metrics unavailable'
+fi
+if [ "$OTHER" -ne 0 ]; then
+  echo 'unexpected result markers:'
+  cat "$BENCH_DIR"/results-* | grep -Ev '^(200|503|aborted|aborted-before-body|abort-raced)$' \
+    | sort | uniq -c
+  bench_dump_logs
+  if [ -n "${BENCH_REPORT_DIR:-}" ]; then
+    cp "$(bench_log tanod)" "$BENCH_REPORT_DIR/$BENCH_NAME-failure.log"
+  fi
+fi
 bench_assert_gt "$TOTAL" 100 "requests issued (too few to soak anything)"
 # The disconnect arm has to actually disconnect, or the path this soak exists
 # to watch is never taken.
