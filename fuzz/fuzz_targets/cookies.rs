@@ -7,9 +7,9 @@
 //! look like pairs.
 
 use arbitrary::Arbitrary;
-use tanod::classifier::RequestMetadata;
 use http::{HeaderMap, HeaderValue, Method, header};
 use libfuzzer_sys::fuzz_target;
+use tanod::classifier::RequestMetadata;
 
 #[derive(Arbitrary, Debug)]
 struct Input<'a> {

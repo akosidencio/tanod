@@ -1,0 +1,135 @@
+name: Extended validation
+on:
+  schedule:
+    - cron: '23 18 * * *'
+  workflow_dispatch:
+    inputs:
+      release_candidate:
+        description: 'Run the hour-long release stability gates'
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ''
+      release_candidate:
+        type: boolean
+        required: false
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: extended-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  stability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      BENCH_REPORT_DIR: ${{ github.workspace }}/benchmark-results/extended
+      CCACHE_DISABLE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the exact locked tree
+        run: cargo build --workspace --release --locked --features tls
+      - name: Record source and binary
+        run: |
+          for binary in tanod loadgen slow-origin; do
+            python3 scripts/build-manifest.py "target/release/$binary" --features tls
+          done
+      - name: Lifecycle, pressure and repeated invalidation
+        env:
+          BENCH_PROFILE: release
+          BENCH_FEATURES: tls
+        run: |
+          set -euo pipefail
+          python3 bench/lifecycle.py --tanod target/release/tanod --origin target/release/slow-origin
+          for policy in clock tinyufo; do
+            CACHE_EVICTION="$policy" bash bench/cache-pressure.sh
+            CACHE_EVICTION="$policy" MEMORY_ROUNDS=40 MEMORY_SLOW_READERS=64 bash bench/memory.sh
+            for _ in $(seq 1 5); do
+              CACHE_EVICTION="$policy" bash bench/cache-policy-reload.sh
+            done
+            CACHE_EVICTION="$policy" SOAK_SECONDS=${{ inputs.release_candidate && '3600' || '600' }} \
+              SOAK_WORKERS=24 bash bench/soak.sh
+          done
+          bash bench/upgrade.sh ${{ inputs.release_candidate && '20' || '6' }}
+          CHAOS_ROUNDS=${{ inputs.release_candidate && '10' || '2' }} bash bench/chaos.sh
+      - name: Sample performance without shared-runner thresholds
+        env:
+          TANOD_BIN: ${{ github.workspace }}/target/release/tanod
+          LOADGEN_BIN: ${{ github.workspace }}/target/release/loadgen
+          ORIGIN_BIN: ${{ github.workspace }}/target/release/slow-origin
+          PERF_OUT: ${{ github.workspace }}/benchmark-results/extended/perf
+          PERF_LABEL: extended
+          PERF_DURATION: '2'
+          PERF_WARMUP: '1'
+          PERF_TRIALS: '3'
+          PERF_CONNECTIONS: '1 8 32'
+          PERF_MISS_CONNECTIONS: '8 32'
+        run: |
+          set -euo pipefail
+          for policy in clock tinyufo; do
+            CACHE_EVICTION="$policy" bash bench/perf.sh hit miss
+          done
+      - name: Rebuild and test the hardened image
+        env:
+          TANOD_IMAGE: tanod:extended-validation
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse HEAD)
+          source_inputs=$(python3 scripts/build-manifest.py --source-only)
+          docker build --build-arg FEATURES=tls \
+            --build-arg VCS_REF="$revision" \
+            --build-arg SOURCE_ID="$source_inputs" \
+            -t "$TANOD_IMAGE" .
+          docker build -t tanod-next-origin:reference \
+            --build-arg NODE_VERSION=22 --build-arg NEXT_VERSION=16.4.0 \
+            --build-arg TANOD_BUILD_ID=next-fixture-v1 \
+            --build-arg NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
+            fixtures/next-storefront
+          bash bench/container.sh
+      - name: Capture image identity
+        run: docker image inspect tanod:extended-validation > benchmark-results/extended/image.json
+      - name: Publish stability evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extended-stability
+          path: |
+            benchmark-results/extended/
+            target/release/tanod.build.json
+            target/release/loadgen.build.json
+            target/release/slow-origin.build.json
+          if-no-files-found: error
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target\nfuzz -> target"
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Bounded nightly campaigns
+        env:
+          FUZZ_SECONDS: '300'
+        run: bash scripts/fuzz-smoke.sh
+      - name: Preserve corpora and reproducers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extended-fuzz
+          path: |
+            fuzz/corpus/
+            fuzz/artifacts/
+          if-no-files-found: error

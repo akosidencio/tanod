@@ -147,7 +147,10 @@ grep -q '"trace_continued":true' "$LOG" \
 echo
 echo "span export"
 for _ in $(seq 1 60); do
-  [ -s "$SPANS" ] && break
+  # Earlier requests can already have produced a batch while the final
+  # request is waiting for the next asynchronous export. Wait for the trace
+  # we actually intend to join, rather than treating any batch as complete.
+  if [ -s "$SPANS" ] && grep -q "$LOG_TRACE" "$SPANS"; then break; fi
   sleep 0.2
 done
 [ -s "$SPANS" ] || bench_fail "the collector received nothing within 12s"
@@ -184,7 +187,7 @@ grep -q '"parentSpanId"' "$SPANS" || bench_fail "no span was nested under anothe
 # the exported trace. This is the property that breaks silently.
 echo "  log id present in spans"
 grep -q "$LOG_TRACE" "$SPANS" \
-  || bench_fail "trace_id $LOG_TRACE from the access log appears in no exported span"
+  || bench_fail "trace_id $LOG_TRACE from the access log was not exported within 12s"
 
 # And the believed trace id must be the one exported, not a fresh one.
 grep -q '4bf92f3577b34da6a3ce929d0e0e4736' "$SPANS" \

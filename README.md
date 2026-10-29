@@ -14,7 +14,7 @@ Tanod is an open-source Rust reverse proxy that protects self-hosted server-side
 **Stop traffic spikes from becoming render spikes.**
 
 > [!IMPORTANT]
-> Tanod is pre-1.0. The current source version is **0.3.1**. Repository tests and bounded staging tests support its mechanisms, but sustained production validation and an independent cache-safety review remain open. Configuration and behavior may change between releases.
+> Tanod is pre-1.0. This source tree contains an **unpublished 0.4.0 candidate**. Repository tests and bounded staging tests support its mechanisms, but release validation, sustained production validation and an independent cache-safety review remain open. Configuration and behavior may change between releases. See the [upgrade notes](./docs/UPGRADING-0.4.md) before deploying this candidate.
 
 [Get started](#getting-started) · [Next.js integration](#using-tanod-with-nextjs) · [Standalone server](./docs/STANDALONE.md) · [Operations](./docs/OPERATIONS.md) · [Roadmap](./docs/ROADMAP.md) · [Changelog](./CHANGELOG.md)
 
@@ -368,7 +368,7 @@ That result is a workload-specific observation, not a general speed claim. Separ
 
 ## Project status and roadmap
 
-Tanod 0.3.1 implements the core proxy, admission controls, local cache, request coalescing, telemetry, and application supervision. The [changelog](./CHANGELOG.md) records release history; the [roadmap](./docs/ROADMAP.md) tracks remaining work.
+The 0.4.0 candidate includes the core proxy, admission controls, local cache, request coalescing, telemetry, and application supervision. The [changelog](./CHANGELOG.md) records release history; the [roadmap](./docs/ROADMAP.md) tracks remaining work. Candidate validation and outstanding gates are recorded in the [Phase 3.1 hardening report](./PHASE3.1-FINAL-HARDENING.md) and [Phase 4 readiness report](./PHASE4-PRODUCTION-READINESS.md).
 
 Current boundaries and validation gaps include:
 

@@ -105,6 +105,28 @@ bench_assert_eq "$GEN" 2 "config generation after a SIGHUP"
 [ "$FINGERPRINT_AFTER" != "$FINGERPRINT" ] \
   || bench_fail "the config fingerprint did not change when the effective config changed"
 
+# A refused reload is observable even though generation correctly stays put.
+# These assertions run in one isolated process so other unit tests cannot
+# race a global counter measurement.
+metrics_body() { curl -fsS --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics"; }
+STARTED=$(metrics_body | sed -n 's/^tanod_process_start_time_seconds //p')
+bench_assert_int "$STARTED" "process start timestamp"
+[ "$STARTED" -gt 0 ] || bench_fail "missing process start timestamp"
+SUCCESS=$(metrics_body | sed -n 's/^tanod_config_reloads_total{outcome="success"} //p')
+bench_assert_eq "$SUCCESS" 1 "one accepted reload"
+cp "$CONFIG" "$BENCH_DIR/valid.yaml"
+printf 'version: 0\n' > "$CONFIG"
+kill -HUP "$PID"
+for _ in $(seq 1 100); do
+  FAILURE=$(metrics_body | sed -n 's/^tanod_config_reloads_total{outcome="failure"} //p')
+  [ "$FAILURE" = "1" ] && break
+  sleep 0.1
+done
+bench_assert_eq "$FAILURE" 1 "one refused reload"
+bench_assert_eq "$(json_field "$(admin_body /status)" generation)" 2 "refused reload preserved generation"
+bench_assert_eq "$(metrics_body | sed -n 's/^tanod_process_start_time_seconds //p')" "$STARTED" "reload preserved process start time"
+cp "$BENCH_DIR/valid.yaml" "$CONFIG"
+
 # --------------------------------------------------------------- draining
 
 echo

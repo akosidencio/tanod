@@ -63,5 +63,14 @@ routes:
       override_origin: true
       ttl:
         max: 30s
+  # A progressive 1MiB response lasts at least 75ms. The 50ms disconnect
+  # deadline therefore exercises cancellation while the origin is unfinished.
+  - id: disconnect
+    match: "/bigstream/**"
+    class: public_ssr
+    cache:
+      override_origin: true
+      ttl:
+        max: 30s
   - id: catchall
     match: "/**"

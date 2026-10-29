@@ -41,6 +41,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      - name: Verify clean source and synchronized package metadata
+        run: python3 scripts/release-preflight.py
+
       # A tag that disagrees with Cargo.toml ships a mislabelled release.
       - name: Verify the tag matches Cargo.toml
         run: |
@@ -88,8 +91,15 @@ jobs:
   # full QA suite against the tagged tree before anything is published. The ref
   # is passed explicitly: a `workflow_dispatch` re-cut would otherwise test the
   # branch it was started from while the artifacts below are built from the tag.
-  test:
+  stability:
     needs: preflight
+    uses: ./.github/workflows/extended.yml
+    with:
+      ref: ${{ inputs.tag || github.ref }}
+      release_candidate: true
+
+  test:
+    needs: [preflight, stability]
     uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ inputs.tag || github.ref }}
@@ -265,7 +275,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-cyclonedx
-        run: cargo install cargo-cyclonedx --locked
+        run: cargo install cargo-cyclonedx --version 0.5.9 --locked
       - name: Generate
         run: |
           version="$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
@@ -286,6 +296,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
 
     permissions:
       contents: read
@@ -295,6 +307,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
+
+      - name: Identify the checked-out image source
+        id: source
+        run: |
+          revision=$(git rev-parse HEAD)
+          source_inputs=$(python3 scripts/build-manifest.py --source-only)
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "inputs=$source_inputs" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -320,6 +340,8 @@ jobs:
             org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.revision }}
+            io.tanod.build-inputs-sha256=${{ steps.source.outputs.inputs }}
 
       - name: Build and push
         id: push
@@ -335,6 +357,8 @@ jobs:
           # which is correct but a poor first experience.
           build-args: |
             FEATURES=tls
+            VCS_REF=${{ steps.source.outputs.revision }}
+            SOURCE_ID=${{ steps.source.outputs.inputs }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -345,6 +369,12 @@ jobs:
       - name: Smoke test the pushed image
         run: |
           image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}"
+          # BuildKit attaches provenance metadata; this is not a signed
+          # GitHub artifact attestation. Refuse a missing attachment.
+          docker buildx imagetools inspect "$image" \
+            --format '{{ json .Provenance.SLSA }}' > "$RUNNER_TEMP/provenance.json"
+          jq -e 'type == "object" and ((.buildType // .buildDefinition.buildType) | type == "string" and length > 0)' \
+            "$RUNNER_TEMP/provenance.json" > /dev/null
           docker run --rm "$image" version
           docker run --rm -v "$PWD/tanod.yaml:/etc/tanod/tanod.yaml:ro" \
             "$image" check --config /etc/tanod/tanod.yaml
@@ -439,14 +469,18 @@ jobs:
             sha256sum --ignore-missing -c SHA256SUMS
             ```
 
-            The container image carries build provenance and its own SBOM as
-            attestations:
+            The container image includes BuildKit provenance metadata and an
+            SBOM. Inspect the metadata for the reviewed image digest:
 
             ```bash
-            gh attestation verify \
-              "oci://ghcr.io/${{ github.repository }}:${{ steps.collect.outputs.version }}" \
-              --repo ${{ github.repository }}
+            docker buildx imagetools inspect \
+              "ghcr.io/${{ github.repository }}@${{ needs.image.outputs.digest }}" \
+              --format '{{ json .Provenance.SLSA }}'
             ```
+
+            Compare its inputs and revision with the reviewed source. These
+            OCI attachments do not establish a signed GitHub builder identity;
+            this workflow does not generate GitHub artifact attestations.
 
             `tanod-${{ steps.collect.outputs.version }}.cdx.json` is a
             CycloneDX SBOM of the resolved Rust dependency tree. It lists what
@@ -457,8 +491,8 @@ jobs:
             [scripts/reproducible-build.sh](https://github.com/${{ github.repository }}/blob/${{ inputs.tag || github.ref_name }}/scripts/reproducible-build.sh).
             The `.tar.gz` archive is not: gzip stores a modification time, so
             compare the checksum of the binary inside it. The image digest is
-            not reproducible either — verify the image through its provenance
-            attestation instead.
+            not reproducible either — pin its reviewed digest and inspect its
+            recorded provenance instead.
 
   # The npm packages, last: @tanod/linux-x64 (the musl binary) and then
   # @tanod/next, which pins it as an optional dependency.

@@ -37,6 +37,8 @@
 #   PERF_DURATION    measured seconds per run (default 8)
 #   PERF_WARMUP      unrecorded seconds before each run (default 2)
 #   PERF_CONNECTIONS client concurrency sweep for `hit` (default "1 8 32 128 512")
+#   PERF_SIZE_CONNECTIONS concurrency sweep for `sizes` (default "1 10 100 500")
+#   PERF_MISS_CONNECTIONS concurrency sweep for `miss` (default "8 64")
 #   PERF_THREADS     `server.threads` for builds that have the key (unset: omit)
 #   PERF_TANOD_CPUS / PERF_LOAD_CPUS / PERF_ORIGIN_CPUS
 #                    CPU sets for taskset (default 0-2 / 3-4 / 5 on a machine
@@ -115,6 +117,40 @@ mkdir -p "$OUT"
     "${CACHE_EVICTION:-clock}" "$TRIALS" "$DURATION" "$WARMUP" \
     "$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "$OUT/environment.json"
+# A binary's build manifest is captured at build time, not inferred from the
+# harness checkout (which may be measuring a different revision).
+python3 - "$TANOD_BIN" "$OUT" "$LOADGEN" "$ORIGIN_BIN" "$BENCH_ROOT" <<'PY'
+import hashlib, json, os, pathlib, sys, time
+binary, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+env = json.loads((out / 'environment.json').read_text())
+manifest = pathlib.Path(str(binary) + '.build.json')
+if manifest.exists():
+    env['build'] = json.loads(manifest.read_text())
+    if env['build']['binary_sha256'] != env['tanod_sha256']:
+        raise SystemExit('binary differs from its build manifest')
+else:
+    env['build'] = None  # explicitly missing provenance
+for name, value in zip(('loadgen', 'origin'), sys.argv[3:5]):
+    path = pathlib.Path(value)
+    sidecar = pathlib.Path(value + '.build.json')
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    env[name] = dict(binary=str(path), sha256=digest)
+    if sidecar.exists():
+        env[name]['build'] = json.loads(sidecar.read_text())
+        if env[name]['build']['binary_sha256'] != digest:
+            raise SystemExit(f'{name} differs from its build manifest')
+root = pathlib.Path(sys.argv[5])
+env['harness_sha256'] = {
+    str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
+    for path in sorted((root / 'bench').iterdir()) if path.is_file()
+}
+env['memory'] = pathlib.Path('/proc/meminfo').read_text().splitlines()[:3]
+env['harness_affinity'] = sorted(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else None
+(out / 'environment.json').write_text(json.dumps(env, indent=2) + '\n')
+with (out / 'environments.jsonl').open('a') as f:
+    f.write(json.dumps(dict(env, invocation_ns=time.time_ns())) + '\n')
+PY
+[ "$?" = 0 ] || bench_fail "invalid binary provenance"
 
 # Trial numbers for this invocation: 1..TRIALS, or continuing after the trials
 # already recorded for this label when appending.
@@ -166,9 +202,22 @@ record() { # scenario, trial, extra-json, loadgen args...
   local raw
   # shellcheck disable=SC2046
   raw=$($(pin "$LOAD_CPUS") "$LOADGEN" "$@") || bench_fail "loadgen failed in $scenario"
+  # Preserve failing samples too; an assertion must not erase the evidence
+  # needed to distinguish admission, origin and cache-pressure failures.
   printf '%s\n' "$raw" \
     | jq -c --arg s "$scenario" --argjson t "$trial" --argjson x "$extra" \
         '. + {scenario: $s, trial: $t} + $x' >> "$OUT/$scenario.jsonl"
+  printf '%s\n' "$raw" | jq -e '.requests > 0' >/dev/null \
+    || bench_fail "no completed requests in $scenario"
+  if [ "$scenario" != pressure ]; then
+    printf '%s\n' "$raw" | jq -e '.errors == 0' >/dev/null \
+      || bench_fail "transport errors invalidate $scenario"
+  fi
+  case "$scenario" in
+    overload|pressure) ;; # intentional rejection/pressure outcomes are measured
+    *) printf '%s\n' "$raw" | jq -e '.status["4xx"] + .status["5xx"] == 0' >/dev/null \
+         || bench_fail "unexpected HTTP failures in $scenario" ;;
+  esac
   printf '%s\n' "$raw" | jq -r --arg s "$scenario" \
     '"  \($s) \(.label): \(.rps|floor) rps, p50 \(.latency_us.p50)us p99 \(.latency_us.p99)us, errors \(.errors), non-2xx \(.status["4xx"] + .status["5xx"]), tanod cpu \(.processes[0].cpu_cores // "-")"'
 }
@@ -198,6 +247,10 @@ scenario_hit() {
   local renders
   renders=$(origin_stat total)
   bench_result hit_origin_renders "$renders"
+  printf '{"scenario":"hit-origin","origin_renders":%s,"scope":"whole_invocation_including_warmup"}\n' \
+    "$renders" >> "$OUT/hit.jsonl"
+  curl -fsS "http://127.0.0.1:$METRICS_PORT/metrics" > "$OUT/hit-metrics-$(date +%s%N).prom" \
+    || bench_fail "cannot record cache-hit counters"
   stop_all
 }
 
@@ -207,7 +260,7 @@ scenario_sizes() {
     "ORIGIN_MAX=256" "CACHE_MEMORY=512MiB" "MAX_BODY=8MiB" "TTL=1h"
   for trial in $(trials); do
     for size in 1024 16384 65536 1048576 4194304; do
-      for c in 1 10 100 500; do
+      for c in ${PERF_SIZE_CONNECTIONS:-1 10 100 500}; do
         record sizes "$trial" "{\"connections\":$c,\"body\":$size}" run \
           --addr "127.0.0.1:$LISTEN_PORT" --path "/sizes/{n:16}/size/$size" \
           --connections "$c" --threads 2 --duration "$(( (DURATION + 1) / 2 ))" \
@@ -226,7 +279,7 @@ scenario_miss() {
   start_tanod "$BENCH_ROOT/bench/perf-cache.yaml.tpl" \
     "ORIGIN_MAX=512" "CACHE_MEMORY=32MiB" "MAX_BODY=8MiB" "TTL=1h"
   for trial in $(trials); do
-    for c in 8 64; do
+    for c in ${PERF_MISS_CONNECTIONS:-8 64}; do
       record miss "$trial" "{\"connections\":$c,\"body\":16384}" run \
         --addr "127.0.0.1:$LISTEN_PORT" --path "/miss/size/16384?u={u}" \
         --connections "$c" --threads 2 --duration "$DURATION" --warmup "$WARMUP" \
@@ -309,29 +362,63 @@ scenario_overload() {
   # Every request is uncached dynamic work, so nothing here is a cache win;
   # the comparison is what saturation does to latency and errors.
   local c
-  start_origin 50 8
   for trial in $(trials); do
     for c in 8 32 128 512; do
-      bench_origin_reset "$ORIGIN_PORT"
+      # A timed client leaves censored requests outstanding. Fresh processes
+      # isolate each case's origin counters from the preceding case's queue.
+      start_origin 50 8
       record overload "$trial" "{\"connections\":$c,\"path\":\"direct\"}" run \
         --addr "127.0.0.1:$ORIGIN_PORT" --path "/api/render/size/16384?q={u}" \
         --connections "$c" --threads 2 --duration "$DURATION" --warmup "$WARMUP" \
         --watch-pid "$(bench_pid origin)" --timeout 30 --label "direct-c$c"
-      printf '{"scenario":"overload-origin","trial":%s,"connections":%s,"path":"direct","origin_peak":%s}\n' \
-        "$trial" "$c" "$(origin_stat peak)" >> "$OUT/overload.jsonl"
+      printf '{"scenario":"overload-origin","trial":%s,"connections":%s,"path":"direct","origin_peak":%s,"origin_requests_received_including_warmup":%s}\n' \
+        "$trial" "$c" "$(origin_stat peak)" "$(origin_stat total)" >> "$OUT/overload.jsonl"
     done
   done
-  mixed_tanod protect true 8 64 1s
   for trial in $(trials); do
     for c in 8 32 128 512; do
-      bench_origin_reset "$ORIGIN_PORT"
+      bench_stop tanod
+      start_origin 50 8
+      mixed_tanod protect true 8 64 1s
+      local before="$BENCH_DIR/overload-before" after="$BENCH_DIR/overload-after"
+      curl -fsS "http://127.0.0.1:$METRICS_PORT/metrics" > "$before" \
+        || bench_fail "cannot snapshot demonstration counters"
       record overload "$trial" "{\"connections\":$c,\"path\":\"tanod\"}" run \
         --addr "127.0.0.1:$LISTEN_PORT" --path "/api/render/size/16384?q={u}" \
         --connections "$c" --threads 2 --duration "$DURATION" --warmup "$WARMUP" \
         --watch-pid "$(bench_pid tanod)" --watch-pid "$(bench_pid origin)" --timeout 30 \
         --label "tanod-c$c"
-      printf '{"scenario":"overload-origin","trial":%s,"connections":%s,"path":"tanod","origin_peak":%s}\n' \
-        "$trial" "$c" "$(origin_stat peak)" >> "$OUT/overload.jsonl"
+      curl -fsS "http://127.0.0.1:$METRICS_PORT/metrics" > "$after" \
+        || bench_fail "cannot snapshot demonstration counters"
+      python3 - "$before" "$after" "$trial" "$c" >> "$OUT/overload.jsonl" <<'PY'
+import json, sys
+def totals(path):
+    result = dict(intentional_rejections=0, origin_5xx=0, successful_responses=0,
+                  cache_hits=0, responses=0)
+    for line in open(path):
+        if line.startswith('#') or not line.strip():
+            continue
+        name, value = line.rsplit(None, 1)
+        value = float(value)
+        if name.startswith('tanod_admission_total{') and 'decision="shed_' in name:
+            result['intentional_rejections'] += value
+        if name.startswith('tanod_responses_total{'):
+            result['responses'] += value
+            if 'code="2xx"' in name:
+                result['successful_responses'] += value
+            if 'code="5xx"' in name and 'source="origin"' in name:
+                result['origin_5xx'] += value
+        if name.startswith('tanod_cache_total{') and 'status="hit"' in name:
+            result['cache_hits'] += value
+    return result
+a, b = map(totals, sys.argv[1:3])
+delta = {k: b[k] - a[k] for k in a}
+print(json.dumps(dict(scenario='overload-outcomes', trial=int(sys.argv[3]),
+    connections=int(sys.argv[4]), path='tanod', scope='including_warmup', **delta)))
+PY
+      [ "$?" = 0 ] || bench_fail "invalid demonstration counters"
+      printf '{"scenario":"overload-origin","trial":%s,"connections":%s,"path":"tanod","origin_peak":%s,"origin_requests_received_including_warmup":%s}\n' \
+        "$trial" "$c" "$(origin_stat peak)" "$(origin_stat total)" >> "$OUT/overload.jsonl"
     done
   done
   stop_all

@@ -7,9 +7,9 @@
 //! which is the load the governor exists to prevent.
 
 use arbitrary::Arbitrary;
+use libfuzzer_sys::fuzz_target;
 use tanod::config::schema::{QueryMode, QueryPolicy};
 use tanod::fuzzing::canonical_query;
-use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]
 enum Mode {

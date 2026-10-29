@@ -106,6 +106,12 @@ jobs:
       - name: Doc tests
         run: cargo test --workspace --doc --locked
 
+      - name: Validate production examples and benchmark smoke
+        run: |
+          cargo build --locked
+          bash scripts/check-production-configs.sh
+          cargo test --locked --bench hotpath
+
       # The operator artifacts are shipped for people to import, so they have
       # to at least parse. A dashboard that fails to import, or a rules file
       # Prometheus refuses to load, is discovered by whoever needed it during
@@ -137,7 +143,9 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Audit
-        run: cargo audit -D warnings
+        run: |
+          cargo audit -D warnings
+          cargo audit --file fuzz/Cargo.lock -D warnings
 
   # The static musl binary and `tanod-next start`, together, in an Alpine
   # Node image: the deployment @tanod/linux-x64 exists for. Built here as well
@@ -365,17 +373,13 @@ jobs:
           workspaces: ". -> target\nfuzz -> target"
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
 
       - name: Build every target
         run: cargo +nightly fuzz build
 
       - name: Run each target briefly
-        run: |
-          for target in $(cargo +nightly fuzz list); do
-            echo "=== $target ==="
-            cargo +nightly fuzz run "$target" -- -max_total_time=60 -print_final_stats=1
-          done
+        run: bash scripts/fuzz-smoke.sh
 
       - name: Publish any crash artifacts
         if: failure()

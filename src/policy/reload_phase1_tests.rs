@@ -147,11 +147,14 @@ async fn sharing_changes_isolate_completed_active_and_late_old_fills() {
             assert!(hit(store, &active_key).await.is_none());
 
             // Pinned old request did not even register until after reload.
-            // It can stream in isolation, but cannot persist or leave a handoff.
+            // Its reserved leader can stream, but new followers cannot attach.
+            // It cannot persist or leave a handoff.
             let late_key = key(&pinned, "/products/late");
             let mut late = writer(store, &late_key, b"late old").await;
+            assert!(hit(store, &late_key).await.is_none());
+            let tag = late.streaming_write_tag().unwrap().to_vec();
             let (_, mut late_reader) = store
-                .lookup(&late_key, &Span::inactive().handle())
+                .lookup_streaming_write(&late_key, Some(&tag), &Span::inactive().handle())
                 .await
                 .unwrap()
                 .unwrap();

@@ -464,14 +464,8 @@ enum PurgeRefusal {
 /// immediately: the length of a configured token is not the secret, and
 /// padding to hide it would be theatre.
 fn secret_eq(provided: &[u8], expected: &[u8]) -> bool {
-    if provided.len() != expected.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (a, b) in provided.iter().zip(expected.iter()) {
-        diff |= a ^ b;
-    }
-    diff == 0
+    use subtle::ConstantTimeEq;
+    bool::from(provided.ct_eq(expected))
 }
 
 /// Parse `?tag=…&tag=…` / `?all=1` out of a query string.

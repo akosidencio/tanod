@@ -484,6 +484,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
     };
 
     let policy = Arc::new(arc_swap::ArcSwap::from(policy));
+    tanod::telemetry::metrics::set_process_started();
 
     let admission = Arc::new(AdmissionController::new(
         concurrency.max,

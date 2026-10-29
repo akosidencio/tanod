@@ -20,6 +20,7 @@ import sys
 METRICS = [
     ("rps", lambda r: r.get("rps"), "higher"),
     ("p50_us", lambda r: r.get("latency_us", {}).get("p50"), "lower"),
+    ("p95_us", lambda r: r.get("latency_us", {}).get("p95"), "lower"),
     ("p99_us", lambda r: r.get("latency_us", {}).get("p99"), "lower"),
     ("ttfb_p50_us", lambda r: r.get("ttfb_us", {}).get("p50"), "lower"),
     ("ttfb_max_us", lambda r: r.get("ttfb_us", {}).get("max"), "lower"),
@@ -30,6 +31,7 @@ METRICS = [
     ("tanod_cpu_cores", lambda r: (r.get("processes") or [{}])[0].get("cpu_cores"), "lower"),
     ("cpu_us_per_req", lambda r: cpu_per_request(r), "lower"),
     ("rss_peak_kb", lambda r: (r.get("processes") or [{}])[0].get("rss_kb_peak_window"), "lower"),
+    ("context_switches", lambda r: (r.get("processes") or [{}])[0].get("context_switches"), "lower"),
     ("origin_renders", lambda r: r.get("origin_renders"), "lower"),
     ("origin_peak", lambda r: r.get("origin_peak"), "lower"),
 ]

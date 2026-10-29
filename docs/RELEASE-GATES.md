@@ -68,7 +68,7 @@ component under test:
 |---|---|
 | [`breaker.sh`](../bench/breaker.sh) | a backend whose `/healthz` answers `200` while every render answers `502` is **still reported healthy** and is nonetheless ejected; the good backend then takes essentially all the traffic; once the bad one heals, a recovery probe returns it to rotation and the split evens out again |
 | [`retry.sh`](../bench/retry.sh) | with one of two backends killed outright: retries off loses about half the requests; a generous budget serves nearly all of them; **a budget with a floor of one retry refuses the rest rather than amplifying the failure** |
-| [`storage.sh`](../bench/storage.sh) | a cache hit is orders of magnitude cheaper than a miss, and a small-body hit stays within the round-trip-plus-lookup budget that [`CACHE-STORAGE-EVALUATION.md`](./CACHE-STORAGE-EVALUATION.md) rests on |
+| [`storage.sh`](../bench/storage.sh) | a cache hit is orders of magnitude cheaper than a miss, and a small-body hit stays within the script's round-trip-plus-lookup budget |
 | [`purge.sh`](../bench/purge.sh) | a purge by tag removes exactly the entries carrying it, leaves the others cached, and costs exactly that many re-renders at the origin; a purge by path removes every query variant of one page; a `GET`, a wrong token, a missing token, a misspelled parameter and a relative path each change nothing |
 
 ---
@@ -142,8 +142,12 @@ is exactly the untrustworthy evidence this project spent a phase removing.
   that installs it.
 - `SHA256SUMS` is present and covers every published archive.
 - The CycloneDX SBOM is attached.
-- The image's provenance attestation verifies:
-  `gh attestation verify "oci://ghcr.io/OWNER/tanod:<version>" --repo OWNER/tanod`
+- The image has BuildKit provenance metadata and an SBOM. Inspect the reviewed
+  digest with `docker buildx imagetools inspect IMAGE@sha256:DIGEST --format '{{ json .Provenance.SLSA }}'`
+  and compare its inputs/revision with the release source. The workflow rejects
+  missing provenance. These OCI attachments are not signed GitHub artifact
+  attestations; `gh attestation verify` is not a verification gate provided here.
+  See [BuildKit provenance](https://docs.docker.com/build/metadata/attestations/slsa-provenance/).
 - A Linux release binary reproduces from a clean checkout of the tag —
   [`scripts/reproducible-build.sh`](../scripts/reproducible-build.sh).
 
@@ -198,3 +202,69 @@ exclusions reads as more coverage than it has.
   partition, URI affinity, failure, recovery, and purge fan-out. It does not
   discover excess replicas or lease capacity dynamically; the orchestrator
   must honor the declared replica count.
+
+## Three validation tiers for the 0.4 candidate
+
+**Tier 1 — PR:** the existing formatting, both Clippy/TLS paths, unit/doc/cache/
+forwarding tests and dependency audit remain mandatory. Production examples are
+checked by the actual configuration loader, and the hotpath target runs in its
+smoke mode. The existing real Next.js matrix and end-to-end jobs remain on PRs;
+this change does not weaken them or substitute mocks for framework evidence.
+
+**Tier 2 — nightly/extended:** [extended.yml](../.github/workflows/extended.yml)
+runs bounded fuzz campaigns, both cache policies, memory pressure, repeated
+policy reload/purge cycles, local lifecycle schedules, ten-minute soaks and the
+non-root read-only container/CPU-quota probe with a real Next.js origin. Fuzz
+corpora and crash artifacts are retained. This workflow needs no publication
+permissions or new secrets. Its schedule runs on the repository default branch;
+use workflow_dispatch on a candidate branch before it reaches that branch.
+It also captures three short hit/fill performance samples per policy, without
+shared-runner throughput thresholds. Memory runs use 40 rounds and 64 slow
+readers. Release-candidate runs use the 20-second upgrade and ten-round chaos
+parameters above; scheduled runs use six seconds and two rounds.
+
+**Tier 3 — RC:** the release workflow calls the same extended workflow on the
+explicit tag/ref, with **one hour per policy**, before its existing CI, real
+framework matrix, locked native/musl builds, SBOM, checksums and provenance
+steps. `python3 scripts/release-preflight.py` refuses dirty source or inconsistent
+Cargo/npm versions. `--allow-dirty` exists for local preparation only, reports
+`release_gate: false`, and is never used by the release workflow. No local
+benchmark or this document authorizes publication.
+
+Additional reproducible local checks:
+
+```sh
+python3 bench/lifecycle.py
+TANOD_IMAGE=tanod:review-candidate bash bench/container.sh
+FUZZ_SECONDS=60 bash scripts/fuzz-smoke.sh
+python3 scripts/check-workers.py target/release/tanod
+bash bench/phase31.sh /absolute/phase2/tanod /absolute/candidate/tanod
+```
+
+Build each measured binary with locked dependencies, then immediately run
+`python3 scripts/build-manifest.py /absolute/path/to/binary`. Keep that sidecar
+with the binary: perf.sh verifies its SHA-256 and retains every invocation's
+build identity and environment in `environments.jsonl`. The build-input digest
+covers Rust sources, Cargo manifests/lockfiles, toolchain and Cargo config;
+it is distinct from a clean Git commit and from a Docker image digest.
+
+The performance runner requires six useful CPU affinities for the full local
+1/2/available-worker comparison, or explicit taskset overrides appropriate to
+the machine. Do not run builds, fuzzers or stability loads alongside controlled
+performance comparisons. Short local trials are sampling evidence, not proof
+that a noisy p99 difference is statistically significant.
+
+Fuzz seeds come from `fuzz/corpus/<target>` and are preserved between runs.
+Keep secrets and production requests out of corpora. Failures stay in
+`fuzz/artifacts/<target>`; minimize a reproducer with `cargo +nightly fuzz tmin`
+and add a targeted regression before restarting a campaign. The lifecycle
+model is a separate Loom unit test; it does not model HTTP parsers or all
+TinyUFO internals.
+
+For the capacity demonstration, the origin fixture's `total`/`peak` count
+received/outstanding requests, including its own queue. They are not completed
+render counters. The final CSV separates those from successful uncached
+responses completed inside the measurement window. Warmup-inclusive counters
+must not be divided by measured-window counts or advertised as extra render
+capacity. Streaming paths with a query use the fixture's four-chunk fallback;
+inspect the captured harness when reproducing historical stream samples.
