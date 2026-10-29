@@ -1,1 +1,0 @@
-{"benchmark":"upgrade","started_at":"2026-10-29T05:14:23Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"ae83e2b","traffic_seconds":"6","render_ms":"20","drain_period_s":"1","shutdown_timeout_s":"3","mode":"handover"},"results":{"sigterm_drain_succeeded":"10","requests":"177","succeeded":"177","failed":"0"}}

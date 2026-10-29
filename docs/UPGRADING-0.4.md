@@ -1,8 +1,8 @@
 # Preparing an upgrade to 0.4.0
 
 The 0.4.0 metadata in this tree is an unpublished candidate. No tag, npm package,
-container push or release is implied. Review both engineering reports and run
-the release gates against the reviewed clean commit before publishing.
+container push or release is implied. Review the [release gates](RELEASE-GATES.md)
+and run them against the reviewed clean commit before publishing.
 
 | Change from released 0.3.2 | Automatic behavior | Operator action |
 |---|---|---|

@@ -1,1 +1,0 @@
-{"benchmark":"perf-tinyufo","started_at":"2026-10-29T05:04:19Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"release","cache_eviction":"tinyufo","commit":"ae83e2b","label":"production-build-tinyufo","trials":"1","duration_s":"2","warmup_s":"1"},"results":{"hit_origin_renders":"64"}}

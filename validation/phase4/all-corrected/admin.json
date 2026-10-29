@@ -1,1 +1,0 @@
-{"benchmark":"admin","started_at":"2026-10-29T04:10:20Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"29908cb","render_ms":"50"},"results":{"generation_after_reload":"2","ready_while_draining":"503","served_while_draining":"20"}}

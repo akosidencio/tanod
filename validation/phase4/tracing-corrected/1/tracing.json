@@ -1,1 +1,0 @@
-{"benchmark":"tracing","started_at":"2026-10-29T03:57:25Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"0adfa2a","render_ms":"20","sample_mode":"always"},"results":{"batches":"2","server_spans":"4","origin_spans":"4","spans_exported":"8","requests_with_dead_collector":"15","ms_with_dead_collector":"1535"}}

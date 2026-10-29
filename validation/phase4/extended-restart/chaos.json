@@ -1,1 +1,0 @@
-{"benchmark":"chaos","started_at":"2026-10-29T04:39:37Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"ae83e2b","rounds":"10","backends":"2","render_ms":"30"},"results":{"requests":"1916","succeeded":"1366","admin_samples":"116","admin_ok":"116","sessions":"148","sessions_distinct":"148","in_flight_at_end":"0"}}

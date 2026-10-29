@@ -1,8 +1,0 @@
-{"type":"static_hit","requests":200,"allocs_per_request":112.9,"bytes_per_request":45536,"binary":"/home/dennispaler/Documents/OpenSource/tanod/benchmark-results/phase31-final/bin/candidate"}
-{"type":"ssr_hit","requests":200,"allocs_per_request":120.1,"bytes_per_request":46205,"binary":"/home/dennispaler/Documents/OpenSource/tanod/benchmark-results/phase31-final/bin/candidate"}
-{"type":"ssr_miss","requests":200,"allocs_per_request":274.6,"bytes_per_request":242650,"binary":"/home/dennispaler/Documents/OpenSource/tanod/benchmark-results/phase31-final/bin/candidate"}
-{"type":"private","requests":200,"allocs_per_request":147.5,"bytes_per_request":154027,"binary":"/home/dennispaler/Documents/OpenSource/tanod/benchmark-results/phase31-final/bin/candidate"}
-{"type":"rsc_hit","requests":200,"allocs_per_request":126.1,"bytes_per_request":45992,"binary":"/home/dennispaler/Documents/OpenSource/tanod/benchmark-results/phase31-final/bin/candidate"}
-{"type":"server_action","requests":200,"allocs_per_request":137.9,"bytes_per_request":117268,"binary":"/home/dennispaler/Documents/OpenSource/tanod/benchmark-results/phase31-final/bin/candidate"}
-{"type":"bypass","requests":200,"allocs_per_request":184.6,"bytes_per_request":134361,"binary":"/home/dennispaler/Documents/OpenSource/tanod/benchmark-results/phase31-final/bin/candidate"}
-{"type":"shed","requests":200,"allocs_per_request":82.5,"bytes_per_request":104113,"binary":"/home/dennispaler/Documents/OpenSource/tanod/benchmark-results/phase31-final/bin/candidate"}

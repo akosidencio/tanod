@@ -1,1 +1,0 @@
-{"benchmark":"streaming_coalescing","started_at":"2026-10-29T05:10:40Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"ae83e2b","concurrency":"20","chunks":"5","render_ms":"400"},"results":{"served":"20","origin_renders":"1","max_ttfb_s":"0.014759","median_total_s":"1.599303"}}

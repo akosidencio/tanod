@@ -1,4 +1,0 @@
-{"scenario": "private-after-headers", "cached": false, "disconnect_before_headers": false, "limit": 1, "permit_released_before_backend_finished": true, "backend_active_at_release": 1, "origin_peak": 2}
-{"scenario": "cached-after-headers", "cached": true, "disconnect_before_headers": false, "limit": 1, "permit_released_before_backend_finished": false, "backend_active_at_release": 1, "origin_peak": 1}
-{"scenario": "cached-before-headers", "cached": true, "disconnect_before_headers": true, "limit": 1, "permit_released_before_backend_finished": false, "backend_active_at_release": 1, "origin_peak": 1}
-{"scenario": "cached-pressure-after-headers", "cached": true, "disconnect_before_headers": false, "limit": 1, "permit_released_before_backend_finished": true, "backend_active_at_release": 1, "origin_peak": 2}

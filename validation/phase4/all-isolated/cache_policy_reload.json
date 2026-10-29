@@ -1,1 +1,0 @@
-{"benchmark":"cache_policy_reload","started_at":"2026-10-29T05:10:59Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"ae83e2b","render_ms":"20"},"results":{"reloads":"9"}}

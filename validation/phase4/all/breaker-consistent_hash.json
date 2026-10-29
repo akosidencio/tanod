@@ -1,1 +1,0 @@
-{"benchmark":"breaker-consistent_hash","started_at":"2026-10-29T03:58:06Z","status":"pass","parameters":{"os":"Linux","arch":"x86_64","cpus":"6","rustc":"1.98.0","profile":"debug","commit":"0adfa2a","requests":"40","render_ms":"20","balancing_strategy":"consistent_hash"},"results":{"healthy_split":"20/20","ejected_split":"40/0","recovered_split":"20/20"}}
