@@ -362,10 +362,11 @@ scenario_overload() {
   # Every request is uncached dynamic work, so nothing here is a cache win;
   # the comparison is what saturation does to latency and errors.
   local c
-  start_origin 50 8
   for trial in $(trials); do
     for c in 8 32 128 512; do
-      bench_origin_reset "$ORIGIN_PORT"
+      # A timed client leaves censored requests outstanding. Fresh processes
+      # isolate each case's origin counters from the preceding case's queue.
+      start_origin 50 8
       record overload "$trial" "{\"connections\":$c,\"path\":\"direct\"}" run \
         --addr "127.0.0.1:$ORIGIN_PORT" --path "/api/render/size/16384?q={u}" \
         --connections "$c" --threads 2 --duration "$DURATION" --warmup "$WARMUP" \
@@ -374,10 +375,11 @@ scenario_overload() {
         "$trial" "$c" "$(origin_stat peak)" "$(origin_stat total)" >> "$OUT/overload.jsonl"
     done
   done
-  mixed_tanod protect true 8 64 1s
   for trial in $(trials); do
     for c in 8 32 128 512; do
-      bench_origin_reset "$ORIGIN_PORT"
+      bench_stop tanod
+      start_origin 50 8
+      mixed_tanod protect true 8 64 1s
       local before="$BENCH_DIR/overload-before" after="$BENCH_DIR/overload-after"
       curl -fsS "http://127.0.0.1:$METRICS_PORT/metrics" > "$before" \
         || bench_fail "cannot snapshot demonstration counters"
