@@ -1,5 +1,16 @@
 [workspace]
 members = [".", "spike/pingora-cache", "bench/slow-origin", "bench/loadgen"]
+# A vendored dependency, not a member: it is not formatted, linted or tested as
+# Tanod's own code. See vendor/pingora-proxy/TANOD-PATCH.md.
+exclude = ["vendor"]
+
+# Pingora 0.9 abandons an uncached origin response the moment its client goes
+# away, so an admitted request's permit came back while the origin was still
+# working. The patch adds one opt-in hook that lets Tanod keep reading that
+# response to its end, as Pingora already does for a cache fill. Exact diff and
+# verification: vendor/pingora-proxy/TANOD-PATCH.md.
+[patch.crates-io]
+pingora-proxy = { path = "vendor/pingora-proxy" }
 
 [package]
 name = "tanod"

@@ -240,6 +240,23 @@ bench_result in_flight_at_end "${IN_FLIGHT:-?}"
 # The clearest leak signal there is: with nothing in flight, a non-zero here
 # means capacity that will never come back.
 bench_assert_eq "${IN_FLIGHT%%.*}" 0 "origin permits still held after all traffic stopped"
+
+# Which origin-lifetime paths the disconnect arm actually took. A disconnect
+# during a cache fill is finished by Pingora's fill; one that the cache declined
+# under memory pressure is drained by Tanod. Recorded so a run shows both, and
+# a drain still active now is an exchange that never ended.
+for outcome in uncached_fallback fill_abandoned memory_exhausted; do
+  bench_result "cache_pressure_$outcome" \
+    "$(bench_metric "$METRICS_PORT" "tanod_cache_memory_pressure_total{outcome=\"$outcome\"}")"
+done
+for outcome in completed deadline upstream_error; do
+  value=$(bench_metric "$METRICS_PORT" "tanod_origin_disconnect_drains_total{outcome=\"$outcome\"}")
+  echo "  disconnect drains, $outcome  ${value:-?}"
+  bench_result "disconnect_drains_$outcome" "${value:-?}"
+done
+DRAINING_NOW=$(bench_metric "$METRICS_PORT" tanod_origin_disconnect_drains_active)
+bench_result disconnect_drains_active_at_end "${DRAINING_NOW:-?}"
+bench_assert_eq "${DRAINING_NOW%%.*}" 0 "origin responses still draining after all traffic stopped"
 bench_assert_eq "$READY" 200 "readiness after the soak"
 
 echo
