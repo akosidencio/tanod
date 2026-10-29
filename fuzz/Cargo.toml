@@ -67,3 +67,15 @@ name = "forwarded"
 path = "fuzz_targets/forwarded.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "routes"
+path = "fuzz_targets/routes.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "policy"
+path = "fuzz_targets/policy.rs"
+test = false
+doc = false

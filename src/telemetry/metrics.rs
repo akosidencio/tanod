@@ -343,6 +343,35 @@ pub static CONFIG_GENERATION: LazyLock<IntGauge> = LazyLock::new(|| {
     .expect("metric registration")
 });
 
+/// One processed reload attempt. Refusals leave the active generation intact.
+/// Only two fixed outcomes; error messages and file paths are never labels.
+pub static CONFIG_RELOADS: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "tanod_config_reloads_total",
+        "Processed configuration reload attempts, by outcome",
+        &["outcome"]
+    )
+    .expect("metric registration")
+});
+
+/// Unix start timestamp. Unlike uptime, this stays constant across reloads
+/// and can reveal restarts at a stable Prometheus scrape target.
+pub static PROCESS_STARTED: LazyLock<IntGauge> = LazyLock::new(|| {
+    register_int_gauge!(
+        "tanod_process_start_time_seconds",
+        "Unix timestamp when the Tanod process initialized"
+    )
+    .expect("metric registration")
+});
+
+pub fn set_process_started() {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    PROCESS_STARTED.set(i64::try_from(seconds).unwrap_or(i64::MAX));
+}
+
 /// Stable fingerprint of the effective configuration. Unlike generation, this
 /// is comparable across replicas that have restarted or reloaded a different
 /// number of times.
@@ -574,6 +603,10 @@ pub fn preregister() {
     LazyLock::force(&SPANS);
     LazyLock::force(&DRAINING);
     LazyLock::force(&CONFIG_GENERATION);
+    for outcome in ["success", "failure"] {
+        CONFIG_RELOADS.with_label_values(&[outcome]);
+    }
+    LazyLock::force(&PROCESS_STARTED);
     LazyLock::force(&CONFIG_FINGERPRINT);
     LazyLock::force(&UPSTREAM_HEALTHY);
     LazyLock::force(&UPSTREAM_ADDRESSES);

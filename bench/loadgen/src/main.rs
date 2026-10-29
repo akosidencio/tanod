@@ -200,6 +200,8 @@ struct Tally {
     errors: u64,
     error_kinds: Vec<String>,
     bytes: u64,
+    /// The last request met the measurement boundary, not a transport error.
+    censored: u64,
 }
 
 struct Response {
@@ -411,9 +413,21 @@ async fn connection_loop(
                 .ok_or_else(|| std::io::Error::other("no socket"))?;
             exchange(s, &request, &mut buf, 0).await
         };
-        let outcome = tokio::time::timeout(opts.timeout, result).await;
+        // Bound the final exchange by the measurement deadline too. It must
+        // return this connection's accumulated tally even if its last origin
+        // response never arrives; dropping its JoinHandle loses all samples.
+        let deadline = stop_at.min(started + opts.timeout);
+        let outcome = tokio::time::timeout_at(deadline.into(), result).await;
         let elapsed = started.elapsed();
-        let recording = started >= measure_from && Instant::now() <= stop_at;
+        let finished = Instant::now();
+        if finished >= stop_at {
+            tally.censored += 1;
+            break;
+        }
+        // Throughput counts completions within the window, including work
+        // started during warmup. Requiring both endpoints inside it biases
+        // long-latency workloads toward requests that happen to start early.
+        let recording = finished >= measure_from;
         match outcome {
             Ok(Ok(resp)) => {
                 if resp.close {
@@ -484,9 +498,29 @@ fn status_kb(pid: u32, field: &str) -> Option<u64> {
         .and_then(|v| v.parse().ok())
 }
 
+/// Kernel context switches across all live threads, sampled only at the
+/// measured window boundaries. No per-request instrumentation.
+fn context_switches(pid: u32) -> Option<u64> {
+    let tasks = std::fs::read_dir(format!("/proc/{pid}/task")).ok()?;
+    let mut total = 0;
+    for task in tasks.flatten() {
+        let status = std::fs::read_to_string(task.path().join("status")).ok()?;
+        for line in status.lines() {
+            if let Some(value) = line
+                .strip_prefix("voluntary_ctxt_switches:")
+                .or_else(|| line.strip_prefix("nonvoluntary_ctxt_switches:"))
+            {
+                total += value.trim().parse::<u64>().ok()?;
+            }
+        }
+    }
+    Some(total)
+}
+
 struct Watch {
     pid: u32,
     cpu_start: u64,
+    context_start: Option<u64>,
     rss_peak: Arc<AtomicU64>,
 }
 
@@ -538,6 +572,7 @@ fn start_watches(pids: &[u32], stop: Arc<AtomicBool>) -> Vec<Watch> {
             Watch {
                 pid,
                 cpu_start: cpu_ns(pid).unwrap_or(0),
+                context_start: context_switches(pid),
                 rss_peak: peak,
             }
         })
@@ -549,14 +584,19 @@ fn finish_watches(watches: &[Watch], window: Duration) -> String {
         .iter()
         .map(|w| {
             let cpu = cpu_ns(w.pid).unwrap_or(0).saturating_sub(w.cpu_start) as f64 / 1e9;
+            let switches = w.context_start.zip(context_switches(w.pid)).map_or_else(
+                || "null".to_string(),
+                |(start, end)| end.saturating_sub(start).to_string(),
+            );
             format!(
-                "{{\"pid\":{},\"cpu_s\":{:.3},\"cpu_cores\":{:.3},\"rss_kb_peak_window\":{},\"rss_kb_end\":{},\"hwm_kb\":{}}}",
+                "{{\"pid\":{},\"cpu_s\":{:.3},\"cpu_cores\":{:.3},\"rss_kb_peak_window\":{},\"rss_kb_end\":{},\"hwm_kb\":{},\"context_switches\":{}}}",
                 w.pid,
                 cpu,
                 cpu / window.as_secs_f64().max(1e-9),
                 w.rss_peak.load(Ordering::Relaxed),
                 status_kb(w.pid, "VmRSS:").unwrap_or(0),
                 status_kb(w.pid, "VmHWM:").unwrap_or(0),
+                switches,
             )
         })
         .collect();
@@ -568,10 +608,12 @@ fn report(opts: &Options, tallies: Vec<Tally>, window: Duration, watches: String
     let mut errors = 0;
     let mut kinds = Vec::new();
     let mut bytes = 0;
+    let mut censored = 0;
     for t in tallies {
         samples.extend(t.samples);
         errors += t.errors;
         bytes += t.bytes;
+        censored += t.censored;
         for k in t.error_kinds {
             if kinds.len() < 4 && !kinds.contains(&k) {
                 kinds.push(k);
@@ -579,9 +621,26 @@ fn report(opts: &Options, tallies: Vec<Tally>, window: Duration, watches: String
         }
     }
     let mut classes = [0u64; 6];
+    let mut codes = std::collections::BTreeMap::<u16, u64>::new();
     for s in &samples {
         classes[usize::from(s.status / 100).min(5)] += 1;
+        *codes.entry(s.status).or_default() += 1;
     }
+    let codes = codes
+        .iter()
+        .map(|(code, count)| format!("\"{code}\":{count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut successful: Vec<u32> = samples
+        .iter()
+        .filter(|s| (200..300).contains(&s.status))
+        .map(|s| s.total_us)
+        .collect();
+    let mut non_successful: Vec<u32> = samples
+        .iter()
+        .filter(|s| !(200..300).contains(&s.status))
+        .map(|s| s.total_us)
+        .collect();
     let mut total: Vec<u32> = samples.iter().map(|s| s.total_us).collect();
     let mut ttfb: Vec<u32> = samples.iter().map(|s| s.ttfb_us).collect();
     let per_target: Vec<String> = opts
@@ -638,9 +697,11 @@ fn report(opts: &Options, tallies: Vec<Tally>, window: Duration, watches: String
     let completed = samples.len() as u64;
     println!(
         "{{\"label\":\"{}\",\"mode\":\"{}\",\"connections\":{},\"threads\":{},\"window_s\":{:.3},\
-         \"requests\":{},\"rps\":{:.1},\"errors\":{},\"error_kinds\":[{}],\
+         \"requests\":{},\"rps\":{:.1},\"errors\":{},\"censored_requests\":{},\"error_kinds\":[{}],\
          \"status\":{{\"1xx\":{},\"2xx\":{},\"3xx\":{},\"4xx\":{},\"5xx\":{}}},\"body_bytes\":{},\
-         \"latency_us\":{},\"ttfb_us\":{}{},\"targets\":[{}],\"processes\":{}}}",
+         \"latency_us\":{},\"ttfb_us\":{}{},\"status_codes\":{{{}}},\
+         \"successful_latency_us\":{},\"non_successful_latency_us\":{},\
+         \"targets\":[{}],\"processes\":{}}}",
         json_escape(&opts.label),
         opts.mode,
         opts.connections,
@@ -649,6 +710,7 @@ fn report(opts: &Options, tallies: Vec<Tally>, window: Duration, watches: String
         completed,
         completed as f64 / window.as_secs_f64().max(1e-9),
         errors,
+        censored,
         kinds
             .iter()
             .map(|k| format!("\"{}\"", json_escape(k)))
@@ -663,6 +725,9 @@ fn report(opts: &Options, tallies: Vec<Tally>, window: Duration, watches: String
         summary(&mut total),
         summary(&mut ttfb),
         split,
+        codes,
+        summary(&mut successful),
+        summary(&mut non_successful),
         per_target.join(","),
         watches
     );
@@ -695,11 +760,12 @@ async fn run(opts: Arc<Options>) {
     stopping.store(true, Ordering::Relaxed);
     let mut tallies = Vec::new();
     for h in handles {
-        // A connection still waiting on a slow response is abandoned rather
-        // than awaited: its request started inside the window but finished
-        // outside it, and is not recorded either way.
-        if let Ok(Ok(t)) = tokio::time::timeout(Duration::from_millis(200), h).await {
-            tallies.push(t);
+        match h.await {
+            Ok(tally) => tallies.push(tally),
+            Err(error) => {
+                eprintln!("loadgen: connection task failed: {error}");
+                std::process::exit(1);
+            }
         }
     }
     report(&opts, tallies, window, watched);
@@ -776,8 +842,12 @@ async fn burst(opts: Arc<Options>) {
     barrier.wait().await;
     let mut tallies = Vec::new();
     for h in handles {
-        if let Ok(t) = h.await {
-            tallies.push(t);
+        match h.await {
+            Ok(tally) => tallies.push(tally),
+            Err(error) => {
+                eprintln!("loadgen: burst task failed: {error}");
+                std::process::exit(1);
+            }
         }
     }
     let window = window_start.elapsed();
@@ -803,4 +873,83 @@ fn main() {
             run(opts).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn window_end_preserves_samples_when_the_last_response_hangs() {
+        for crosses_warmup in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let now = Instant::now();
+            let measure = now + Duration::from_millis(if crosses_warmup { 50 } else { 0 });
+            let stop = now + Duration::from_millis(300);
+            let (blocked, observed) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                while find(&request, b"\r\n\r\n").is_none() {
+                    read_more(&mut socket, &mut request).await.unwrap();
+                }
+                if crosses_warmup {
+                    tokio::time::sleep_until((measure + Duration::from_millis(10)).into()).await;
+                }
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx")
+                    .await
+                    .unwrap();
+                request.clear();
+                while find(&request, b"\r\n\r\n").is_none() {
+                    read_more(&mut socket, &mut request).await.unwrap();
+                }
+                blocked.send(()).unwrap();
+                // The next response deliberately never arrives.
+                std::future::pending::<()>().await;
+            });
+            let options = Arc::new(Options {
+                mode: "run".into(),
+                addr: address.to_string(),
+                host: "fixture".into(),
+                targets: vec![Target {
+                    weight: 1,
+                    path: "/".into(),
+                    headers: String::new(),
+                }],
+                connections: 1,
+                threads: 1,
+                duration: stop - measure,
+                warmup: measure - now,
+                timeout: Duration::from_secs(30),
+                watch: Vec::new(),
+                label: "boundary".into(),
+                slow_readers: 0,
+                slow_bps: 0,
+            });
+            let client = tokio::spawn(connection_loop(
+                options,
+                0,
+                measure,
+                stop,
+                Arc::new(AtomicBool::new(false)),
+            ));
+            tokio::time::timeout(Duration::from_secs(1), observed)
+                .await
+                .unwrap()
+                .unwrap();
+            let tally = tokio::time::timeout(Duration::from_secs(1), client)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(tally.samples.len(), 1, "completed work was lost");
+            assert_eq!(tally.samples[0].status, 200);
+            assert_eq!(tally.bytes, 1);
+            assert_eq!(tally.censored, 1);
+            assert_eq!(tally.errors, 0);
+            server.abort();
+            let _ = server.await;
+        }
+    }
 }

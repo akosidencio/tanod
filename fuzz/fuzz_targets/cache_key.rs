@@ -11,10 +11,10 @@
 //! client could put on the wire.
 
 use arbitrary::Arbitrary;
-use tanod::cache::KeyBuilder;
-use tanod::classifier::RequestMetadata;
 use http::{HeaderMap, HeaderName, HeaderValue, Method};
 use libfuzzer_sys::fuzz_target;
+use tanod::cache::KeyBuilder;
+use tanod::classifier::RequestMetadata;
 
 #[derive(Arbitrary, Debug)]
 struct Request<'a> {

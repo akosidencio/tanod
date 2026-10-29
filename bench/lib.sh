@@ -86,16 +86,16 @@ bench_build() {
   # the same benchmark harness works on both macOS and Linux.
   if [ "${BENCH_PROFILE:-debug}" = "release" ]; then
     if [ -n "${BENCH_FEATURES:-}" ]; then
-      cargo build --workspace --release --features "$BENCH_FEATURES" -q \
+      cargo build --workspace --release --locked --features "$BENCH_FEATURES" -q \
         || bench_fail "workspace build failed"
     else
-      cargo build --workspace --release -q || bench_fail "workspace build failed"
+      cargo build --workspace --release --locked -q || bench_fail "workspace build failed"
     fi
   elif [ -n "${BENCH_FEATURES:-}" ]; then
-    cargo build --workspace --features "$BENCH_FEATURES" -q \
+    cargo build --workspace --locked --features "$BENCH_FEATURES" -q \
       || bench_fail "workspace build failed"
   else
-    cargo build --workspace -q || bench_fail "workspace build failed"
+    cargo build --workspace --locked -q || bench_fail "workspace build failed"
   fi
 }
 

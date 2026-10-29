@@ -906,3 +906,44 @@ storage path, preventing an unflushed spool from truncating them. To spool a
 route, disable both `cache.enabled` and `coalesce.enabled` on that route;
 client backpressure can still affect cached/coalesced responses. This applies
 to every eviction policy.
+
+## Production candidate validation
+
+The [production examples](../ops/production/README.md) include VPS, Compose,
+fixed Kubernetes-tier and trusted NGINX configurations. Validate them with
+`bash scripts/check-production-configs.sh`. Their memory and admission budgets
+are starting points to calibrate, not claims about your application's capacity.
+See the [0.4 migration notes](UPGRADING-0.4.md) and
+[deployment security model](SECURITY-MODEL.md).
+
+`tanod_config_reloads_total{outcome="success"}` counts accepted reload attempts;
+`outcome="failure"` counts refusals, including invalid configuration and edits
+requiring restart. Both fixed series exist before the first attempt. A refusal
+keeps `tanod_config_generation` and the active policy unchanged. These counters
+count attempts actually processed, not Unix signals sent (signals may coalesce).
+
+`tanod_process_start_time_seconds` is a Unix timestamp set once at startup,
+unchanged by reload. `changes(...[1h])` can flag repeated process restarts at a
+stable scrape address; it cannot decide whether a restart was planned. Use
+supervisor exit status, OOM events and deployment history to distinguish crashes
+from intentional SIGTERM stops. Kubernetes pod-IP changes require a container
+restart metric from the orchestrator instead.
+
+`/health/live` stays 200 when the origin fails or readiness is withdrawn.
+`/health/ready` returns 503 during draining; with
+`telemetry.admin.require_healthy_upstream: true` it also requires at least one
+healthy backend. Keep that option off when every replica shares the same failed
+origin and stale responses remain useful. `/status` supplies generation,
+limiter queues/work, backend health/breaker state and cache pressure. These
+checks read maintained state; they do not initiate expensive origin probes.
+
+Read-only status and metrics have no bearer authentication. Purge does. Keep
+all operator ports private; a loopback host port does not prevent peer containers
+from connecting on their internal network. Restrict configuration and signal
+access too: SIGHUP is the reload authorization boundary.
+
+The historical Phase 3 timed figures above predate the Phase 3.1 load-generator
+boundary correction. Use the replacement final-source distributions in
+`PHASE3.1-FINAL-HARDENING.md` for assessment; high-latency samples could previously
+lose a whole connection's accumulated tally. No isolated-host latency guarantee
+is implied by either desktop campaign.

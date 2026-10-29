@@ -1,5 +1,6 @@
 # Rust
 target/
+__pycache__/
 
 # macOS
 .DS_Store
@@ -33,6 +34,8 @@ node_modules/
 # so a negation inside one is silently ignored.
 docs/*
 !docs/THREAT-MODEL.md
+!docs/SECURITY-MODEL.md
+!docs/UPGRADING-0.4.md
 !docs/CACHE-KEY-REVIEW.md
 !docs/OPERATIONS.md
 !docs/CONFIG-SCHEMA.md

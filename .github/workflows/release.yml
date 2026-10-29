@@ -41,6 +41,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      - name: Verify clean source and synchronized package metadata
+        run: python3 scripts/release-preflight.py
+
       # A tag that disagrees with Cargo.toml ships a mislabelled release.
       - name: Verify the tag matches Cargo.toml
         run: |
@@ -88,8 +91,15 @@ jobs:
   # full QA suite against the tagged tree before anything is published. The ref
   # is passed explicitly: a `workflow_dispatch` re-cut would otherwise test the
   # branch it was started from while the artifacts below are built from the tag.
-  test:
+  stability:
     needs: preflight
+    uses: ./.github/workflows/extended.yml
+    with:
+      ref: ${{ inputs.tag || github.ref }}
+      release_candidate: true
+
+  test:
+    needs: [preflight, stability]
     uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ inputs.tag || github.ref }}
@@ -296,6 +306,14 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
 
+      - name: Identify the checked-out image source
+        id: source
+        run: |
+          revision=$(git rev-parse HEAD)
+          source_inputs=$(python3 scripts/build-manifest.py --source-only)
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "inputs=$source_inputs" >> "$GITHUB_OUTPUT"
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
@@ -320,6 +338,8 @@ jobs:
             org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.revision }}
+            io.tanod.build-inputs-sha256=${{ steps.source.outputs.inputs }}
 
       - name: Build and push
         id: push
@@ -335,6 +355,8 @@ jobs:
           # which is correct but a poor first experience.
           build-args: |
             FEATURES=tls
+            VCS_REF=${{ steps.source.outputs.revision }}
+            SOURCE_ID=${{ steps.source.outputs.inputs }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

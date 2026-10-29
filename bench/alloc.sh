@@ -34,7 +34,6 @@ else
   bench_build
   TANOD_BIN=$(bench_bin tanod)
 fi
-LOADGEN=$(bench_bin loadgen)
 ORIGIN_BIN=$(bench_bin slow-origin)
 
 LISTEN_PORT=$(bench_free_port)
@@ -122,14 +121,23 @@ drive() { # type count
                      -H 'Next-Action: 7f3a' "$BASE/products/1" ;;
     bypass) abn "$n" "$BASE/api/search/size/4096?q=alloc" ;;
     ssr_miss)
-      # Every request a new key: one keep-alive connection, `n` requests.
-      local done=0 got
-      while [ "$done" -lt "$n" ]; do
-        got=$("$LOADGEN" run --addr "127.0.0.1:$LISTEN_PORT" --path "/products/miss-{u}/size/32768" \
-          --connections 1 --threads 1 --warmup 0 --duration 0.5 | jq '.requests + .errors')
-        done=$((done + got))
-      done
-      echo "$done" > "$BENCH_DIR/miss-count" ;;
+      # Fixed work, not a timed run: a final censored exchange would allocate
+      # inside DHAT without contributing to the completed-request denominator.
+      python3 - "$LISTEN_PORT" "$n" <<'PY'
+import http.client, os, sys
+connection = http.client.HTTPConnection('127.0.0.1', int(sys.argv[1]), timeout=60)
+try:
+    for index in range(int(sys.argv[2])):
+        connection.request('GET', f'/products/miss-{os.getpid()}-{index}/size/32768')
+        response = connection.getresponse()
+        body = response.read()
+        if response.status != 200 or len(body) != 32768:
+            raise SystemExit(f'bad allocation fixture response: {response.status}, {len(body)} bytes')
+finally:
+    connection.close()
+PY
+      [ "$?" = 0 ] || bench_fail "fixed-count miss driver failed"
+      echo "$n" > "$BENCH_DIR/miss-count" ;;
     shed)
       # One request holds the route's only permit on a slow render; every
       # request sent meanwhile is shed.

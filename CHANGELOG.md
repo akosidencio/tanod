@@ -6,7 +6,12 @@ work and [operations guide](./docs/OPERATIONS.md) for deployment details.
 Tanod was released as Harmost up to 0.1.4. Entries below 0.2.0 use the current
 names.
 
-## Unreleased
+## 0.4.0 - Unreleased
+
+- Hardening: late writers from retired cache-policy namespaces now reject new follower attachment while preserving the reserved leader. Deterministic lifecycle schedules and a Loom completion/lookup/purge model cover both retention policies.
+- Operations: publish accepted/refused reload counters and a process-start timestamp; add alert examples for reload refusal, restart churn, cache pressure and upstream failures. Purge credentials use `subtle`'s constant-time comparison.
+- Production: add validated VPS, Compose, Kubernetes and trusted-proxy examples, hardened-container/CPU-quota checks, shutdown regressions, bounded fuzz runners and extended nightly/release stability gates. No release is published by these changes; mandatory release evidence remains subject to the engineering reports.
+- Benchmark evidence now includes binary build-input manifests and per-invocation environments. Add configurable body-size/fill concurrency sweeps and a reproducible Phase 2 comparison runner.
 
 - Performance: the proxy now runs one worker thread per available CPU instead of Pingora's default of one thread for everything. New `server.threads` overrides it; **a behaviour change** — set `threads: 1` to restore the old single-core proxy. The count honours CPU affinity and cgroup quotas, is printed at startup, applies to the proxy listeners only, and needs a restart to change.
 - Performance: cache hits no longer copy the body. Completed entries are immutable segments that every hit, the leader and coalesced followers share by reference; fills copy each write once into an exact allocation and compact many small writes into 64 KiB segments on completion. Large hits got much cheaper (in-process, 1 MiB hits went from about 14,000 to 220,000 per second on one thread) and a follower copies at most the unsealed 4 KiB tail.

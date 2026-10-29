@@ -1,0 +1,51 @@
+version: 1
+server:
+  listen: "0.0.0.0:8080"
+  graceful:
+    pid_file: /run/tanod/tanod.pid
+    upgrade_socket: /run/tanod/upgrade.sock
+    drain_period: 5s
+    shutdown_timeout: 35s
+origin:
+  upstreams: ["app:3000"]
+  concurrency:
+    max: 8
+    queue:
+      max: 16
+      timeout: 250ms
+health:
+  path: /healthz
+  interval: 5s
+  timeout: 1s
+cache:
+  enabled: true
+  eviction: clock
+  max_memory: 64MiB
+  max_body_size: 4MiB
+  purge:
+    token: "${TANOD_PURGE_TOKEN}"
+timeouts:
+  connect: 500ms
+  first_byte: 5s
+  idle: 15s
+  origin: 30s
+  downstream_write: 10s
+telemetry:
+  admin:
+    listen: "0.0.0.0:9091"
+  prometheus:
+    listen: "0.0.0.0:9090"
+  logging:
+    format: json
+routes:
+  - id: private
+    match: "/account/**"
+    class: private_dynamic
+  - id: next-static
+    match: "/_next/static/**"
+    class: static
+  - id: pages
+    match: "/**"
+    class: public_ssr
+# Origin privacy, Set-Cookie, Vary, authentication and draft guards remain
+# authoritative. Do not enable override_origin globally for a dynamic app.

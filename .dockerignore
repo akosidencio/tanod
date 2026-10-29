@@ -10,3 +10,4 @@ fixtures/next-storefront/*.tsbuildinfo
 .DS_Store
 *.local.yaml
 compatibility-results/
+benchmark-results/

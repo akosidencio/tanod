@@ -14,14 +14,14 @@ use proptest::prelude::*;
 
 const POLICIES: [Eviction; 2] = [Eviction::Clock, Eviction::Tinyufo];
 
-fn store(policy: Eviction, budget: usize) -> &'static BoundedStore {
+pub(super) fn store(policy: Eviction, budget: usize) -> &'static BoundedStore {
     BoundedStore::new(&CacheDefaults {
         eviction: policy,
         ..cache_cfg(budget)
     })
 }
 
-fn span() -> SpanHandle {
+pub(super) fn span() -> SpanHandle {
     Span::inactive().handle()
 }
 
@@ -33,7 +33,7 @@ fn pattern(len: usize, seed: u8) -> Vec<u8> {
         .collect()
 }
 
-async fn drain(hit: &mut HitHandler) -> Vec<u8> {
+pub(super) async fn drain(hit: &mut HitHandler) -> Vec<u8> {
     let mut out = Vec::new();
     while let Some(chunk) = hit.read_body().await.unwrap() {
         assert!(!chunk.is_empty(), "a reader was handed an empty chunk");

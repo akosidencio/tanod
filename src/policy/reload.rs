@@ -66,6 +66,14 @@ impl Reloader {
     /// Re-read, validate, and apply. Returns the new generation, or an
     /// explanation of why the running config was kept.
     pub fn reload(&self) -> Result<u64, String> {
+        let result = self.reload_inner();
+        crate::telemetry::metrics::CONFIG_RELOADS
+            .with_label_values(&[if result.is_ok() { "success" } else { "failure" }])
+            .inc();
+        result
+    }
+
+    fn reload_inner(&self) -> Result<u64, String> {
         let _reload = self.reload_lock.lock();
         let cfg = crate::config::load(&self.path).map_err(|e| {
             let mut msg = e.to_string();

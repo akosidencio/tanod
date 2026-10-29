@@ -3,7 +3,7 @@ members = [".", "spike/pingora-cache", "bench/slow-origin", "bench/loadgen"]
 
 [package]
 name = "tanod"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Origin workload governor for server-rendered applications"
@@ -39,6 +39,9 @@ arc-swap = "1"
 async-trait = "0.1"
 bytes = "1"
 log = "0.4"
+# Already present through blake2; use its compiler-resistant comparison for
+# admin bearer credentials instead of relying on an optimizable XOR loop.
+subtle = { version = "2.6", default-features = false }
 # Trace and span ids. Chosen over `rand` because it is the OS entropy syscall
 # and nothing else — no PRNG, no distributions, no generic machinery — and
 # because it is already in this tree transitively, so making it direct costs
@@ -71,6 +74,7 @@ proptest = "1"
 # Test-only: proves the hand-written OTLP JSON parses. Never linked into the
 # binary.
 serde_json = "1"
+loom = "0.7.2"
 
 [[bench]]
 name = "eviction"

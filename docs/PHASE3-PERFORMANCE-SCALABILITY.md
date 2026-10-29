@@ -449,3 +449,17 @@ campaigns (cargo-fuzz is not installed).
 * Review readiness: ready for review. Points to look at first: the completion
   ordering and second lookup (D3), the `server.threads` default change (D1),
   and whether this report should stay tracked.
+
+## Phase 3.1 measurement correction
+
+The subsequent Phase 3.1 review found a load-generator boundary defect: a
+connection whose final exchange did not finish within the collector's 200 ms
+allowance could lose its entire accumulated tally. Timed samples also required
+both request start and finish inside the measured window, biasing long responses.
+Treat this report's high-latency/large-body timed distributions as historical
+measurements, not a validated final-source baseline. The corrected generator
+preserves completed work, reports boundary-censored exchanges, and separates
+successful-response latency from non-2xx latency. See the root
+`PHASE3.1-FINAL-HARDENING.md` for replacement evidence and limits. Burst coalescing
+uses a different collection path; these defects do not invalidate its origin
+render counts.

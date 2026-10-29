@@ -19,9 +19,9 @@
 //! * a believed public host is a plain, lowercased authority, because the
 //!   origin builds URLs from it and it enters the cache key.
 
+use libfuzzer_sys::fuzz_target;
 use tanod::config::schema::{ForwardedSource, TrustedProxies};
 use tanod::net::forwarded::{ListenerScheme, TrustPolicy};
-use libfuzzer_sys::fuzz_target;
 
 #[derive(arbitrary::Arbitrary, Debug)]
 struct Input {

@@ -6,8 +6,8 @@
 //! that should have received a different body.
 
 use arbitrary::Arbitrary;
-use tanod::fuzzing::unsupported_vary;
 use libfuzzer_sys::fuzz_target;
+use tanod::fuzzing::unsupported_vary;
 
 #[derive(Arbitrary, Debug)]
 struct Input {

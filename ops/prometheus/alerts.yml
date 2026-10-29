@@ -294,6 +294,29 @@ groups:
 
   - name: tanod-configuration
     rules:
+      - alert: TanodReloadRefused
+        expr: sum by (job, instance) (increase(tanod_config_reloads_total{outcome="failure"}[10m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Configuration reload refused on {{ $labels.instance }}"
+          description: >-
+            The last valid policy remains active. Check the local reload
+            error, validate the new configuration, and resend SIGHUP.
+
+      - alert: TanodRepeatedRestarts
+        expr: changes(tanod_process_start_time_seconds[1h]) > 2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tanod at {{ $labels.instance }} restarted repeatedly"
+          description: >-
+            This requires a stable scrape target and includes planned restarts.
+            Correlate with deploy events, exit status and OOM events. For pods
+            whose addresses change, alert on container restart counters instead.
+
       # Replicas of one deployment should agree on their effective
       # configuration. Generation is only a per-process reload counter, so
       # fleet comparison uses the stable fingerprint instead.
@@ -310,3 +333,40 @@ groups:
             some replicas can leave them behind without stopping traffic.
             Check each instance's logs for "reload refused"; the message names
             the reason.
+
+  - name: tanod-production-pressure
+    rules:
+      - alert: TanodCacheMemoryPressure
+        expr: sum by (job, instance) (rate(tanod_cache_memory_pressure_total{outcome=~"uncached_fallback|fill_abandoned"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sustained cache memory pressure on {{ $labels.instance }}"
+          description: >-
+            These responses complete without retention. Inspect pinned bytes,
+            body sizes and concurrent fills before raising the logical budget;
+            the process still needs RSS headroom beyond that budget.
+
+      - alert: TanodCircuitBreakerOpen
+        expr: tanod_upstream_ejected == 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit breaker open for {{ $labels.upstream }}"
+          description: >-
+            Real requests failed enough to eject this backend. Health checks
+            may still succeed. Inspect origin failures before changing thresholds.
+
+      - alert: TanodUpstreamFailuresSustained
+        expr: sum by (job, instance, upstream) (rate(tanod_upstream_failures_total[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sustained origin failures on {{ $labels.upstream }}"
+          description: >-
+            More than one observed origin failure per second for ten minutes.
+            This is an example absolute threshold; tune it to traffic and
+            distinguish connection failures from configured breaker statuses.

@@ -447,6 +447,8 @@ pub struct BoundedStore {
     uncached_fallbacks: AtomicU64,
     fills_abandoned: AtomicU64,
     fills_exhausted: AtomicU64,
+    #[cfg(test)]
+    hooks: phase31_tests::Hooks,
 }
 
 /// Memory-pressure counters, for the status document.
@@ -496,6 +498,8 @@ impl BoundedStore {
             uncached_fallbacks: AtomicU64::new(0),
             fills_abandoned: AtomicU64::new(0),
             fills_exhausted: AtomicU64::new(0),
+            #[cfg(test)]
+            hooks: phase31_tests::Hooks::default(),
         }))
     }
 
@@ -1046,6 +1050,8 @@ impl Storage for BoundedStore {
         if let Some(hit) = self.completed(&hash)? {
             return Ok(Some(hit));
         }
+        #[cfg(test)]
+        phase31_tests::Hooks::run(&self.hooks.lookup_missed);
 
         // Nothing finished — but a write may be in progress, and this is the
         // path a coalesced waiter arrives on.
@@ -1186,6 +1192,10 @@ impl Storage for BoundedStore {
         }
         let mut temp = Temp::new(serialized, transient, tags, path);
         temp.namespace = key.extensions.get::<CacheNamespace>().copied();
+        // An old request may reach registration after retirement. Its leader
+        // already owns a reserved reader, but no new follower may attach to
+        // this obsolete namespace, even before completion discards the fill.
+        temp.invalidated = temp.namespace.is_some() && temp.namespace != *_lifecycle;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let handler = FollowableMiss {
             store: self,
@@ -1465,6 +1475,8 @@ impl HandleMiss for FollowableMiss {
         let frozen = self.body.write().freeze();
         let size = frozen.len;
         self.written.send_replace(Written::Complete(size));
+        #[cfg(test)]
+        phase31_tests::Hooks::run(&self.store.hooks.before_completion);
 
         // The read side of `lifecycle` excludes purge and namespace
         // retirement for the whole transition: a fill a purge has marked is
@@ -1521,6 +1533,8 @@ impl HandleMiss for FollowableMiss {
             Completion::Admit(stored) => {
                 match self.store.admit(self.key.clone(), stored, self.accounted) {
                     None => {
+                        #[cfg(test)]
+                        phase31_tests::Hooks::run(&self.store.hooks.admitted);
                         self.store.remove_temp(&self.key, id);
                     }
                     // TinyUFO declined it. What is already streaming finishes
@@ -1601,6 +1615,10 @@ mod phase2_tests;
 #[cfg(test)]
 #[path = "store_phase3_tests.rs"]
 mod phase3_tests;
+
+#[cfg(test)]
+#[path = "store_phase31_tests.rs"]
+mod phase31_tests;
 
 #[cfg(test)]
 mod tests {
