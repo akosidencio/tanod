@@ -110,6 +110,20 @@ run storage.sh "${STORAGE_SAMPLES:-60}" "${STORAGE_RENDER_MS:-200}"
 # same reasoning as the Docker block below.
 if command -v python3 >/dev/null; then
   run websocket.sh
+  # Origin permit lifetimes across client disconnects, cache-pressure
+  # fallback, coalescing and origin deadlines, under both retention policies,
+  # against an origin whose render count cannot drift.
+  echo
+  echo "=================================================================="
+  echo "  origin-concurrency.py"
+  echo "=================================================================="
+  # Built by the scripts above, with the same profile rule as bench_bin.
+  if python3 bench/origin-concurrency.py --tanod "target/${BENCH_PROFILE:-debug}/tanod" \
+       ${BENCH_REPORT_DIR:+--json "$BENCH_REPORT_DIR/origin-concurrency.json"}; then
+    PASSED="$PASSED origin-concurrency.py"
+  else
+    FAILED="$FAILED origin-concurrency.py"
+  fi
 else
   echo
   echo "SKIPPED bench/websocket.sh — no python3 for the WebSocket client."
