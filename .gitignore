@@ -39,12 +39,10 @@ docs/*
 !docs/CACHE-KEY-REVIEW.md
 !docs/OPERATIONS.md
 !docs/CONFIG-SCHEMA.md
-!docs/RELEASE-GATES.md
 !docs/ROADMAP.md
 !docs/NEXTJS-PRODUCTION-REFERENCE.md
 !docs/STANDALONE.md
 !docs/DEPLOYMENT-GUIDE.md
-!docs/PINGORA-REUSE.md
 !docs/data/
 docs/data/*
 !docs/data/pingora-eviction.csv

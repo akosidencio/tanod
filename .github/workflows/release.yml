@@ -296,6 +296,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
 
     permissions:
       contents: read
@@ -472,7 +474,7 @@ jobs:
 
             ```bash
             docker buildx imagetools inspect \
-              "ghcr.io/${{ github.repository }}:${{ steps.collect.outputs.version }}" \
+              "ghcr.io/${{ github.repository }}@${{ needs.image.outputs.digest }}" \
               --format '{{ json .Provenance.SLSA }}'
             ```
 
