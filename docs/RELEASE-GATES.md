@@ -68,7 +68,7 @@ component under test:
 |---|---|
 | [`breaker.sh`](../bench/breaker.sh) | a backend whose `/healthz` answers `200` while every render answers `502` is **still reported healthy** and is nonetheless ejected; the good backend then takes essentially all the traffic; once the bad one heals, a recovery probe returns it to rotation and the split evens out again |
 | [`retry.sh`](../bench/retry.sh) | with one of two backends killed outright: retries off loses about half the requests; a generous budget serves nearly all of them; **a budget with a floor of one retry refuses the rest rather than amplifying the failure** |
-| [`storage.sh`](../bench/storage.sh) | a cache hit is orders of magnitude cheaper than a miss, and a small-body hit stays within the round-trip-plus-lookup budget that [`CACHE-STORAGE-EVALUATION.md`](./CACHE-STORAGE-EVALUATION.md) rests on |
+| [`storage.sh`](../bench/storage.sh) | a cache hit is orders of magnitude cheaper than a miss, and a small-body hit stays within the script's round-trip-plus-lookup budget |
 | [`purge.sh`](../bench/purge.sh) | a purge by tag removes exactly the entries carrying it, leaves the others cached, and costs exactly that many re-renders at the origin; a purge by path removes every query variant of one page; a `GET`, a wrong token, a missing token, a misspelled parameter and a relative path each change nothing |
 
 ---
