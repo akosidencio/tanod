@@ -282,7 +282,8 @@ pub(crate) fn canonical_query(raw: &str, policy: Option<&QueryPolicy>) -> String
         .filter(|(k, _)| match policy {
             None => true,
             Some(p) => {
-                let listed = p.keys.iter().any(|want| want == k);
+                let name = form_decoded(k);
+                let listed = p.keys.iter().any(|want| want.as_bytes() == name);
                 match p.mode {
                     QueryMode::Include => listed,
                     QueryMode::Exclude => !listed,
@@ -291,9 +292,10 @@ pub(crate) fn canonical_query(raw: &str, policy: Option<&QueryPolicy>) -> String
         })
         .collect();
     // Reordering duplicate keys can change application semantics. Only sort
-    // when every key is unique; otherwise retain the request's original order.
+    // when every key is unique as the origin will read it (`q` and `%71` are
+    // one key); otherwise retain the request's original order.
     let mut seen = std::collections::HashSet::new();
-    if pairs.iter().all(|(key, _)| seen.insert(*key)) {
+    if pairs.iter().all(|(key, _)| seen.insert(form_decoded(key))) {
         pairs.sort_unstable();
     }
     pairs
@@ -304,6 +306,39 @@ pub(crate) fn canonical_query(raw: &str, policy: Option<&QueryPolicy>) -> String
         })
         .collect::<Vec<_>>()
         .join("&")
+}
+
+/// A query parameter name as an origin reads it: `application/x-www-form-
+/// urlencoded`, so `+` is a space and `%XX` a byte. A malformed escape stays
+/// literal, as `URLSearchParams` leaves it.
+///
+/// Only for deciding which configured key a parameter is. The key itself keeps
+/// the bytes as sent. Matching the raw name let `?%71=evil` slip past an
+/// `include: [q]` allowlist while the origin rendered it as `q=evil`, and the
+/// result was stored under the bare page for every visitor.
+fn form_decoded(name: &str) -> Vec<u8> {
+    let hex = |byte: Option<&u8>| {
+        byte.and_then(|b| (*b as char).to_digit(16))
+            .and_then(|digit| u8::try_from(digit).ok())
+    };
+    let bytes = name.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        at += 1;
+        match byte {
+            b'+' => out.push(b' '),
+            b'%' => match (hex(bytes.get(at)), hex(bytes.get(at + 1))) {
+                (Some(high), Some(low)) => {
+                    out.push(high * 16 + low);
+                    at += 2;
+                }
+                _ => out.push(b'%'),
+            },
+            _ => out.push(byte),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -514,6 +549,45 @@ mod tests {
         assert_eq!(
             canonical_query("q=shoes&page=2", Some(&p)),
             "page=2&q=shoes"
+        );
+    }
+
+    /// Phase 4.2. Next renders `?%71=evil` as `q=evil`; Tanod matched the raw
+    /// name, dropped it, and stored the "evil" page under bare `/search`.
+    #[test]
+    fn query_policies_match_names_as_the_origin_decodes_them() {
+        let include = QueryPolicy {
+            mode: QueryMode::Include,
+            keys: vec!["q".into(), "page size".into()],
+        };
+        assert_eq!(canonical_query("%71=evil", Some(&include)), "%71=evil");
+        assert_ne!(
+            canonical_query("%71=evil", Some(&include)),
+            canonical_query("", Some(&include))
+        );
+        assert_eq!(
+            canonical_query("page+size=2", Some(&include)),
+            "page+size=2"
+        );
+        assert_eq!(
+            canonical_query("page%20size=2", Some(&include)),
+            "page%20size=2"
+        );
+        // A malformed escape is not a listed name.
+        assert_eq!(canonical_query("%7=x&%zz=y&%", Some(&include)), "");
+        // One key spelled two ways is a duplicate: order is the origin's.
+        assert_eq!(canonical_query("q=b&%71=a", Some(&include)), "q=b&%71=a");
+        let exclude = QueryPolicy {
+            mode: QueryMode::Exclude,
+            keys: vec!["utm_source".into()],
+        };
+        assert_eq!(
+            canonical_query("utm%5Fsource=fb&q=1", Some(&exclude)),
+            "q=1"
+        );
+        assert_eq!(
+            canonical_query("utm%5fsource=fb&q=1", Some(&exclude)),
+            "q=1"
         );
     }
 
@@ -853,6 +927,27 @@ mod proptests {
                 let key = pair.split('=').next().unwrap_or("");
                 prop_assert!(allowed.iter().any(|a| a == key), "kept unlisted key `{}`", key);
             }
+        }
+
+        /// However a listed name is percent-encoded, the policy treats it as
+        /// that name: kept by `include`, removed by `exclude`. Otherwise the
+        /// key and the origin disagree about which parameters are present.
+        #[test]
+        fn query_policies_see_through_percent_encoding(
+            name in prop::string::string_regex("[a-z_]{1,6}").unwrap(),
+            encode in prop::collection::vec(any::<(bool, bool)>(), 6),
+            value in prop::string::string_regex("[a-z0-9]{0,4}").unwrap(),
+        ) {
+            let spelled: String = name.bytes().zip(encode).map(|(b, (escape, upper))| match (escape, upper) {
+                (true, true) => format!("%{b:02X}"),
+                (true, false) => format!("%{b:02x}"),
+                (false, _) => (b as char).to_string(),
+            }).collect();
+            let raw = format!("{spelled}={value}");
+            let include = QueryPolicy { mode: QueryMode::Include, keys: vec![name.clone()] };
+            let exclude = QueryPolicy { mode: QueryMode::Exclude, keys: vec![name] };
+            prop_assert_eq!(canonical_query(&raw, Some(&include)), raw.clone());
+            prop_assert_eq!(canonical_query(&raw, Some(&exclude)), "");
         }
 
         /// And the mirror image: an `exclude` list must remove every key it
