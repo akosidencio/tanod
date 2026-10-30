@@ -6,7 +6,7 @@ work and [operations guide](./docs/OPERATIONS.md) for deployment details.
 Tanod was released as Harmost up to 0.1.4. Entries below 0.2.0 use the current
 names.
 
-## 0.4.0 - Unreleased
+## 0.4.0 - 2026-10-31
 
 **Security release.** Fixes four vulnerabilities present in every earlier release, 0.3.2 included: `coalesce.override_origin` persisting responses the origin refused to share, `cache.query` lists matching undecoded parameter names, dot-segment paths routed differently from the origin, and client-supplied forwarding headers reaching the origin outside the cache key. There is no 0.3.3. See the [release notes](./docs/RELEASE-NOTES-0.4.0.md#2-security-fixes) for affected configurations and mitigations for 0.3.2, and [SECURITY.md](./SECURITY.md) to report a vulnerability.
 
