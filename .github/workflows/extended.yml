@@ -31,11 +31,11 @@ jobs:
       BENCH_REPORT_DIR: ${{ github.workspace }}/benchmark-results/extended
       CCACHE_DISABLE: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.ref || github.ref }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Build the exact locked tree
         run: cargo build --workspace --release --locked --features tls
       - name: Record source and binary
@@ -47,6 +47,9 @@ jobs:
         env:
           BENCH_PROFILE: release
           BENCH_FEATURES: tls
+          RC_SOAK_SECONDS: ${{ inputs.release_candidate && '3600' || '600' }}
+          RC_UPGRADE_SECONDS: ${{ inputs.release_candidate && '20' || '6' }}
+          RC_CHAOS_ROUNDS: ${{ inputs.release_candidate && '10' || '2' }}
         run: |
           set -euo pipefail
           python3 bench/lifecycle.py --tanod target/release/tanod --origin target/release/slow-origin
@@ -56,11 +59,11 @@ jobs:
             for _ in $(seq 1 5); do
               CACHE_EVICTION="$policy" bash bench/cache-policy-reload.sh
             done
-            CACHE_EVICTION="$policy" SOAK_SECONDS=${{ inputs.release_candidate && '3600' || '600' }} \
+            CACHE_EVICTION="$policy" SOAK_SECONDS="$RC_SOAK_SECONDS" \
               SOAK_WORKERS=24 bash bench/soak.sh
           done
-          bash bench/upgrade.sh ${{ inputs.release_candidate && '20' || '6' }}
-          CHAOS_ROUNDS=${{ inputs.release_candidate && '10' || '2' }} bash bench/chaos.sh
+          bash bench/upgrade.sh "$RC_UPGRADE_SECONDS"
+          CHAOS_ROUNDS="$RC_CHAOS_ROUNDS" bash bench/chaos.sh
       - name: Sample performance without shared-runner thresholds
         env:
           TANOD_BIN: ${{ github.workspace }}/target/release/tanod
@@ -99,7 +102,7 @@ jobs:
         run: docker image inspect tanod:extended-validation > benchmark-results/extended/image.json
       - name: Publish stability evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: extended-stability
           path: |
@@ -112,11 +115,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.ref || github.ref }}
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: ". -> target\nfuzz -> target"
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
@@ -126,7 +129,7 @@ jobs:
         run: bash scripts/fuzz-smoke.sh
       - name: Preserve corpora and reproducers
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: extended-fuzz
           path: |
