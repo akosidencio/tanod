@@ -77,6 +77,36 @@ impl RequestClass {
     }
 }
 
+/// Does this path hold a `.` or `..` segment, literally or percent-encoded?
+///
+/// Routes, classes and cache keys are all decided on the path as it arrived,
+/// and origins resolve dot segments before routing: Next renders `/account`
+/// for `/products/x/../../account` and for `/_next/static/%2e%2e/%2e%2e/account`.
+/// The first matched a public route and stored one visitor's account page for
+/// the next; the second was classed static, which holds no origin permit.
+/// Clients resolve dot segments themselves (RFC 3986 §5.2.4, and every
+/// browser), so such a target is refused rather than normalised.
+pub fn has_dot_segment(path: &str) -> bool {
+    path.split('/').any(|segment| {
+        let bytes = segment.as_bytes();
+        let (mut at, mut dots) = (0, 0);
+        while at < bytes.len() {
+            if bytes[at] == b'.' {
+                at += 1;
+            } else if bytes[at] == b'%'
+                && bytes.get(at + 1) == Some(&b'2')
+                && matches!(bytes.get(at + 2), Some(b'e' | b'E'))
+            {
+                at += 3;
+            } else {
+                return false;
+            }
+            dots += 1;
+        }
+        dots == 1 || dots == 2
+    })
+}
+
 /// The request, reduced to what classification and keying actually read.
 pub struct RequestMetadata<'a> {
     pub method: &'a Method,
@@ -348,6 +378,27 @@ mod proptests {
             let hints = nextjs::NextJs.classify_request(&request(&method, path, &headers));
             prop_assert_eq!(hints.class, Some(RequestClass::Mutation));
             prop_assert_eq!(hints.force_bypass, Some("next_server_action"));
+        }
+
+        /// A dot segment is found wherever it sits and however its dots are
+        /// spelled; anything else that merely contains dots is not one.
+        #[test]
+        fn dot_segments_are_found_in_any_spelling(
+            before in prop::collection::vec(prop::string::string_regex("[a-z0-9_.-]{1,6}").unwrap(), 0..4),
+            after in prop::collection::vec(prop::string::string_regex("[a-z0-9_.-]{1,6}").unwrap(), 0..4),
+            dots in prop::collection::vec(prop::sample::select(vec![".", "%2e", "%2E"]), 1..3),
+        ) {
+            let mut segments = before.clone();
+            segments.push(dots.concat());
+            segments.extend(after.clone());
+            let path = format!("/{}", segments.join("/"));
+            prop_assert!(has_dot_segment(&path), "missed {}", path);
+
+            let plain: Vec<_> = before.into_iter().chain(after)
+                .filter(|s| s != "." && s != "..")
+                .collect();
+            let path = format!("/{}", plain.join("/"));
+            prop_assert!(!has_dot_segment(&path), "flagged {}", path);
         }
 
         /// Classification must be total. Every input here is something a

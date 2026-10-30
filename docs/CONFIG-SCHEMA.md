@@ -83,8 +83,10 @@ needs to change:
 | `mode` | staged Next.js rollout | `protect` |
 | `capacity` | static multi-replica budget partition | absent |
 | `server.h2c` | protocol coverage | `false` |
+| `server.threads` | proxy worker threads | one per available CPU — **a behaviour change**, see below |
 | `server.tls` | TLS termination | absent |
 | `server.trusted_proxies` | forwarded-header trust | trusts nobody |
+| `server.trusted_proxies.host` | believing a trusted proxy's public host | `none` |
 | `origin.tls`, `origin.http_version` | origin protocol | absent / `http1` |
 | `spool.*` | the response spool | disabled |
 | `upgrade.*` | WebSocket/Upgrade | disabled, `501` when off |
@@ -123,6 +125,12 @@ Two of those are worth acting on rather than merely noting:
   configured backend is unknown until it completes the configured
   `healthy_after` success streak; readiness does not optimistically report it
   healthy during startup.
+- **`server.trusted_proxies.host` is `none` by default**, unlike `client_ip`
+  and `scheme`. With `none` the origin's `X-Forwarded-Host` is the request's
+  own `Host`; set `x_forwarded` or `forwarded` only when every trusted proxy
+  overwrites that header, typically because it rewrites `Host`. A believed host
+  enters the cache key. See
+  [forwarded headers](./OPERATIONS.md#forwarded-headers).
 - **Inbound trace context is ignored by default.** Opt into
   `from_trusted_proxies` only when every trusted proxy strips or replaces
   client-supplied `traceparent` and `tracestate`.
@@ -136,6 +144,14 @@ Two of those are worth acting on rather than merely noting:
   responses are shareable, and it measured a 0.600 hit ratio against FIFO's
   0.525 on a skewed workload. Set `eviction: fifo` to restore the old
   behaviour exactly.
+- **`server.threads` defaults to one per available CPU, not to one.** Before
+  the key existed, the proxy ran on Pingora's default of a single worker
+  thread however many CPUs the host had, so throughput stopped at one core.
+  "Available" honours the process's CPU affinity and, on Linux, a cgroup CPU
+  quota, so a container limited to two CPUs gets two threads. Only the proxy
+  listeners get these threads; the admin and metrics listeners keep one. Set
+  `threads: 1` to restore the old behaviour exactly, or a lower number to
+  leave cores to an origin on the same host. Changing it needs a restart.
 - **`cache.purge.token` needs `telemetry.admin`.** The endpoint is served on
   the admin listener, so a token with no listener is a protection configured
   against nothing. It must also be at least 24 printable-ASCII characters.

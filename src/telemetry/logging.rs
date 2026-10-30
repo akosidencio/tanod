@@ -45,6 +45,11 @@ pub struct AccessLog<'a> {
     /// have delayed it. `-` means the request never held a permit. The
     /// distinction is the difference between a real capacity measurement and
     /// one contaminated by client behaviour.
+    ///
+    /// After the client disconnected: `drain_end`, the origin finished and the
+    /// permit came back then; `drain_deadline`, Tanod stopped waiting (the
+    /// drain deadline, or a silent origin's read timeout) and the permit came
+    /// back without that confirmation; `drain_error`, the origin failed first.
     pub permit_released_at: &'a str,
     /// What the response spool did: `complete`, `body_too_large`,
     /// `budget_exhausted`, or `-` when this request was not spooled.

@@ -29,10 +29,12 @@ pub struct Reloader {
     path: String,
     policy: Arc<ArcSwap<PolicySnapshot>>,
     admission: Arc<AdmissionController>,
-    /// The response cache, so a deployment rollover can reclaim the previous
-    /// build's entries. `None` in tests that only exercise policy.
+    /// The response cache, so policy retirement can reclaim obsolete entries.
+    /// `None` in tests that only exercise policy.
     store: Option<&'static crate::cache::BoundedStore>,
     generation: AtomicU64,
+    /// Serialize reload transactions, never the request path.
+    reload_lock: parking_lot::Mutex<()>,
 }
 
 impl Reloader {
@@ -41,19 +43,22 @@ impl Reloader {
         policy: Arc<ArcSwap<PolicySnapshot>>,
         admission: Arc<AdmissionController>,
     ) -> Self {
+        let generation = policy.load().generation;
         Reloader {
             path: path.into(),
             policy,
             admission,
             store: None,
-            generation: AtomicU64::new(1),
+            generation: AtomicU64::new(generation),
+            reload_lock: parking_lot::Mutex::new(()),
         }
     }
 
-    /// Give the reloader the cache, so that changing `deployment.id` reclaims
-    /// the old build's entries instead of leaving them to age out.
+    /// Give the reloader the cache for atomic admission retirement and
+    /// reclamation when cache-sharing semantics change.
     #[must_use]
     pub fn with_store(mut self, store: &'static crate::cache::BoundedStore) -> Self {
+        store.activate_namespace(self.policy.load().cache_namespace);
         self.store = Some(store);
         self
     }
@@ -61,6 +66,15 @@ impl Reloader {
     /// Re-read, validate, and apply. Returns the new generation, or an
     /// explanation of why the running config was kept.
     pub fn reload(&self) -> Result<u64, String> {
+        let result = self.reload_inner();
+        crate::telemetry::metrics::CONFIG_RELOADS
+            .with_label_values(&[if result.is_ok() { "success" } else { "failure" }])
+            .inc();
+        result
+    }
+
+    fn reload_inner(&self) -> Result<u64, String> {
+        let _reload = self.reload_lock.lock();
         let cfg = crate::config::load(&self.path).map_err(|e| {
             let mut msg = e.to_string();
             if let Some(src) = std::error::Error::source(&e) {
@@ -151,6 +165,14 @@ impl Reloader {
                     .to_string(),
             );
         }
+        if cfg.server.threads != current.config.server.threads {
+            return Err(
+                "server.threads changed; the proxy's worker threads are started once with the \
+                 process, so a reload would report success while the old count stayed in force; \
+                 that needs a restart (SIGQUIT performs a graceful upgrade)"
+                    .to_string(),
+            );
+        }
         if cfg.server.h2c != current.config.server.h2c
             || cfg.server.tls != current.config.server.tls
         {
@@ -223,7 +245,6 @@ impl Reloader {
             );
         }
         let deployment_changed = cfg.deployment.id != current.config.deployment.id;
-        drop(current);
 
         let route_limits: Vec<(String, usize, usize, std::time::Duration)> = cfg
             .routes
@@ -240,8 +261,14 @@ impl Reloader {
             })
             .collect();
 
-        let next_generation = self.generation.load(Ordering::SeqCst) + 1;
-        let snapshot = PolicySnapshot::build(cfg, next_generation).map_err(|e| e.to_string())?;
+        let next_generation = self
+            .generation
+            .load(Ordering::SeqCst)
+            .checked_add(1)
+            .ok_or("policy generation exhausted; restart required")?;
+        let snapshot = PolicySnapshot::build_for_reload(cfg, next_generation, &current)
+            .map_err(|e| e.to_string())?;
+        drop(current);
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let fingerprint = snapshot.fingerprint;
         let deployment_id = snapshot.config.deployment.id.clone();
@@ -249,43 +276,30 @@ impl Reloader {
         // Resize before swapping: a request arriving on the new policy should
         // never find the old ceiling still in force.
         let global = &snapshot.config.origin.concurrency;
-        self.admission.apply_limits(
+        let retired = self.admission.apply_limits(
             global.max,
             global.queue.max,
             global.queue.timeout.as_duration(),
             &snapshot.config.origin.priorities,
             &route_limits,
         );
-        for tier in self.admission.tier_limiters() {
-            crate::telemetry::metrics::LIMIT
-                .with_label_values(&[tier.name()])
-                .set(i64::try_from(tier.limit()).unwrap_or(i64::MAX));
-            crate::telemetry::metrics::QUEUE_DEPTH
-                .with_label_values(&[tier.name()])
-                .set(i64::try_from(tier.queue_depth()).unwrap_or(i64::MAX));
-            crate::telemetry::metrics::IN_FLIGHT
-                .with_label_values(&[tier.name()])
-                .set(
-                    i64::try_from(tier.limit().saturating_sub(tier.available()))
-                        .unwrap_or(i64::MAX),
-                );
-        }
-        // Deployment-safe invalidation. The cache key already carries
-        // `deployment.id`, so the previous build's entries become unreachable
-        // the instant the id changes — but unreachable is not reclaimed, and a
-        // cache still holding a whole dead build has that much less room for
-        // the one now serving traffic. Done before the swap, so no request on
-        // the new generation observes the old entries occupying the budget.
-        if deployment_changed && let Some(store) = self.store {
-            let purged = store.purge_all();
+        publish_limiters(&self.admission, &retired);
+        // Retire admission before publication. Old pinned requests may register
+        // later, but finish checks this namespace under the lifecycle guard.
+        if let Some(store) = self.store {
+            let purged = store.activate_namespace(snapshot.cache_namespace);
             if purged.entries > 0 {
                 log::info!(
-                    "deployment id changed; purged {} cache entries ({} bytes) from the                      previous build",
+                    "cache policy changed; reclaimed {} entries ({} bytes)",
                     purged.entries,
                     purged.bytes
                 );
                 crate::telemetry::metrics::CACHE_PURGED
-                    .with_label_values(&["deployment"])
+                    .with_label_values(&[if deployment_changed {
+                        "deployment"
+                    } else {
+                        "policy"
+                    }])
                     .inc_by(purged.entries as u64);
             }
         }
@@ -301,6 +315,43 @@ impl Reloader {
         crate::telemetry::metrics::set_build_info(deployment_id.as_deref());
 
         Ok(generation)
+    }
+}
+
+/// Republish every limiter gauge a reload can have moved.
+///
+/// The request path publishes on the way through, but only the limiters a
+/// request touched, so without this a lowered ceiling stays invisible until
+/// traffic happens to cross it — and an oversubscribed limiter, the state an
+/// operator most needs to see right after a reload, shows the old limit.
+/// `in_flight` is read from the permits, so it reports the work still running
+/// above a lowered limit rather than the limit itself.
+///
+/// Retired route series are withdrawn. Their limiter may still hold permits,
+/// but that work remains in the global and tier series, and a route id that
+/// is later re-added must not inherit a stale value.
+fn publish_limiters(admission: &AdmissionController, retired: &[String]) {
+    use crate::telemetry::metrics::{IN_FLIGHT, LIMIT, QUEUE_DEPTH};
+    let gauge = |value: usize| i64::try_from(value).unwrap_or(i64::MAX);
+    let registered = admission.route_limiters();
+    let limiters = std::iter::once(admission.global())
+        .chain(admission.tier_limiters())
+        .chain(registered.iter());
+    for limiter in limiters {
+        let name = [limiter.name()];
+        LIMIT.with_label_values(&name).set(gauge(limiter.limit()));
+        QUEUE_DEPTH
+            .with_label_values(&name)
+            .set(gauge(limiter.queue_depth()));
+        IN_FLIGHT
+            .with_label_values(&name)
+            .set(gauge(limiter.in_flight()));
+    }
+    for id in retired {
+        let name = [id.as_str()];
+        let _ = LIMIT.remove_label_values(&name);
+        let _ = QUEUE_DEPTH.remove_label_values(&name);
+        let _ = IN_FLIGHT.remove_label_values(&name);
     }
 }
 
@@ -329,6 +380,10 @@ impl BackgroundService for Reloader {
 }
 
 #[cfg(test)]
+#[path = "reload_phase1_tests.rs"]
+mod phase1_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
@@ -355,7 +410,7 @@ routes:
       max: 10
 "#;
 
-    fn setup(
+    pub(super) fn setup(
         body: &str,
     ) -> (
         tempfile_lite::TempPath,
@@ -430,6 +485,24 @@ routes:
         let (path, reloader, _policy) = setup(BASE);
         std::fs::write(&path.0, BASE.replace("127.0.0.1:8080", "127.0.0.1:9999")).unwrap();
         let err = reloader.reload().unwrap_err();
+        assert!(err.contains("needs a restart"), "{err}");
+    }
+
+    /// The proxy's runtime is built once; a reload cannot resize it, so it
+    /// must say so rather than report success.
+    #[test]
+    fn changing_worker_threads_is_refused_with_an_explanation() {
+        let (path, reloader, _policy) = setup(BASE);
+        std::fs::write(
+            &path.0,
+            BASE.replace(
+                "  listen: \"127.0.0.1:8080\"",
+                "  listen: \"127.0.0.1:8080\"\n  threads: 2",
+            ),
+        )
+        .unwrap();
+        let err = reloader.reload().unwrap_err();
+        assert!(err.contains("server.threads"), "{err}");
         assert!(err.contains("needs a restart"), "{err}");
     }
 

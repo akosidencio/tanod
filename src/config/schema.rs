@@ -80,6 +80,16 @@ pub struct Server {
     /// classification and cache keying both read.
     #[serde(default)]
     pub h2c: bool,
+    /// Worker threads serving the proxy listeners.
+    ///
+    /// Absent means one per CPU this process may use, which on Linux honours
+    /// a container's CPU quota as well as its cpuset. Pingora's own default,
+    /// which Tanod inherited until this key existed, is one thread for the
+    /// whole proxy: every request then shares a single core however many the
+    /// host has, and throughput stops at what that core can do. Set it lower
+    /// to leave cores to an origin on the same host.
+    #[serde(default)]
+    pub threads: Option<usize>,
     /// Terminate TLS here rather than in front of Tanod.
     #[serde(default)]
     pub tls: Option<ServerTls>,
@@ -97,6 +107,7 @@ impl Default for Server {
         Server {
             listen: default_listen(),
             h2c: false,
+            threads: None,
             tls: None,
             trusted_proxies: TrustedProxies::default(),
             graceful: Graceful::default(),
@@ -187,6 +198,15 @@ fn default_listen() -> String {
     "0.0.0.0:8080".into()
 }
 
+impl Server {
+    /// The worker thread count the proxy actually runs with.
+    pub fn effective_threads(&self) -> usize {
+        self.threads.unwrap_or_else(|| {
+            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerTls {
@@ -210,7 +230,7 @@ pub struct ServerTls {
 /// them only from a peer whose address is in `from`. Everyone else is treated
 /// as the client, whatever they claim — which is also why `from` is empty by
 /// default: an unconfigured Tanod cannot be lied to.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedProxies {
     /// CIDR blocks whose forwarded headers are believed. `10.0.0.0/8`,
@@ -227,15 +247,40 @@ pub struct TrustedProxies {
     /// partition an attacker controls.
     #[serde(default)]
     pub scheme: ForwardedSource,
+    /// Where the public host comes from when the peer is trusted.
+    ///
+    /// Off by default, unlike the other two, because believing it changes what
+    /// the origin builds absolute URLs, redirects and Server Action origin
+    /// checks from, and because many proxies pass a client's
+    /// `X-Forwarded-Host` through untouched. Enable it only when every trusted
+    /// proxy overwrites the header. A believed host enters the cache key. With
+    /// `none`, the origin's `X-Forwarded-Host` is the request's own authority.
+    #[serde(default = "forwarded_none")]
+    pub host: ForwardedSource,
+}
+
+impl Default for TrustedProxies {
+    fn default() -> Self {
+        TrustedProxies {
+            from: Vec::new(),
+            client_ip: ForwardedSource::default(),
+            scheme: ForwardedSource::default(),
+            host: ForwardedSource::None,
+        }
+    }
+}
+
+fn forwarded_none() -> ForwardedSource {
+    ForwardedSource::None
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ForwardedSource {
-    /// `X-Forwarded-For` / `X-Forwarded-Proto`.
+    /// `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Host`.
     #[default]
     XForwarded,
-    /// RFC 7239 `Forwarded: for=...;proto=...`.
+    /// RFC 7239 `Forwarded: for=...;proto=...;host=...`.
     Forwarded,
     /// Believe nothing. The connection peer is the client and the listener
     /// decides the scheme.
@@ -761,7 +806,7 @@ pub enum Store {
     Memory,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct CoalesceDefaults {
     #[serde(default = "yes")]
@@ -1022,7 +1067,7 @@ fn d_1s() -> Dur {
     Dur(std::time::Duration::from_secs(1))
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Deployment {
     /// Static build identifier, mixed into every cache key.
@@ -1068,14 +1113,14 @@ pub struct Route {
 }
 
 /// `match: "/products/**"` and the expanded table form both parse.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum Matcher {
     Path(String),
     Detailed(DetailedMatcher),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct DetailedMatcher {
     #[serde(default)]
@@ -1095,7 +1140,7 @@ pub enum ClassOverride {
     Streaming,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RouteCache {
     #[serde(default)]
@@ -1116,12 +1161,15 @@ pub struct RouteCache {
     /// `Cache-Control: private, no-cache, no-store, max-age=0, must-revalidate`
     /// — so without an override, the microcache never engages on precisely the
     /// routes worth protecting. It is per-route, never global, and validation
-    /// refuses to combine it with a private class or a cookie-bearing route.
+    /// requires an explicit non-private class and a `ttl.max`. It also lifts
+    /// the cookie bypass: the declared class is the operator's statement that
+    /// the route is not personalised by cookies. `Authorization`, `Set-Cookie`,
+    /// an unsupported `Vary` and framework bypasses still refuse.
     #[serde(default)]
     pub override_origin: bool,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Ttl {
     /// Ceiling applied to whatever the origin asked for. Shrinks, never grows.
@@ -1129,7 +1177,7 @@ pub struct Ttl {
     pub max: Option<Dur>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct QueryPolicy {
     pub mode: QueryMode,
@@ -1148,22 +1196,24 @@ pub enum QueryMode {
     Exclude,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct VaryPolicy {
     #[serde(default)]
     pub headers: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RouteCoalesce {
     #[serde(default)]
     pub enabled: Option<bool>,
     /// Collapse concurrent equivalent requests even when the origin says
-    /// `no-store`. Weaker than `cache.override_origin`: nothing is persisted,
-    /// the window is one render, and every waiter would otherwise have
-    /// rendered against the same origin state anyway.
+    /// `no-store` or `private`, and even when they carry cookies. Weaker than
+    /// `cache.override_origin`: such a response, and any response to a
+    /// cookie-bearing request, is never persisted; the window is one render
+    /// plus the store's transient handoff. Validation requires an explicit
+    /// non-private class, as for `cache.override_origin`.
     #[serde(default)]
     pub override_origin: bool,
 }

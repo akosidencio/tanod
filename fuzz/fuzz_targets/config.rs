@@ -6,8 +6,8 @@
 //! file must produce an error naming what was wrong, never a panic and never
 //! an accepted config that validation was supposed to refuse.
 
-use tanod::config::{Config, validation};
 use libfuzzer_sys::fuzz_target;
+use tanod::config::{Config, validation};
 
 fuzz_target!(|data: &str| {
     let Ok(config) = serde_saphyr::from_str::<Config>(data) else {

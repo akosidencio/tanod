@@ -19,6 +19,12 @@ on:
         required: false
         default: ""
 
+# Nothing in CI writes to the repository, so the token can only read it. This
+# also caps the workflow when release.yml calls it, and keeps a pull request's
+# run read-only whatever the repository default is.
+permissions:
+  contents: read
+
 # A new push to a branch cancels the run still going for the old head.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -38,10 +44,10 @@ jobs:
       node: ${{ steps.matrix.outputs.node }}
       bun: ${{ steps.matrix.outputs.bun }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.ref || github.ref }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
       - name: Read the package's compatibility declaration
@@ -64,7 +70,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.ref || github.ref }}
 
@@ -79,11 +85,11 @@ jobs:
             clang cmake libssl-dev pkg-config
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -106,6 +112,12 @@ jobs:
       - name: Doc tests
         run: cargo test --workspace --doc --locked
 
+      - name: Validate production examples and benchmark smoke
+        run: |
+          cargo build --locked
+          bash scripts/check-production-configs.sh
+          cargo test --locked --bench hotpath
+
       # The operator artifacts are shipped for people to import, so they have
       # to at least parse. A dashboard that fails to import, or a rules file
       # Prometheus refuses to load, is discovered by whoever needed it during
@@ -117,6 +129,9 @@ jobs:
           python3 -c "import yaml; yaml.safe_load(open('ops/prometheus/recording-rules.yml'))"
           curl -fsSL -o /tmp/prom.tar.gz \
             https://github.com/prometheus/prometheus/releases/download/v2.53.2/prometheus-2.53.2.linux-amd64.tar.gz
+          # From the release's sha256sums.txt: a downloaded binary is run here,
+          # so it is held to the bytes that were published.
+          echo "60c126740c9cf1206b1e72150dd17914f1c3309bb7dc78a31d4670197ed4fa69  /tmp/prom.tar.gz" | sha256sum -c
           tar -xzf /tmp/prom.tar.gz -C /tmp
           /tmp/prometheus-2.53.2.linux-amd64/promtool check rules \
             ops/prometheus/alerts.yml ops/prometheus/recording-rules.yml
@@ -129,15 +144,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.ref || github.ref }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Audit
-        run: cargo audit -D warnings
+        run: |
+          cargo audit -D warnings
+          cargo audit --file fuzz/Cargo.lock -D warnings
+      # A path package is invisible to cargo audit, so the vendored Pingora
+      # proxy is held to the published crate's checksum plus a reviewed diff.
+      - name: Vendored pingora-proxy is the published crate plus tanod.patch
+        run: ./scripts/check-vendored-pingora.sh
+      # A tag-pinned action is code anyone controlling its repository can
+      # change under every future run, including the release's.
+      - name: Workflow actions are pinned by commit SHA
+        run: python3 scripts/check-workflows.py
 
   # The static musl binary and `tanod-next start`, together, in an Alpine
   # Node image: the deployment @tanod/linux-x64 exists for. Built here as well
@@ -148,7 +173,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.ref || github.ref }}
       - name: Build the static binary
@@ -182,15 +207,15 @@ jobs:
       run:
         working-directory: packages/tanod-next
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.ref || github.ref }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Build tanod, so the generated config can be checked for real
         run: cargo build
         working-directory: .
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node }}
       - name: Install dev dependencies (typescript, @types/node)
@@ -203,7 +228,7 @@ jobs:
           # A `cargo build` that quietly produced nothing would otherwise let
           # the binary-dependent tests skip and CI go green without them.
           TANOD_REQUIRE_BINARY: "1"
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ needs.compatibility-matrix.outputs.bun }}
       - name: Test on Bun
@@ -225,7 +250,7 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.ref || github.ref }}
 
@@ -237,9 +262,9 @@ jobs:
             clang cmake libssl-dev pkg-config
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Record the machine the numbers came from
         run: |
@@ -286,7 +311,7 @@ jobs:
 
       - name: Publish results with the parameters that produced them
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: benchmark-results
           path: |
@@ -311,13 +336,13 @@ jobs:
       TANOD_NEXT_NODE: ${{ matrix.node }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.ref || github.ref }}
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node }}
       - name: Build the doctor validation binary
@@ -327,7 +352,7 @@ jobs:
         run: bash bench/nextjs-compatibility.sh
       - name: Publish compatibility evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: nextjs-${{ matrix.next }}-node-${{ matrix.node }}
           path: compatibility-results/
@@ -343,7 +368,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.ref || github.ref }}
 
@@ -358,28 +383,24 @@ jobs:
       # wins over whatever rustup's default is — so every cargo call below is
       # explicitly `+nightly`. cargo-fuzz needs it for `-Zsanitizer=address`.
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@2c76c034f9e32a5d6e2c104dc4df23a22476db04 # nightly
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: ". -> target\nfuzz -> target"
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
 
       - name: Build every target
         run: cargo +nightly fuzz build
 
       - name: Run each target briefly
-        run: |
-          for target in $(cargo +nightly fuzz list); do
-            echo "=== $target ==="
-            cargo +nightly fuzz run "$target" -- -max_total_time=60 -print_final_stats=1
-          done
+        run: bash scripts/fuzz-smoke.sh
 
       - name: Publish any crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: fuzz-artifacts
           path: fuzz/artifacts/

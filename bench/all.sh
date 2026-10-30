@@ -36,6 +36,19 @@ docker_available() {
   wait "$probe"
 }
 
+py() { # name, python script, args... : a harness that is not a bench_* script
+  local name=$1; shift
+  echo
+  echo "=================================================================="
+  echo "  $name"
+  echo "=================================================================="
+  if python3 "$@" ${BENCH_REPORT_DIR:+--json "$BENCH_REPORT_DIR/$name.json"}; then
+    PASSED="$PASSED $name"
+  else
+    FAILED="$FAILED $name"
+  fi
+}
+
 run() { # script, args...
   local script=$1; shift
   echo
@@ -57,6 +70,7 @@ run coalesce.sh "${COALESCE_CONCURRENCY:-40}" "${COALESCE_RENDER_MS:-800}"
 run stream.sh "${STREAM_CONCURRENCY:-20}" 5 400
 run safety.sh "${SAFETY_CONCURRENCY:-30}"
 run reload.sh
+run cache-policy-reload.sh
 run slowclient.sh
 
 # Phase 1: protocol coverage, the security properties around forwarded
@@ -81,6 +95,9 @@ run supervise.sh "${SUPERVISE_RENDER_MS:-2500}"
 run tracing.sh
 run soak.sh "${SOAK_SECONDS:-45}" "${SOAK_WORKERS:-10}"
 run memory.sh "${MEMORY_ROUNDS:-6}" "${MEMORY_SLOW_READERS:-12}"
+# A full cache must degrade to uncached serving or a visible abort, never a
+# truncated body presented as complete.
+run cache-pressure.sh "${CACHE_PRESSURE_RENDER_MS:-800}"
 run chaos.sh "${CHAOS_ROUNDS:-2}"
 
 # Phase 3: origin resilience. Both scripts turn a backend into the failure the
@@ -106,6 +123,36 @@ run storage.sh "${STORAGE_SAMPLES:-60}" "${STORAGE_RENDER_MS:-200}"
 # same reasoning as the Docker block below.
 if command -v python3 >/dev/null; then
   run websocket.sh
+  # Origin permit lifetimes across client disconnects, cache-pressure
+  # fallback, coalescing and origin deadlines, under both retention policies,
+  # against an origin whose render count cannot drift.
+  echo
+  echo "=================================================================="
+  echo "  origin-concurrency.py"
+  echo "=================================================================="
+  # Built by the scripts above, with the same profile rule as bench_bin.
+  if python3 bench/origin-concurrency.py --tanod "target/${BENCH_PROFILE:-debug}/tanod" \
+       ${BENCH_REPORT_DIR:+--json "$BENCH_REPORT_DIR/origin-concurrency.json"}; then
+    PASSED="$PASSED origin-concurrency.py"
+  else
+    FAILED="$FAILED origin-concurrency.py"
+  fi
+  # The same scenarios against an h2c origin: the vendored drain patch's
+  # HTTP/2 upstream loop. The origin is Node's built-in http2 module.
+  if command -v node >/dev/null; then
+    py origin-concurrency-h2 bench/origin-concurrency.py --h2 --tanod "target/${BENCH_PROFILE:-debug}/tanod"
+  else
+    echo "SKIPPED origin-concurrency.py --h2 — no node for the h2c origin."
+    FAILED="$FAILED origin-concurrency-h2(no-node)"
+  fi
+  # Cross-user isolation across every sharing contract, and what a flood of
+  # distinct query strings costs. Both cache policies.
+  for policy in clock tinyufo; do
+    py "cache-isolation-$policy" bench/cache-isolation.py --policy "$policy" \
+      --tanod "target/${BENCH_PROFILE:-debug}/tanod"
+    py "query-cardinality-$policy" bench/query-cardinality.py --policy "$policy" \
+      --seconds "${QUERY_CARDINALITY_SECONDS:-5}" --bin-dir "target/${BENCH_PROFILE:-debug}"
+  done
 else
   echo
   echo "SKIPPED bench/websocket.sh — no python3 for the WebSocket client."
@@ -118,7 +165,9 @@ CACHE_EVICTION=tinyufo run coalesce.sh "${COALESCE_CONCURRENCY:-40}" "${COALESCE
 CACHE_EVICTION=tinyufo run stream.sh "${STREAM_CONCURRENCY:-20}" 5 400
 CACHE_EVICTION=tinyufo run protocol.sh
 CACHE_EVICTION=tinyufo run purge.sh "${PURGE_RENDER_MS:-20}"
+CACHE_EVICTION=tinyufo run cache-policy-reload.sh
 CACHE_EVICTION=tinyufo run memory.sh "${MEMORY_ROUNDS:-6}" "${MEMORY_SLOW_READERS:-12}"
+CACHE_EVICTION=tinyufo run cache-pressure.sh "${CACHE_PRESSURE_RENDER_MS:-800}"
 CACHE_EVICTION=tinyufo run storage.sh "${STORAGE_SAMPLES:-60}" "${STORAGE_RENDER_MS:-200}"
 CACHE_EVICTION=tinyufo run soak.sh "${SOAK_SECONDS:-60}" "${SOAK_WORKERS:-12}"
 
@@ -143,6 +192,14 @@ if [ "${SKIP_DOCKER:-0}" = "1" ]; then
   echo "SKIPPED bench/nextjs.sh (SKIP_DOCKER=1)"
 elif docker_available; then
   run nextjs.sh
+  # Reuses the fixture image nextjs.sh just built: forwarded headers against
+  # Next's own redirect and Server Action origin checks.
+  run nextjs-forwarded.sh
+  # Next's own cookie-reading page, HTML and RSC, never shared between users.
+  if command -v python3 >/dev/null; then
+    py cache-isolation-nextjs bench/cache-isolation.py --tanod "target/${BENCH_PROFILE:-debug}/tanod" \
+      --next-image "${TANOD_NEXT_IMAGE:-tanod-next-origin:reference}"
+  fi
   if [ "${SKIP_BROWSER:-0}" = "1" ]; then
     echo "SKIPPED bench/nextjs-browser.sh (SKIP_BROWSER=1)"
   else

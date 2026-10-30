@@ -1,0 +1,116 @@
+# The next-origin Service and application are managed separately. Keep its
+# pool fixed, with measured capacity >= 8 concurrent work units. This example
+# partitions that budget over TWO live pod identities. Ordered replacement
+# waits for the old identity to terminate. Never force-delete an unfenced pod.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tanod
+spec:
+  serviceName: tanod-pods
+  replicas: 2
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels: {app: tanod}
+  template:
+    metadata:
+      labels: {app: tanod}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 50
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: tanod
+          # Replace with the digest of the locally validated RC image.
+          image: tanod:review-candidate
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          env:
+            - name: TANOD_PURGE_TOKEN
+              valueFrom:
+                secretKeyRef: {name: tanod-admin, key: purge-token}
+          resources:
+            requests: {cpu: 500m, memory: 128Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: admin, containerPort: 9091}
+          startupProbe:
+            httpGet: {path: /health/live, port: admin}
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /health/live, port: admin}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /health/ready, port: admin}
+            periodSeconds: 2
+            failureThreshold: 1
+          volumeMounts:
+            - {name: config, mountPath: /etc/tanod, readOnly: true}
+            - {name: run, mountPath: /run/tanod}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: tanod-config}
+        - name: run
+          emptyDir: {medium: Memory, sizeLimit: 1Mi}
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 8Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tanod-pods
+spec:
+  clusterIP: None
+  selector: {app: tanod}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tanod
+spec:
+  selector: {app: tanod}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+# No public Service for admin or metrics; the policy below restricts pod ingress.
+---
+# Adapt namespace labels to your cluster. Kubelet/node probe handling depends
+# on the CNI; verify probes before rollout. This policy restricts ingress only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tanod-private-operator-ports
+spec:
+  podSelector:
+    matchLabels: {app: tanod}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {tanod-ingress: "true"}
+      ports:
+        - {protocol: TCP, port: 8080}
+    - from:
+        - namespaceSelector:
+            matchLabels: {tanod-monitoring: "true"}
+      ports:
+        - {protocol: TCP, port: 9090}
+    - from:
+        - namespaceSelector:
+            matchLabels: {tanod-operators: "true"}
+      ports:
+        - {protocol: TCP, port: 9091}

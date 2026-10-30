@@ -212,6 +212,8 @@ server:
     from: ["10.244.0.0/16"]      # your ingress controller's pod network
     client_ip: x_forwarded
     scheme: x_forwarded
+    # host: x_forwarded          # only if the ingress rewrites Host and always
+                                 # overwrites X-Forwarded-Host; see OPERATIONS.md
 
 origin:
   upstreams: ["127.0.0.1:3000"]

@@ -13,7 +13,7 @@ pub mod overload_page;
 pub mod reload;
 
 use crate::classifier::RequestClass;
-use crate::config::schema::{ClassOverride, Config, Route};
+use crate::config::schema::{CacheDefaults, ClassOverride, Config, Route};
 use http::Method;
 use matcher::{CompiledMatcher, MatcherError};
 use std::sync::Arc;
@@ -39,8 +39,12 @@ impl ResolvedRoute {
 
 pub struct PolicySnapshot {
     pub routes: Vec<ResolvedRoute>,
+    /// Built for tables large enough to benefit; see [`matcher::RouteIndex`].
+    route_index: Option<matcher::RouteIndex>,
     pub config: Config,
     pub generation: u64,
+    /// Process-local namespace, retained only across compatible reloads.
+    pub(crate) cache_namespace: u64,
     /// Stable for the effective configuration, independent of how many times a
     /// particular process has reloaded it. Kept below 2^53 so Prometheus can
     /// represent the integer exactly in its floating-point sample format.
@@ -53,6 +57,14 @@ pub struct PolicySnapshot {
 
 impl PolicySnapshot {
     pub fn build(config: Config, generation: u64) -> Result<Arc<Self>, MatcherError> {
+        Self::build_in_namespace(config, generation, generation)
+    }
+
+    fn build_in_namespace(
+        config: Config,
+        generation: u64,
+        cache_namespace: u64,
+    ) -> Result<Arc<Self>, MatcherError> {
         let fingerprint = config_fingerprint(&config);
         let routes = config
             .routes
@@ -65,17 +77,104 @@ impl PolicySnapshot {
                 })
             })
             .collect::<Result<Vec<_>, MatcherError>>()?;
+        let route_index =
+            matcher::RouteIndex::build(&routes.iter().map(|r| &r.matcher).collect::<Vec<_>>());
         let overload_page = overload_page::render(&config.overload);
         let retry_after =
             http::HeaderValue::from(config.overload.retry_after.as_duration().as_secs().max(1));
         Ok(Arc::new(PolicySnapshot {
             routes,
+            route_index,
             overload_page,
             retry_after,
             config,
             generation,
+            cache_namespace,
             fingerprint,
         }))
+    }
+
+    /// Compare typed effective sharing inputs, never a lossy fingerprint.
+    /// Ordered matchers and classes fence route changes; complete cache and
+    /// coalescing structs include TTL/stale, query, variants and overrides.
+    /// Framework rules are code-bound (NextJs), so cannot change on reload.
+    /// Limits, priority, spooling, logging and shed-page edits do not change
+    /// which request/response pairs may share bytes.
+    pub(crate) fn cache_compatible(&self, config: &Config) -> bool {
+        // Exhaustive projections make adding a top-level, cache or route
+        // field a compile-time prompt to review compatibility. Nested sharing
+        // structs use derived equality, automatically covering new fields.
+        fn sharing(config: &Config) -> impl PartialEq + '_ {
+            let Config {
+                version,
+                mode,
+                server: _,
+                origin: _,
+                capacity: _,
+                health: _,
+                cache,
+                coalesce,
+                timeouts: _,
+                overload: _,
+                spool: _,
+                upgrade: _,
+                deployment,
+                routes,
+                telemetry: _,
+                debug_headers: _,
+            } = config;
+            let CacheDefaults {
+                enabled,
+                store: _,
+                max_memory: _,
+                max_body_size,
+                respect_origin,
+                eviction: _,
+                tag_header,
+                purge: _,
+            } = cache;
+            (
+                version,
+                mode,
+                deployment,
+                enabled,
+                max_body_size,
+                respect_origin,
+                tag_header,
+                coalesce,
+                routes
+                    .iter()
+                    .map(|route| {
+                        let Route {
+                            id: _,
+                            matcher,
+                            class,
+                            priority: _,
+                            weight: _,
+                            cache,
+                            coalesce,
+                            concurrency: _,
+                            spool: _,
+                        } = route;
+                        (matcher, class, cache, coalesce)
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        }
+        sharing(&self.config) == sharing(config)
+    }
+
+    pub(crate) fn build_for_reload(
+        config: Config,
+        generation: u64,
+        previous: &Self,
+    ) -> Result<Arc<Self>, MatcherError> {
+        let namespace = if previous.cache_compatible(&config) {
+            previous.cache_namespace
+        } else {
+            generation
+        };
+        Self::build_in_namespace(config, generation, namespace)
     }
 
     /// First match in file order wins.
@@ -84,7 +183,26 @@ impl PolicySnapshot {
     /// rule makes the effect of adding a route depend on every other route,
     /// which is exactly the property you do not want when the thing being
     /// configured decides whether a response is shared.
+    ///
+    /// Large tables are resolved through [`matcher::RouteIndex`], which picks
+    /// the same route as this scan; `resolve_linear` stays as the reference
+    /// the index is tested against.
     pub fn resolve(&self, host: &str, path: &str, method: &Method) -> Option<&ResolvedRoute> {
+        match &self.route_index {
+            Some(index) => {
+                let found = index.first(
+                    |i| self.routes.get(i).map(|r| &r.matcher),
+                    host,
+                    path,
+                    method,
+                )?;
+                self.routes.get(found)
+            }
+            None => self.resolve_linear(host, path, method),
+        }
+    }
+
+    fn resolve_linear(&self, host: &str, path: &str, method: &Method) -> Option<&ResolvedRoute> {
         self.routes
             .iter()
             .find(|r| r.matcher.matches(host, path, method))
@@ -181,6 +299,88 @@ routes:
         let s = snapshot(YAML);
         let r = s.resolve("h", "/products/iphone", &Method::GET).unwrap();
         assert_eq!(r.declared_class(), Some(RequestClass::PublicDocument));
+    }
+
+    /// The index may only change how fast a route is found, never which.
+    /// Random tables over the glob grammar routes use — exact paths, `**`
+    /// prefixes, `*` and `?` segments, alternations, classes — plus host and
+    /// method constraints, against paths drawn from the same alphabet.
+    mod route_index {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn glob() -> impl Strategy<Value = String> {
+            let segment = prop_oneof![
+                Just("a".to_string()),
+                Just("b".to_string()),
+                Just("ab".to_string()),
+                Just("*".to_string()),
+                Just("?".to_string()),
+                Just("{a,b}".to_string()),
+                Just("[ab]".to_string()),
+                Just("a*".to_string()),
+            ];
+            (proptest::collection::vec(segment, 1..4), any::<bool>()).prop_map(|(parts, tail)| {
+                let mut glob = format!("/{}", parts.join("/"));
+                if tail {
+                    glob.push_str("/**");
+                }
+                glob
+            })
+        }
+
+        fn route(i: usize, glob: String, host: bool, get_only: bool) -> String {
+            let mut yaml = format!("  - id: r{i}\n    match:\n      path: \"{glob}\"\n");
+            if host {
+                yaml.push_str("      host: shop.example.com\n");
+            }
+            if get_only {
+                yaml.push_str("      methods: [GET]\n");
+            }
+            yaml
+        }
+
+        fn path() -> impl Strategy<Value = String> {
+            proptest::collection::vec(
+                prop_oneof![Just("a"), Just("b"), Just("ab"), Just("x")],
+                0..5,
+            )
+            .prop_map(|parts| format!("/{}", parts.join("/")))
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(200))]
+            #[test]
+            fn the_index_picks_the_route_a_linear_scan_picks(
+                routes in proptest::collection::vec((glob(), any::<bool>(), any::<bool>()), 16..40),
+                paths in proptest::collection::vec(path(), 1..30),
+            ) {
+                let mut yaml = String::from(
+                    "version: 1\norigin:\n  upstreams: [\"127.0.0.1:1\"]\nroutes:\n",
+                );
+                for (i, (glob, host, get)) in routes.iter().enumerate() {
+                    yaml.push_str(&route(i, glob.clone(), *host, *get));
+                }
+                let s = snapshot(&yaml);
+                prop_assert!(s.route_index.is_some());
+                for path in &paths {
+                    for host in ["shop.example.com", "other.example.com"] {
+                        for method in [Method::GET, Method::POST] {
+                            prop_assert_eq!(
+                                s.resolve(host, path, &method).map(|r| &r.id),
+                                s.resolve_linear(host, path, &method).map(|r| &r.id),
+                                "{} {} {}", host, method, path
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn small_tables_are_scanned() {
+            assert!(snapshot(YAML).route_index.is_none());
+        }
     }
 
     #[test]

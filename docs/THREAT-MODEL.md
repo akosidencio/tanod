@@ -117,7 +117,10 @@ Tanod into an amplifier.
 | --- | --- |
 | `?cachebust=<random>` mints a key per request | `cache.query.mode: include` drops unlisted parameters from the key. Validation refuses `mode` with an empty `keys` |
 | A forged `X-Forwarded-Proto` mints a key per invented scheme string | Forwarded headers are read only from a peer inside `server.trusted_proxies.from`, which is empty by default; and the scheme is normalised to exactly `http` or `https` for everyone, trusted or not. `bench/forwarded.sh` |
-| A forged `X-Forwarded-For` mints keys, or forges identity in the origin's logs and rate limits | Same trust gate. `X-Forwarded-For` is **replaced**, never appended to, and `Forwarded` is removed outright |
+| A forged `X-Forwarded-For` mints keys, or forges identity in the origin's logs and rate limits | Same trust gate. `X-Forwarded-For` and `X-Real-IP` are **replaced**, never appended to, and `Forwarded` is removed outright |
+| A forged `X-Forwarded-Host`, `X-Forwarded-Prefix`, `X-Original-URL` or similar shapes an origin's absolute URLs or routing without entering the key, poisoning a shared entry | Tanod restates `X-Forwarded-Proto`, `-Host` and `-Port` from cache-key components on every request and removes the URL-shaping aliases it does not interpret. A proxy's public host is believed only with `trusted_proxies.host`, and then it is keyed. `bench/forwarded.sh` (`/reflect`), `bench/nextjs-forwarded.sh` |
+| A client prefixes its own entries to a chain a trusted proxy appends to, choosing the scheme or host | Scheme and host are taken from the hop the address walk chose, or from a single overwritten value; never the leftmost of several |
+| Cache memory exhaustion turns cacheable traffic into failed responses | A fill that cannot register is served uncached; one that runs out mid-body finishes from a bounded headroom without being stored; only past the headroom is a response aborted, visibly. `bench/cache-pressure.sh` |
 | Unbounded router-state cardinality on Next.js prefetches | Prefetches are coalesce-only: collapsed within one flight, never stored |
 | Query parameter ordering doubles entries | The canonical query is sorted |
 | A herd of misses all reach the origin | Cache locks collapse concurrent equivalent requests, including on streaming responses via the partial-write path |
@@ -174,7 +177,8 @@ The design position is that a config which parses must mean what it says.
   store), `server.tls` and `origin.tls` in a binary built without the `tls`
   feature, and `origin.http_version: auto` without TLS.
 * Combinations that would leak are refused: `override_origin` on a private
-  class, `override_origin` without an explicit class or TTL ceiling,
+  class, `cache.override_origin` without an explicit class or TTL ceiling,
+  `coalesce.override_origin` without an explicit class,
   `cache.vary` on `Cookie`/`Authorization`/`User-Agent`/`*`, a coalescing wait
   shorter than the origin timeout, spooling a streaming route.
 * `tanod check` prints the settings that trade a safety property for

@@ -395,6 +395,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
     let origin_command = cfg.origin.command.clone();
     let origin_upstream = cfg.origin.upstreams.first().cloned().unwrap_or_default();
     let h2c = cfg.server.h2c;
+    let threads = cfg.server.effective_threads();
     let tls = cfg.server.tls.clone();
     let prometheus_listen = cfg.telemetry.prometheus.as_ref().map(|p| p.listen.clone());
     let admin_cfg = cfg.telemetry.admin.clone();
@@ -483,6 +484,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
     };
 
     let policy = Arc::new(arc_swap::ArcSwap::from(policy));
+    tanod::telemetry::metrics::set_process_started();
 
     let admission = Arc::new(AdmissionController::new(
         concurrency.max,
@@ -759,6 +761,10 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
         require_healthy_upstream: admin_cfg.require_healthy_upstream,
     });
     let mut service = pingora_proxy::http_proxy_service(&server.configuration, tanod);
+    // On the proxy service only. Pingora's process-wide `threads` would also
+    // multiply the admin and metrics listeners, which serve a handful of
+    // requests a second and need no more than the one thread they have.
+    service.threads = Some(threads);
 
     // HTTP/2 over cleartext. Pingora peeks for the connection preface, so this
     // listener still serves HTTP/1.1 clients; it only decides whether an h2
@@ -823,7 +829,7 @@ fn run(path: &str, flags: RunFlags) -> ExitCode {
         eprintln!("tanod admin on {addr}  (/health/live, /health/ready, /status)");
     }
 
-    eprintln!("tanod listening on {listen}");
+    eprintln!("tanod listening on {listen} ({threads} worker threads)");
     eprintln!("  origin concurrency ceiling: {}", concurrency.max);
     let mut shutdown_signal =
         DrainShutdownSignalWatch::new(drain, graceful.drain_period.as_duration());

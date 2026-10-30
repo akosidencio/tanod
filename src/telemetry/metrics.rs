@@ -218,10 +218,15 @@ pub static LIMIT: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     .expect("metric registration")
 });
 
+/// Units of origin work held by permits, weighted by route `weight`.
+///
+/// Counted at the permits rather than derived from the limiter's free
+/// capacity, so it can exceed `tanod_concurrency_limit` while a lowered limit
+/// drains: that is work genuinely still at the origin.
 pub static IN_FLIGHT: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec!(
         "tanod_origin_in_flight",
-        "Origin requests currently holding a permit",
+        "Units of origin work currently holding a permit, weighted by route weight; can exceed the limit while a lowered limit drains",
         &["limiter"]
     )
     .expect("metric registration")
@@ -327,6 +332,37 @@ pub static DRAINING: LazyLock<IntGauge> = LazyLock::new(|| {
     .expect("metric registration")
 });
 
+/// Admitted origin exchanges still being read after their client went away.
+///
+/// Each one still holds its origin permit, and is also counted in
+/// `tanod_origin_in_flight`: the origin is still working on it, whether or not
+/// anybody is left to read the answer.
+pub static ORIGIN_DRAINING: LazyLock<IntGauge> = LazyLock::new(|| {
+    register_int_gauge!(
+        "tanod_origin_disconnect_drains_active",
+        "Admitted origin responses still being read after their client disconnected"
+    )
+    .expect("metric registration")
+});
+
+/// How each of those drains ended.
+///
+/// * `completed` — the origin finished its response; capacity came back at
+///   the moment it stopped working, exactly as for a connected client.
+/// * `deadline` — Tanod stopped waiting before the origin finished, at the
+///   drain deadline or an origin read timeout, and released the permit
+///   **without** confirmation that the origin stopped. Its remaining work is
+///   unaccounted for.
+/// * `upstream_error` — the origin failed or closed the connection first.
+pub static ORIGIN_DRAINS: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "tanod_origin_disconnect_drains_total",
+        "Origin responses read to their end after a client disconnect, by outcome",
+        &["outcome"]
+    )
+    .expect("metric registration")
+});
+
 /// The configuration generation currently in force. Increments on every
 /// accepted `SIGHUP`; a reload that was refused leaves it unchanged, which is
 /// what makes "did my config actually apply" answerable from a dashboard.
@@ -337,6 +373,35 @@ pub static CONFIG_GENERATION: LazyLock<IntGauge> = LazyLock::new(|| {
     )
     .expect("metric registration")
 });
+
+/// One processed reload attempt. Refusals leave the active generation intact.
+/// Only two fixed outcomes; error messages and file paths are never labels.
+pub static CONFIG_RELOADS: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "tanod_config_reloads_total",
+        "Processed configuration reload attempts, by outcome",
+        &["outcome"]
+    )
+    .expect("metric registration")
+});
+
+/// Unix start timestamp. Unlike uptime, this stays constant across reloads
+/// and can reveal restarts at a stable Prometheus scrape target.
+pub static PROCESS_STARTED: LazyLock<IntGauge> = LazyLock::new(|| {
+    register_int_gauge!(
+        "tanod_process_start_time_seconds",
+        "Unix timestamp when the Tanod process initialized"
+    )
+    .expect("metric registration")
+});
+
+pub fn set_process_started() {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    PROCESS_STARTED.set(i64::try_from(seconds).unwrap_or(i64::MAX));
+}
 
 /// Stable fingerprint of the effective configuration. Unlike generation, this
 /// is comparable across replicas that have restarted or reloaded a different
@@ -466,7 +531,8 @@ pub static RETRY_BUDGET: LazyLock<IntGauge> = LazyLock::new(|| {
     .expect("metric registration")
 });
 
-/// Entries removed by an explicit purge, by `scope`: `tags` or `all`.
+/// Entries removed by purge or policy retirement: `selective`, `all`,
+/// `deployment` or `policy` scope.
 ///
 /// Deliberately separate from eviction. An evicted entry means the cache is
 /// doing its job inside its budget; a purged one means somebody invalidated
@@ -490,6 +556,24 @@ pub static CACHE_EVICTED: LazyLock<IntCounter> = LazyLock::new(|| {
     register_int_counter!(
         "tanod_cache_evicted_total",
         "Cache entries discarded to stay inside the byte budget"
+    )
+    .expect("metric registration")
+});
+
+/// What the cache did when its byte budget ran out. Three outcomes, by how
+/// far a response had got when it happened:
+///
+/// * `uncached_fallback` — no fill could be registered; the response was
+///   served straight from the origin and not cached.
+/// * `fill_abandoned` — the budget ran out mid-body; the response finished
+///   streaming from the bounded headroom and was not stored.
+/// * `memory_exhausted` — the headroom ran out as well; the response was
+///   aborted, never delivered short as if complete.
+pub static CACHE_MEMORY_PRESSURE: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "tanod_cache_memory_pressure_total",
+        "Responses affected by an exhausted cache budget, by outcome",
+        &["outcome"]
     )
     .expect("metric registration")
 });
@@ -549,7 +633,15 @@ pub fn preregister() {
     LazyLock::force(&UPGRADES_ACTIVE);
     LazyLock::force(&SPANS);
     LazyLock::force(&DRAINING);
+    LazyLock::force(&ORIGIN_DRAINING);
+    for outcome in ["completed", "deadline", "upstream_error"] {
+        ORIGIN_DRAINS.with_label_values(&[outcome]);
+    }
     LazyLock::force(&CONFIG_GENERATION);
+    for outcome in ["success", "failure"] {
+        CONFIG_RELOADS.with_label_values(&[outcome]);
+    }
+    LazyLock::force(&PROCESS_STARTED);
     LazyLock::force(&CONFIG_FINGERPRINT);
     LazyLock::force(&UPSTREAM_HEALTHY);
     LazyLock::force(&UPSTREAM_ADDRESSES);
@@ -563,6 +655,9 @@ pub fn preregister() {
     LazyLock::force(&CACHE_PURGED);
     LazyLock::force(&CACHE_EVICTED);
     LazyLock::force(&CACHE_ADMISSION_REJECTED);
+    for outcome in ["uncached_fallback", "fill_abandoned", "memory_exhausted"] {
+        CACHE_MEMORY_PRESSURE.with_label_values(&[outcome]);
+    }
     LazyLock::force(&CACHE_TAGS);
 }
 

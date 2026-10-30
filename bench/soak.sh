@@ -31,6 +31,11 @@ WORKERS=${2:-${SOAK_WORKERS:-12}}
 # budget assertion — the cache budget below is that. A leak crosses it; normal
 # operation is not close.
 RSS_CEILING_KB=${SOAK_RSS_CEILING_KB:-786432}
+# A seventh arm whose clients hang up on an uncached response while the
+# origin is still rendering it, so the disconnect drain is actually taken.
+# `0` restores the six-arm mix the Phase 4.1 hour-long soaks ran, which never
+# drained (0 drains in both): those results say nothing about this path.
+UNCACHED_DISCONNECT=${SOAK_UNCACHED_DISCONNECT:-1}
 
 bench_init soak
 bench_param seconds "$SECONDS_TO_RUN"
@@ -38,6 +43,7 @@ bench_param workers "$WORKERS"
 bench_param render_ms 25
 bench_param cache_budget_bytes 16777216
 bench_param rss_ceiling_kb "$RSS_CEILING_KB"
+bench_param uncached_disconnect "$UNCACHED_DISCONNECT"
 bench_build
 
 ORIGIN_PORT=$(bench_free_port)
@@ -61,10 +67,11 @@ BASE="http://127.0.0.1:$LISTEN_PORT"
 # One worker's request mix. Each arm is here because it is a path that has
 # leaked something in this codebase or in the dependency before.
 worker() { # id, end-epoch, results-file
-  local id=$1 end=$2 out=$3 n=0
+  local id=$1 end=$2 out=$3 n=0 arms=6 exchange code bytes curl_status
+  [ "$UNCACHED_DISCONNECT" = 1 ] && arms=7
   while [ "$(date +%s)" -lt "$end" ]; do
     n=$((n + 1))
-    case $((n % 6)) in
+    case $((n % arms)) in
       # A small hot set: cache hits and coalesced followers, which must never
       # consume a permit.
       0|1) curl -s -o /dev/null -w '%{http_code}\n' --max-time 20 "$BASE/hot/$((n % 4))" ;;
@@ -79,13 +86,43 @@ worker() { # id, end-epoch, results-file
       # Hang up part-way through a 1MiB body. Historically the path that leaked
       # a permit, because upstream end-of-stream never arrives on it.
       #
-      # One marker line, not curl's status code: a timed-out curl prints `000`
-      # *and* exits non-zero, so writing both would record every deliberate
-      # disconnect twice — once as a marker and once as an unexplained failure.
-      5)   if curl -s -o /dev/null --max-time 0.05 "$BASE/big/1?abort=$id-$n" >/dev/null 2>&1; then
-             echo "abort-raced"
+      # Four 256KiB chunks, spaced 25ms apart, cannot finish before the 50ms
+      # disconnect deadline. Rate-limit the reader too, so it retains a partial
+      # body even on a fast loopback connection. Count a timeout
+      # after receiving actual 200 body bytes separately from one before the
+      # body, and retain unexpected transport/HTTP errors as failures.
+      # One marker per request avoids double-counting curl's 000 + exit code.
+      5)   exchange=$(curl -s -o /dev/null --limit-rate 16k --max-time 0.05 \
+               -w '%{http_code} %{size_download}' "$BASE/bigstream/4?abort=$id-$n")
+           curl_status=$?
+           read -r code bytes <<< "$exchange"
+           if [ "$curl_status" -eq 0 ]; then
+             if [ "$code" = 200 ]; then echo 'abort-raced'; else echo "$code"; fi
+           elif [ "$curl_status" -eq 28 ] && [ "$code" = 200 ] && \
+                [ "${bytes%%.*}" -gt 0 ] && [ "${bytes%%.*}" -lt 1048576 ]; then
+             echo 'aborted'
+           elif [ "$curl_status" -eq 28 ] && [ "${bytes%%.*}" -eq 0 ] && \
+                { [ "$code" = 000 ] || [ "$code" = 200 ]; }; then
+             echo 'aborted-before-body'
            else
-             echo "aborted"
+             echo "abort-error-$code-$curl_status"
+           fi ;;
+      # Hang up on an uncached, permit-holding stream. `/stream/4` sends its
+      # header at once and then a chunk every 25ms, so a client gone at 50ms
+      # leaves at least one render step to go; Tanod must hold the permit and
+      # read the response to its end. Before the drain existed this freed the
+      # permit mid-render.
+      6)   exchange=$(curl -s -o /dev/null --max-time 0.05 \
+               -w '%{http_code}' "$BASE/stream/4?drain=$id-$n")
+           curl_status=$?
+           if [ "$curl_status" -eq 0 ] && [ "$exchange" = 200 ]; then
+             echo 'drain-raced'
+           elif [ "$curl_status" -eq 28 ] && { [ "$exchange" = 200 ] || [ "$exchange" = 000 ]; }; then
+             echo 'drain-aborted'
+           elif [ "$curl_status" -eq 0 ] && [ "$exchange" = 503 ]; then
+             echo 503
+           else
+             echo "drain-error-$exchange-$curl_status"
            fi ;;
     esac >> "$out" 2>/dev/null
   done
@@ -121,10 +158,13 @@ TOTAL=$(cat "$BENCH_DIR"/results-* 2>/dev/null | wc -l | tr -d ' ')
 OK=$(cat "$BENCH_DIR"/results-* 2>/dev/null | grep -c '^200$' || true)
 SHED=$(cat "$BENCH_DIR"/results-* 2>/dev/null | grep -c '^503$' || true)
 ABORTED=$(cat "$BENCH_DIR"/results-* 2>/dev/null | grep -c '^aborted$' || true)
+BEFORE_BODY=$(cat "$BENCH_DIR"/results-* 2>/dev/null | grep -c '^aborted-before-body$' || true)
 # The same arm, on the occasions the whole 1MiB body arrived inside the 50ms
 # deadline. Deliberate, and not evidence of the disconnect path being taken.
 RACED=$(cat "$BENCH_DIR"/results-* 2>/dev/null | grep -c '^abort-raced$' || true)
-OTHER=$((TOTAL - OK - SHED - ABORTED - RACED))
+DRAIN_ABORTED=$(cat "$BENCH_DIR"/results-* 2>/dev/null | grep -c '^drain-aborted$' || true)
+DRAIN_RACED=$(cat "$BENCH_DIR"/results-* 2>/dev/null | grep -c '^drain-raced$' || true)
+OTHER=$((TOTAL - OK - SHED - ABORTED - BEFORE_BODY - RACED - DRAIN_ABORTED - DRAIN_RACED))
 
 echo
 echo "traffic"
@@ -132,12 +172,34 @@ echo "  requests               $TOTAL"
 echo "  200                    $OK"
 echo "  503 (shed, by design)  $SHED"
 echo "  aborted (by design)    $ABORTED"
+echo "  timeout before body    $BEFORE_BODY"
 echo "  abort arm raced        $RACED"
+echo "  uncached hang-ups      $DRAIN_ABORTED"
+echo "  uncached arm raced     $DRAIN_RACED"
 echo "  anything else          $OTHER"
 bench_result requests "$TOTAL"
 bench_result ok "$OK"
 bench_result shed "$SHED"
 bench_result unexpected "$OTHER"
+bench_result aborted_mid_body "$ABORTED"
+bench_result aborted_before_body "$BEFORE_BODY"
+bench_result abort_raced "$RACED"
+bench_result uncached_hangups "$DRAIN_ABORTED"
+bench_result uncached_raced "$DRAIN_RACED"
+if [ -n "${BENCH_REPORT_DIR:-}" ]; then
+  mkdir -p "$BENCH_REPORT_DIR"
+  curl -fsS --max-time 5 "http://127.0.0.1:$METRICS_PORT/metrics" \
+    > "$BENCH_REPORT_DIR/$BENCH_NAME-metrics.prom" || bench_fail 'final soak metrics unavailable'
+fi
+if [ "$OTHER" -ne 0 ]; then
+  echo 'unexpected result markers:'
+  cat "$BENCH_DIR"/results-* | grep -Ev '^(200|503|aborted|aborted-before-body|abort-raced|drain-aborted|drain-raced)$' \
+    | sort | uniq -c
+  bench_dump_logs
+  if [ -n "${BENCH_REPORT_DIR:-}" ]; then
+    cp "$(bench_log tanod)" "$BENCH_REPORT_DIR/$BENCH_NAME-failure.log"
+  fi
+fi
 bench_assert_gt "$TOTAL" 100 "requests issued (too few to soak anything)"
 # The disconnect arm has to actually disconnect, or the path this soak exists
 # to watch is never taken.
@@ -208,6 +270,32 @@ bench_result in_flight_at_end "${IN_FLIGHT:-?}"
 # The clearest leak signal there is: with nothing in flight, a non-zero here
 # means capacity that will never come back.
 bench_assert_eq "${IN_FLIGHT%%.*}" 0 "origin permits still held after all traffic stopped"
+
+# Which origin-lifetime paths the disconnect arm actually took. A disconnect
+# during a cache fill is finished by Pingora's fill; one that the cache declined
+# under memory pressure is drained by Tanod. Recorded so a run shows both, and
+# a drain still active now is an exchange that never ended.
+for outcome in uncached_fallback fill_abandoned memory_exhausted; do
+  bench_result "cache_pressure_$outcome" \
+    "$(bench_metric "$METRICS_PORT" "tanod_cache_memory_pressure_total{outcome=\"$outcome\"}")"
+done
+for outcome in completed deadline upstream_error; do
+  value=$(bench_metric "$METRICS_PORT" "tanod_origin_disconnect_drains_total{outcome=\"$outcome\"}")
+  echo "  disconnect drains, $outcome  ${value:-?}"
+  bench_result "disconnect_drains_$outcome" "${value:-?}"
+done
+if [ "$UNCACHED_DISCONNECT" = 1 ]; then
+  bench_assert_gt "$DRAIN_ABORTED" 0 "uncached hang-ups (the uncached disconnect arm never disconnected)"
+  DRAINS_COMPLETED=$(bench_metric "$METRICS_PORT" 'tanod_origin_disconnect_drains_total{outcome="completed"}')
+  # The point of the arm: the drain path was taken and every drain ended
+  # with the origin's response, inside `timeouts.origin`.
+  bench_assert_gt "${DRAINS_COMPLETED%%.*}" 0 "completed disconnect drains (the drain path was never taken)"
+  DRAINS_DEADLINE=$(bench_metric "$METRICS_PORT" 'tanod_origin_disconnect_drains_total{outcome="deadline"}')
+  bench_assert_eq "${DRAINS_DEADLINE:-0}" 0 "drains cut off at the deadline (the origin here always finishes)"
+fi
+DRAINING_NOW=$(bench_metric "$METRICS_PORT" tanod_origin_disconnect_drains_active)
+bench_result disconnect_drains_active_at_end "${DRAINING_NOW:-?}"
+bench_assert_eq "${DRAINING_NOW%%.*}" 0 "origin responses still draining after all traffic stopped"
 bench_assert_eq "$READY" 200 "readiness after the soak"
 
 echo

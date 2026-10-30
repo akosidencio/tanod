@@ -14,7 +14,7 @@ Tanod is an open-source Rust reverse proxy that protects self-hosted server-side
 **Stop traffic spikes from becoming render spikes.**
 
 > [!IMPORTANT]
-> Tanod is pre-1.0. The current source version is **0.3.1**. Repository tests and bounded staging tests support its mechanisms, but sustained production validation and an independent cache-safety review remain open. Configuration and behavior may change between releases.
+> Tanod is pre-1.0. This source tree contains an **unpublished 0.4.0 candidate**. Repository tests and bounded staging tests support its mechanisms, but release validation, sustained production validation and an independent cache-safety review remain open. Configuration and behavior may change between releases. See the [upgrade notes](./docs/UPGRADING-0.4.md) before deploying this candidate.
 
 [Get started](#getting-started) · [Next.js integration](#using-tanod-with-nextjs) · [Standalone server](./docs/STANDALONE.md) · [Operations](./docs/OPERATIONS.md) · [Roadmap](./docs/ROADMAP.md) · [Changelog](./CHANGELOG.md)
 
@@ -180,7 +180,7 @@ Place Tanod behind the public edge and keep your origin reachable only through t
 Client → CDN / Caddy / NGINX / load balancer → Tanod → application
 ```
 
-The edge can terminate TLS, manage certificates, and apply client rate limits. Keep Tanod's admin and metrics listeners on loopback or a private network. Configure `server.trusted_proxies` for the actual edge addresses before relying on forwarded client or scheme headers.
+The edge can terminate TLS, manage certificates, and apply client rate limits. Keep Tanod's admin and metrics listeners on loopback or a private network. Configure `server.trusted_proxies` for the actual edge addresses before relying on forwarded client or scheme headers; a public host from the edge is believed only with `trusted_proxies.host`. Tanod restates every forwarding header the origin receives — see [forwarded headers](./docs/OPERATIONS.md#forwarded-headers).
 
 ### Choosing a topology
 
@@ -276,6 +276,8 @@ The sharing rules include:
 
 - Requests with `Authorization`, unsafe methods, Next.js Server Actions, and draft-mode content bypass sharing
 - Cookie-bearing requests remain private by default; an explicit public-route override requires a privacy review
+- `coalesce.override_origin` shares within one in-flight render and never stores; like `cache.override_origin` it requires an explicit `class:`
+- Request targets with `.` or `..` path segments are refused (`400`) in protect mode, because the origin would resolve them to a different route
 - Responses with `Set-Cookie`, unsupported `Vary` headers, or unsafe statuses cannot be shared through an override
 - Origin privacy and cache directives remain authoritative unless a validated public route explicitly overrides them
 - Cache keys separate scheme, host, method, path, query, configured variants, Next.js variants, and deployment identity
@@ -368,7 +370,7 @@ That result is a workload-specific observation, not a general speed claim. Separ
 
 ## Project status and roadmap
 
-Tanod 0.3.1 implements the core proxy, admission controls, local cache, request coalescing, telemetry, and application supervision. The [changelog](./CHANGELOG.md) records release history; the [roadmap](./docs/ROADMAP.md) tracks remaining work.
+The 0.4.0 candidate includes the core proxy, admission controls, local cache, request coalescing, telemetry, and application supervision. The [changelog](./CHANGELOG.md) records release history; the [roadmap](./docs/ROADMAP.md) tracks remaining work. See the [release gates](./docs/RELEASE-GATES.md) for the candidate's current status and publication requirements.
 
 Current boundaries and validation gaps include:
 
@@ -399,6 +401,9 @@ Use these guides for the next step:
 | [Next.js production reference](./docs/NEXTJS-PRODUCTION-REFERENCE.md) | Deployment identity, shared Next.js state, replica limits, and verification |
 | [Threat model](./docs/THREAT-MODEL.md) | Protected assets, security assumptions, controls, and exclusions |
 | [Cache-key review brief](./docs/CACHE-KEY-REVIEW.md) | Claims and attack cases for an independent cache-safety review |
+| [v0.4.0 cache security review](./docs/reviews/CACHE-SECURITY-REVIEW-v0.4.0.md) | Maintainer-side review package, fixes, and the pending independent sign-off |
+| [0.4.0 release notes](./docs/RELEASE-NOTES-0.4.0.md) | Security fixes, mitigations for 0.3.2, and what changed |
+| [Upgrading to 0.4](./docs/UPGRADING-0.4.md) | Configuration and behavior changes from 0.3.2 |
 | [Release gates](./docs/RELEASE-GATES.md) | Required checks and validation beyond CI |
 | [Roadmap](./docs/ROADMAP.md) | Remaining features, limitations, and validation work |
 | [Changelog](./CHANGELOG.md) | Release history and upgrade notes |
@@ -406,6 +411,8 @@ Use these guides for the next step:
 ## Contributing and security
 
 Report reproducible bugs or propose improvements through [GitHub issues](https://github.com/akosidencio/tanod/issues). Include the Tanod version, a redacted configuration, the request pattern, and the observed behavior. Review the relevant [release gates](./docs/RELEASE-GATES.md) when contributing code.
+
+Report suspected vulnerabilities privately, as described in [SECURITY.md](./SECURITY.md), never in a public issue. Versions before 0.4.0 are affected by the vulnerabilities listed in the [0.4.0 release notes](./docs/RELEASE-NOTES-0.4.0.md#2-security-fixes).
 
 An independent review of cache keys and response shareability is a priority. The [review brief](./docs/CACHE-KEY-REVIEW.md) describes falsifiable claims and known review gaps. Tanod's threat model has not been independently audited; keep credentials and private application data out of public reports.
 

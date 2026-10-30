@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 1269ecb401e463ef3c5da0524c0e577fbcca6a38809786dd6f8e3220e64007ab # shrinks to cookie = "a=", class = Static, cache_enabled = true, coalesce_enabled = false
+cc b7a33367a424b40fd546f627c5d0244f4fcb76516c36baabbfa8da138d70f39e # shrinks to refusal = "no-store", extra = "", status = 200, ttl_secs = None, coalesce_only = false

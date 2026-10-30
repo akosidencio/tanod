@@ -1,9 +1,20 @@
 [workspace]
-members = [".", "spike/pingora-cache", "bench/slow-origin"]
+members = [".", "spike/pingora-cache", "bench/slow-origin", "bench/loadgen"]
+# A vendored dependency, not a member: it is not formatted, linted or tested as
+# Tanod's own code. See vendor/pingora-proxy/TANOD-PATCH.md.
+exclude = ["vendor"]
+
+# Pingora 0.9 abandons an uncached origin response the moment its client goes
+# away, so an admitted request's permit came back while the origin was still
+# working. The patch adds one opt-in hook that lets Tanod keep reading that
+# response to its end, as Pingora already does for a cache fill. Exact diff and
+# verification: vendor/pingora-proxy/TANOD-PATCH.md.
+[patch.crates-io]
+pingora-proxy = { path = "vendor/pingora-proxy" }
 
 [package]
 name = "tanod"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Origin workload governor for server-rendered applications"
@@ -15,7 +26,12 @@ serde-saphyr = "1"
 globset = "0.4"
 http = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["sync", "time", "rt", "macros", "signal"] }
+# `~1.53.3`, not `1`: tokio 1.54 asserts that a `BufStream` capacity is
+# non-zero, and Pingora 0.9 builds every accepted TCP stream with
+# `BufStream::with_capacity(0, 0, ..)`, so the proxy panics on its first
+# connection. 1.53.3 carries the fix for RUSTSEC-2026-0386. Lift this with the
+# Pingora release that stops passing zero.
+tokio = { version = "~1.53.3", features = ["sync", "time", "rt", "macros", "signal"] }
 pingora-core = "0.9"
 pingora-proxy = "0.9"
 pingora-http = "0.9"
@@ -34,6 +50,9 @@ arc-swap = "1"
 async-trait = "0.1"
 bytes = "1"
 log = "0.4"
+# Already present through blake2; use its compiler-resistant comparison for
+# admin bearer credentials instead of relying on an optimizable XOR loop.
+subtle = { version = "2.6", default-features = false }
 # Trace and span ids. Chosen over `rand` because it is the OS entropy syscall
 # and nothing else — no PRNG, no distributions, no generic machinery — and
 # because it is already in this tree transitively, so making it direct costs
@@ -61,15 +80,22 @@ fuzzing = []
 tls = ["pingora-core/rustls", "pingora-load-balancing/rustls"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["sync", "time", "rt", "macros", "test-util"] }
+tokio = { version = "~1.53.3", features = ["sync", "time", "rt", "macros", "test-util"] }
 proptest = "1"
 # Test-only: proves the hand-written OTLP JSON parses. Never linked into the
 # binary.
 serde_json = "1"
+loom = "0.7.2"
 
 [[bench]]
 name = "eviction"
 path = "bench/eviction.rs"
+harness = false
+
+# Store, route and cache-key microbenchmarks; see the file header.
+[[bench]]
+name = "hotpath"
+path = "bench/hotpath.rs"
 harness = false
 
 # The crate contains no `unsafe`. `forbid` turns that from a fact about today

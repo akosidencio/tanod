@@ -28,12 +28,30 @@
 //!   active health check can express. Renders are still counted while failing,
 //!   so a benchmark can prove traffic stopped arriving rather than inferring
 //!   it from the proxy's own metrics.
+//! * `GET .../size/<bytes>` — an ordinary render whose body is exactly that
+//!   many bytes, wherever the segment appears in the path, so the performance
+//!   scenarios can sweep body sizes under any route prefix.
+//!
+//! `SLOW_ORIGIN_EVENTS=<file>` appends one line per render start and end —
+//! microseconds since start, event, render number, in-flight count, and the
+//! path and `traceparent` at start — so a failed ceiling can be attributed to
+//! the requests that overlapped. Counting is identical with or without it.
+//!
+//! `SLOW_ORIGIN_SLOTS=<n>` bounds how many renders run at once; the rest wait
+//! for a slot, the way requests queue behind a saturated SSR server's event
+//! loop. Unset, every render runs concurrently, as it always has.
+//!
+//! * `GET /reflect/<n>` — a cacheable page whose body contains an absolute URL
+//!   built from `X-Forwarded-Proto` and `X-Forwarded-Host`, the way an SSR
+//!   framework builds canonical links and redirects. If any header that
+//!   shapes that URL is not in the proxy's cache key, a forged value is
+//!   stored and served to everyone; the body shows it.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::TcpSocket;
 
 struct Stats {
     in_flight: AtomicUsize,
@@ -47,6 +65,65 @@ struct Stats {
     sockets_total: AtomicUsize,
     /// Answer every render with `502` while `/healthz` keeps saying `ok`.
     failing: AtomicBool,
+    /// `SLOW_ORIGIN_EVENTS=<file>`: one line per render start and end, so a
+    /// failed concurrency assertion can name the requests that overlapped.
+    events: Option<std::sync::Mutex<std::fs::File>>,
+    epoch: std::time::Instant,
+}
+
+impl Stats {
+    fn trace(&self, event: &str, seq: usize, in_flight: usize, detail: &str) {
+        if let Some(file) = &self.events {
+            use std::io::Write;
+            let line = format!(
+                "{} {event} {seq} {in_flight} {detail}\n",
+                self.epoch.elapsed().as_micros()
+            );
+            if let Ok(mut file) = file.lock() {
+                let _ = file.write_all(line.as_bytes());
+            }
+        }
+    }
+}
+
+/// One render's share of `in_flight`.
+///
+/// `end` is called exactly where the work stops, which for `/rendered` is
+/// before its transport. `Drop` covers every other way out, so a path that
+/// returns early or panics cannot leave the count high.
+struct Render {
+    stats: Arc<Stats>,
+    seq: usize,
+    ended: bool,
+}
+
+impl Render {
+    fn begin(stats: &Arc<Stats>, path: &str, trace: &str) -> (Self, usize, usize) {
+        let now = stats.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        stats.peak.fetch_max(now, Ordering::SeqCst);
+        let seq = stats.total.fetch_add(1, Ordering::SeqCst) + 1;
+        stats.trace("start", seq, now, &format!("{path} {trace}"));
+        let render = Render {
+            stats: stats.clone(),
+            seq,
+            ended: false,
+        };
+        (render, now, seq)
+    }
+
+    fn end(&mut self) {
+        if !self.ended {
+            self.ended = true;
+            let left = self.stats.in_flight.fetch_sub(1, Ordering::SeqCst) - 1;
+            self.stats.trace("end", self.seq, left, "");
+        }
+    }
+}
+
+impl Drop for Render {
+    fn drop(&mut self) {
+        self.end();
+    }
 }
 
 #[tokio::main]
@@ -55,6 +132,14 @@ async fn main() -> std::io::Result<()> {
     let port: u16 = args.next().and_then(|s| s.parse().ok()).unwrap_or(3000);
     let render_ms: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(200);
 
+    // Bounded render work, for the overload scenarios in bench/perf.sh. A slot
+    // is held for the render delay only, never for transport.
+    let slots: Option<Arc<tokio::sync::Semaphore>> = std::env::var("SLOW_ORIGIN_SLOTS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .filter(|n: &usize| *n > 0)
+        .map(|n| Arc::new(tokio::sync::Semaphore::new(n)));
+
     let stats = Arc::new(Stats {
         in_flight: AtomicUsize::new(0),
         peak: AtomicUsize::new(0),
@@ -62,9 +147,26 @@ async fn main() -> std::io::Result<()> {
         sockets_open: AtomicUsize::new(0),
         sockets_total: AtomicUsize::new(0),
         failing: AtomicBool::new(false),
+        events: std::env::var_os("SLOW_ORIGIN_EVENTS").map(|path| {
+            std::sync::Mutex::new(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .expect("SLOW_ORIGIN_EVENTS must name a writable file"),
+            )
+        }),
+        epoch: std::time::Instant::now(),
     });
 
-    let listener = TcpListener::bind(("127.0.0.1", port)).await?;
+    // Mio's default backlog is 128. A 512-client fill burst can overflow
+    // that queue and wait for a SYN retransmit beyond Tanod's connect timeout,
+    // measuring dropped handshakes rather than cache fill throughput. This
+    // fixture accepts the burst; SLOW_ORIGIN_SLOTS still bounds render work.
+    let socket = TcpSocket::new_v4()?;
+    socket.set_reuseaddr(true)?;
+    socket.bind(([127, 0, 0, 1], port).into())?;
+    let listener = socket.listen(4096)?;
     eprintln!("slow-origin on 127.0.0.1:{port}, {render_ms}ms per render");
 
     // Identifies *this* process, so that ids minted here cannot collide with
@@ -82,8 +184,13 @@ async fn main() -> std::io::Result<()> {
 
     loop {
         let (mut sock, _) = listener.accept().await?;
+        // `finish` sends a response's last byte on its own. Without this,
+        // Nagle's algorithm could hold that byte back for a delayed ACK and
+        // add tens of milliseconds to every render the benchmarks time.
+        let _ = sock.set_nodelay(true);
         let stats = stats.clone();
         let instance = instance.clone();
+        let slots = slots.clone();
         tokio::spawn(async move {
             let mut buf = [0u8; 8192];
             // One request per connection keeps the fixture honest and simple.
@@ -113,9 +220,8 @@ async fn main() -> std::io::Result<()> {
                 return;
             }
 
-            let now = stats.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
-            stats.peak.fetch_max(now, Ordering::SeqCst);
-            let seq = stats.total.fetch_add(1, Ordering::SeqCst) + 1;
+            let trace = header_value(&head, "traceparent").unwrap_or_default();
+            let (mut render, now, seq) = Render::begin(&stats, &path, &trace);
 
             // /stream/<n> emits n chunks with a render delay between each,
             // the way a server-rendered page streams a shell and then fills
@@ -136,7 +242,7 @@ async fn main() -> std::io::Result<()> {
                      Connection: close\r\n\r\n"
                 );
                 if sock.write_all(head.as_bytes()).await.is_err() {
-                    stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                    render.end();
                     return;
                 }
                 let _ = sock.flush().await;
@@ -160,9 +266,7 @@ async fn main() -> std::io::Result<()> {
                     }
                     let _ = sock.flush().await;
                 }
-                let _ = sock.write_all(b"0\r\n\r\n").await;
-                let _ = sock.flush().await;
-                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                finish(&mut sock, b"0\r\n\r\n", &mut render).await;
                 return;
             }
 
@@ -184,7 +288,7 @@ async fn main() -> std::io::Result<()> {
                 // Half of what was promised, then the connection closes.
                 let _ = sock.write_all(&vec![b'x'; promised / 2]).await;
                 let _ = sock.flush().await;
-                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                render.end();
                 return;
             }
             if path.starts_with("/badchunk") {
@@ -196,7 +300,7 @@ async fn main() -> std::io::Result<()> {
                 // One well-formed chunk, then no terminating `0\r\n\r\n`.
                 let _ = sock.write_all(b"10\r\n0123456789abcdef\r\n").await;
                 let _ = sock.flush().await;
-                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                render.end();
                 return;
             }
 
@@ -211,15 +315,34 @@ async fn main() -> std::io::Result<()> {
                 // is the only trustworthy witness to what the proxy sent, and
                 // reading the proxy's own log would be asking the component
                 // under test to grade itself.
-                let body = format!(
-                    "{{\"x_forwarded_for\":\"{}\",\"x_forwarded_proto\":\"{}\",\"forwarded\":\"{}\",\"host\":\"{}\",\"traceparent\":\"{}\",\"tracestate\":\"{}\"}}",
-                    header_value(&head, "x-forwarded-for").unwrap_or_default(),
-                    header_value(&head, "x-forwarded-proto").unwrap_or_default(),
-                    header_value(&head, "forwarded").unwrap_or_default(),
-                    header_value(&head, "host").unwrap_or_default(),
-                    header_value(&head, "traceparent").unwrap_or_default(),
-                    header_value(&head, "tracestate").unwrap_or_default(),
-                );
+                // Repeated fields are joined with ` | ` so a duplicate the
+                // proxy should have collapsed is visible rather than hidden
+                // behind whichever copy came first.
+                let mut body = String::from("{");
+                for (field, name) in [
+                    ("x_forwarded_for", "x-forwarded-for"),
+                    ("x_forwarded_proto", "x-forwarded-proto"),
+                    ("forwarded", "forwarded"),
+                    ("host", "host"),
+                    ("traceparent", "traceparent"),
+                    ("tracestate", "tracestate"),
+                    ("x_forwarded_host", "x-forwarded-host"),
+                    ("x_forwarded_port", "x-forwarded-port"),
+                    ("x_real_ip", "x-real-ip"),
+                    ("x_forwarded_prefix", "x-forwarded-prefix"),
+                    ("x_original_host", "x-original-host"),
+                    ("x_original_url", "x-original-url"),
+                    ("cf_connecting_ip", "cf-connecting-ip"),
+                ] {
+                    if body.len() > 1 {
+                        body.push(',');
+                    }
+                    body.push_str(&format!(
+                        "\"{field}\":\"{}\"",
+                        header_values(&head, name).join(" | ").replace('"', "'")
+                    ));
+                }
+                body.push('}');
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\n\
                      Content-Type: application/json\r\n\
@@ -229,9 +352,7 @@ async fn main() -> std::io::Result<()> {
                      Connection: close\r\n\r\n{body}",
                     body.len()
                 );
-                let _ = sock.write_all(resp.as_bytes()).await;
-                let _ = sock.flush().await;
-                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                finish(&mut sock, resp.as_bytes(), &mut render).await;
                 return;
             }
 
@@ -253,7 +374,7 @@ async fn main() -> std::io::Result<()> {
                 tokio::time::sleep(Duration::from_millis(render_ms)).await;
                 // The render is over. Everything after this line is transport,
                 // and the counters must not attribute it to the origin.
-                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                render.end();
 
                 let head = format!(
                     "HTTP/1.1 200 OK\r\n\
@@ -270,7 +391,36 @@ async fn main() -> std::io::Result<()> {
                 return;
             }
 
-            tokio::time::sleep(Duration::from_millis(render_ms)).await;
+            {
+                let _slot = match &slots {
+                    Some(slots) => slots.acquire().await.ok(),
+                    None => None,
+                };
+                tokio::time::sleep(Duration::from_millis(render_ms)).await;
+            }
+
+            if path.starts_with("/reflect") {
+                let proto =
+                    header_value(&head, "x-forwarded-proto").unwrap_or_else(|| "http".into());
+                let host = header_value(&head, "x-forwarded-host")
+                    .or_else(|| header_value(&head, "host"))
+                    .unwrap_or_default();
+                let body = format!(
+                    "<html><head><link rel=\"canonical\" href=\"{proto}://{host}{path}\"></head>\
+                     <body>render {seq}</body></html>"
+                );
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\n\
+                     Content-Type: text/html\r\n\
+                     Content-Length: {}\r\n\
+                     Cache-Control: public, max-age=60\r\n\
+                     X-Origin-Total: {seq}\r\n\
+                     Connection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                finish(&mut sock, resp.as_bytes(), &mut render).await;
+                return;
+            }
 
             // /validated/* carries an ETag and Last-Modified and answers
             // conditional requests itself, so a test can tell a 304 the origin
@@ -302,9 +452,7 @@ async fn main() -> std::io::Result<()> {
                         body.len()
                     )
                 };
-                let _ = sock.write_all(response.as_bytes()).await;
-                let _ = sock.flush().await;
-                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                finish(&mut sock, response.as_bytes(), &mut render).await;
                 return;
             }
 
@@ -341,7 +489,9 @@ async fn main() -> std::io::Result<()> {
             // /big/<MiB> returns a body of that size, so a test can pick one
             // large enough to exceed the socket buffers between origin and
             // client and actually block the downstream write.
-            let body = if path.starts_with("/big") {
+            let body = if let Some(size) = sized_body(&path) {
+                "x".repeat(size)
+            } else if path.starts_with("/big") {
                 let mib: usize = tail_number(&path).unwrap_or(1);
                 let filler = "x".repeat(mib * 1024 * 1024);
                 format!("<html><body>rendered {path}{filler}</body></html>")
@@ -370,11 +520,30 @@ async fn main() -> std::io::Result<()> {
                 body.len(),
                 stats.total.load(Ordering::SeqCst),
             );
-            let _ = sock.write_all(resp.as_bytes()).await;
-            let _ = sock.flush().await;
-            stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+            finish(&mut sock, resp.as_bytes(), &mut render).await;
         });
     }
+}
+
+/// Write a render's last bytes so that its count is gone before they can be read.
+///
+/// A proxy returns capacity when it reads the end of a response. Decrementing
+/// after the final write returned left a window — this thread preempted
+/// between the write and the decrement — in which a proxy on another core had
+/// already read the end, admitted the next request, and had it counted here
+/// beside one whose output was complete. That is an overlap of bookkeeping,
+/// not of work, and it fired the soak ceiling with no client disconnecting.
+///
+/// Everything except the last byte is still written inside the render, so a
+/// slow reader still holds it for as long as it did before; only the one byte
+/// that makes the response observably complete goes out after the decrement.
+async fn finish(sock: &mut tokio::net::TcpStream, response: &[u8], render: &mut Render) {
+    let (most, last) = response.split_at(response.len().saturating_sub(1));
+    let _ = sock.write_all(most).await;
+    let _ = sock.flush().await;
+    render.end();
+    let _ = sock.write_all(last).await;
+    let _ = sock.flush().await;
 }
 
 /// Answer the non-render endpoints, or `None` if this path is a real render.
@@ -443,7 +612,27 @@ fn tail_number(path: &str) -> Option<usize> {
         .and_then(|s| s.parse().ok())
 }
 
+/// The body size a `.../size/<bytes>` path asks for.
+fn sized_body(path: &str) -> Option<usize> {
+    let rest = &path[path.find("/size/")? + "/size/".len()..];
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    rest[..digits].parse().ok()
+}
+
 /// One request header's value, matched case-insensitively.
+fn header_values(head: &str, name: &str) -> Vec<String> {
+    head.lines()
+        .skip(1)
+        .take_while(|line| !line.trim().is_empty())
+        .filter_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.trim()
+                .eq_ignore_ascii_case(name)
+                .then(|| value.trim().to_string())
+        })
+        .collect()
+}
+
 fn header_value(head: &str, name: &str) -> Option<String> {
     head.lines()
         .skip(1)

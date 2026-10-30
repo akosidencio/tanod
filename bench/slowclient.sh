@@ -14,6 +14,14 @@
 # What *is* asserted is the documented guarantee: `timeouts.downstream_write`
 # bounds the stall. A slow reader must not be able to hold a render slot
 # indefinitely.
+#
+# Cutting the reader off does not end the origin's work. Tanod then reads the
+# rest of the response at the origin's own pace, discards it, and keeps the
+# permit until the origin finishes (see "What the origin ceiling guarantees" in
+# docs/OPERATIONS.md). The bounded probe therefore uses a stream whose origin
+# work (40 chunks at 50 ms, about 2 s) ends soon after the cut-off, while a
+# 32 KB/s reader alone would need minutes for its 10 MiB. It waits for the
+# write timeout plus that work, then asks for capacity nobody is using.
 BENCH_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$BENCH_ROOT/bench/lib.sh"
 
@@ -99,10 +107,15 @@ echo
 printf '  %-28s %-8s %-9s %s\n' "response" "status" "latency" "capacity returned?"
 
 # The same two slow readers, but the write timeout now cuts them off. Waiting
-# past the timeout must find the capacity back, whatever the buffers did.
+# past the timeout and the origin's remaining work must find the capacity back,
+# whatever the buffers did.
 write_config "$BOUNDED_DW"
-probe "http://127.0.0.1:$LISTEN_PORT/bigstream/200" "streaming, bounded write" \
-  "$(awk -v t="$BOUNDED_SECONDS" 'BEGIN{print t + 2}')"
+probe "http://127.0.0.1:$LISTEN_PORT/bigstream/40" "streaming, bounded write" \
+  "$(awk -v t="$BOUNDED_SECONDS" 'BEGIN{print t + 4}')"
+# Both readers were cut off and their responses drained to the end: the
+# capacity came back because the origin finished, not because Tanod let go.
+DRAINED=$(grep -c '"permit_released":"drain_end"' "$(bench_log tanod)" || true)
+bench_result bounded_drained "$DRAINED"
 bench_result bounded_probe_status "$PROBE_CODE"
 bench_result bounded_probe_ms "$PROBE_MS"
 
@@ -113,4 +126,5 @@ echo
 [ "$PROBE_CODE" = "200" ] || bench_fail \
   "after timeouts.downstream_write ($BOUNDED_DW) elapsed the probe still got HTTP $PROBE_CODE — a slow reader held a render slot past the bound that is supposed to cap it"
 bench_assert_le "$PROBE_MS" 1000 "probe latency once the write timeout had elapsed"
+bench_assert_eq "$DRAINED" 2 "cut-off readers whose responses were drained to the origin's end"
 bench_pass "slow readers can delay observed origin end-of-stream, but timeouts.downstream_write bounds it: capacity was back within ${PROBE_MS}ms of the deadline"

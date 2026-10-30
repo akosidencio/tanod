@@ -23,9 +23,61 @@
 //! the client sent. Walking from the right and stopping at the first address
 //! that is *not* itself trusted is what makes the result the address a trusted
 //! proxy observed rather than one the client chose.
+//!
+//! The scheme and the public host come from the *same* hop as the address:
+//! the list entry a trusted proxy wrote alongside the address the walk chose,
+//! or the only entry when a proxy overwrote the header. Never simply the
+//! leftmost entry, which is the one a client can prefix.
+//!
+//! What reaches the origin is decided here too. Tanod restates the forwarding
+//! headers it concluded, removes the ones it does not interpret, and keeps
+//! CDN identity headers only from trusted peers: see
+//! [`STRIPPED_UPSTREAM`] and [`TRUSTED_PEER_ONLY`]. Everything an origin can
+//! build a public URL from — scheme, host, port — is then derived from values
+//! that are also in the cache key, so no unkeyed header can change a shared
+//! response.
 
 use crate::config::schema::{ForwardedSource, TrustedProxies};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
+
+/// Request headers never forwarded to the origin.
+///
+/// Each is either another spelling of a claim Tanod already restates
+/// (`Forwarded`, the scheme aliases), or a URL-shaping value Tanod neither
+/// validates nor keys on: an origin that built links or made an access
+/// decision from one would let any client poison a shared response or
+/// sidestep a route rule.
+pub const STRIPPED_UPSTREAM: &[&str] = &[
+    "forwarded",
+    "x-forwarded-prefix",
+    "x-forwarded-server",
+    "x-original-host",
+    "x-host",
+    "x-original-url",
+    "x-rewrite-url",
+    "x-forwarded-scheme",
+    "x-forwarded-ssl",
+    "x-forwarded-protocol",
+    "x-url-scheme",
+    "front-end-https",
+];
+
+/// CDN-specific client identity headers.
+///
+/// Tanod does not interpret these. From a trusted peer they are the CDN's own
+/// statement and pass through untouched; from anyone else they are a forged
+/// identity and are removed. `X-Forwarded-For` and `X-Real-IP` carry Tanod's
+/// own conclusion either way.
+pub const TRUSTED_PEER_ONLY: &[&str] = &[
+    "x-client-ip",
+    "true-client-ip",
+    "cf-connecting-ip",
+    "fastly-client-ip",
+    "x-cluster-client-ip",
+];
+
+/// Longest authority accepted: a 253-byte DNS name, a colon and a port.
+const MAX_AUTHORITY: usize = 253 + 6;
 
 /// The scheme a listener speaks before any header is consulted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +104,48 @@ pub struct ClientFacts {
     pub scheme: &'static str,
     /// Was the connection peer trusted to describe the client at all?
     pub peer_trusted: bool,
+    /// The public authority a trusted proxy reported, validated and
+    /// lowercased. `None` unless `trusted_proxies.host` names a source, the
+    /// peer is trusted, and the value is a well-formed `host[:port]`. Enters
+    /// the cache key whenever it is set.
+    pub forwarded_host: Option<String>,
+}
+
+impl ClientFacts {
+    /// The authority the origin is told the client asked for: the believed
+    /// forwarded host, else the request's own `Host` or `:authority`. `None`
+    /// when neither is a well-formed authority, in which case no
+    /// `X-Forwarded-Host` is sent at all.
+    ///
+    /// The scheme's default port is dropped, as the cache key drops it.
+    /// Browsers never put a default port in `Origin`, and frameworks compare
+    /// the two for CSRF checks: Next.js rejects a Server Action whose `Origin`
+    /// host differs from `X-Forwarded-Host`, so `shop.example:443` would fail
+    /// every one.
+    pub fn public_authority(&self, request_authority: &str) -> Option<String> {
+        let authority = self
+            .forwarded_host
+            .clone()
+            .or_else(|| normalize_authority(request_authority))?;
+        let default = match self.scheme {
+            "https" => ":443",
+            _ => ":80",
+        };
+        Some(match authority.strip_suffix(default) {
+            // `[::1]:443` keeps its brackets; a bare `:443` never reaches here
+            // because an authority needs a host.
+            Some(host) if !host.is_empty() => host.to_string(),
+            _ => authority,
+        })
+    }
+
+    /// The public port: explicit in the authority, else the scheme's default.
+    pub fn public_port(&self, authority: &str) -> u16 {
+        explicit_port(authority).unwrap_or(match self.scheme {
+            "https" => 443,
+            _ => 80,
+        })
+    }
 }
 
 /// One CIDR block, or a single host when no prefix length is given.
@@ -139,6 +233,25 @@ pub struct TrustPolicy {
     blocks: Vec<Cidr>,
     client_ip: ForwardedSource,
     scheme: ForwardedSource,
+    host: ForwardedSource,
+}
+
+/// The hop the walk chose: its address and where it sits in the list.
+#[derive(Debug, Clone, Copy)]
+struct Hop {
+    address: Option<IpAddr>,
+    /// Position among *all* list entries, unparseable ones included, so a
+    /// parallel list written by the same proxies can be read at the same place.
+    index: Option<usize>,
+    len: usize,
+}
+
+/// One RFC 7239 element, as written by one proxy about the request it got.
+#[derive(Debug, Default)]
+struct Element {
+    for_: Option<IpAddr>,
+    proto: Option<String>,
+    host: Option<String>,
 }
 
 impl TrustPolicy {
@@ -152,6 +265,7 @@ impl TrustPolicy {
             blocks,
             client_ip: config.client_ip,
             scheme: config.scheme,
+            host: config.host,
         })
     }
 
@@ -176,22 +290,57 @@ impl TrustPolicy {
                 client_ip: peer,
                 scheme: scheme.as_str(),
                 peer_trusted: false,
+                forwarded_host: None,
             };
         }
-        ClientFacts {
-            client_ip: self.forwarded_client(headers).or(peer),
-            scheme: self.forwarded_scheme(headers).unwrap_or(scheme.as_str()),
-            peer_trusted: true,
-        }
-    }
 
-    fn forwarded_client(&self, headers: &http::HeaderMap) -> Option<IpAddr> {
-        let chain: Vec<IpAddr> = match self.client_ip {
-            ForwardedSource::None => return None,
-            ForwardedSource::XForwarded => parse_x_forwarded_for(headers),
-            ForwardedSource::Forwarded => parse_forwarded_for(headers),
+        // Parsed only for the sources that read them. A hop is chosen only
+        // from the list `client_ip` names: that is the operator's statement
+        // that their proxies maintain it, which is what makes the position of
+        // an entry in it mean anything.
+        let reads = |source| [self.client_ip, self.scheme, self.host].contains(&source);
+        let elements = if reads(ForwardedSource::Forwarded) {
+            parse_forwarded(headers)
+        } else {
+            Vec::new()
         };
-        self.walk_back(&chain)
+        let hop = match self.client_ip {
+            ForwardedSource::XForwarded => Some(self.walk_back(&parse_x_forwarded_for(headers))),
+            ForwardedSource::Forwarded => {
+                Some(self.walk_back(&elements.iter().map(|e| e.for_).collect::<Vec<_>>()))
+            }
+            ForwardedSource::None => None,
+        };
+        let aligned = |source| hop.filter(|_| source == self.client_ip);
+
+        let claimed_scheme = match self.scheme {
+            ForwardedSource::None => None,
+            ForwardedSource::XForwarded => {
+                let values = list_values(headers, "x-forwarded-proto");
+                pick(&values, aligned(ForwardedSource::XForwarded)).cloned()
+            }
+            ForwardedSource::Forwarded => pick(&elements, aligned(ForwardedSource::Forwarded))
+                .and_then(|element| element.proto.clone()),
+        };
+        let claimed_host = match self.host {
+            ForwardedSource::None => None,
+            ForwardedSource::XForwarded => {
+                let values = list_values(headers, "x-forwarded-host");
+                pick(&values, aligned(ForwardedSource::XForwarded)).cloned()
+            }
+            ForwardedSource::Forwarded => pick(&elements, aligned(ForwardedSource::Forwarded))
+                .and_then(|element| element.host.clone()),
+        };
+
+        ClientFacts {
+            client_ip: hop.and_then(|hop| hop.address).or(peer),
+            scheme: claimed_scheme
+                .as_deref()
+                .and_then(normalize_scheme)
+                .unwrap_or(scheme.as_str()),
+            peer_trusted: true,
+            forwarded_host: claimed_host.as_deref().and_then(normalize_authority),
+        }
     }
 
     /// Walk right to left and stop at the first address that is not itself a
@@ -199,29 +348,68 @@ impl TrustPolicy {
     ///
     /// Everything left of it was written by somebody we have no reason to
     /// believe. If the whole chain is trusted infrastructure, the leftmost
-    /// entry is the best available answer.
-    fn walk_back(&self, chain: &[IpAddr]) -> Option<IpAddr> {
-        for address in chain.iter().rev() {
-            if !self.trusts(*address) {
-                return Some(*address);
-            }
+    /// entry is the best available answer. Entries that are not addresses
+    /// (`unknown`, `_hidden`) are skipped but still counted, so the chosen
+    /// position lines up with lists the same proxies wrote beside this one.
+    fn walk_back(&self, chain: &[Option<IpAddr>]) -> Hop {
+        let len = chain.len();
+        let chosen = chain
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, address)| address.filter(|a| !self.trusts(*a)).map(|a| (index, a)))
+            .or_else(|| {
+                chain
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, address)| address.map(|a| (index, a)))
+            });
+        Hop {
+            address: chosen.map(|(_, address)| address),
+            index: chosen.map(|(index, _)| index),
+            len,
         }
-        chain.first().copied()
     }
+}
 
-    fn forwarded_scheme(&self, headers: &http::HeaderMap) -> Option<&'static str> {
-        let raw = match self.scheme {
-            ForwardedSource::None => return None,
-            ForwardedSource::XForwarded => first_token(headers.get("x-forwarded-proto")?),
-            ForwardedSource::Forwarded => {
-                // The leftmost element is the hop closest to the client, and
-                // therefore the one that knows what the client dialled.
-                let element = first_element(headers.get("forwarded")?)?;
-                param(&element, "proto")?.to_string()
-            }
-        };
-        normalize_scheme(&raw)
+/// Choose the entry of a forwarding list that describes the chosen hop.
+///
+/// * One entry: a proxy overwrote the field, so it is that proxy's statement.
+/// * As many entries as the address list: every proxy appended to both, so
+///   the entry at the chosen hop's position is the one written beside it.
+/// * Anything else cannot be attributed, so the rightmost entry — the one the
+///   connection peer itself appended — is the only one that can be.
+///
+/// Never the leftmost of several: that is the entry a client prefixes.
+fn pick<T>(values: &[T], hop: Option<Hop>) -> Option<&T> {
+    if values.len() == 1 {
+        return values.first();
     }
+    if let Some(Hop {
+        index: Some(index),
+        len,
+        ..
+    }) = hop
+        && len == values.len()
+    {
+        return values.get(index);
+    }
+    values.last()
+}
+
+/// Every comma-separated entry of a list-valued header, across repeated
+/// fields, trimmed. Empty entries are kept so positions stay aligned.
+fn list_values(headers: &http::HeaderMap, name: &str) -> Vec<String> {
+    headers
+        .get_all(name)
+        .iter()
+        .flat_map(|value| {
+            String::from_utf8_lossy(value.as_bytes())
+                .split(',')
+                .map(|entry| entry.trim().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// Only two schemes exist as far as the cache key is concerned.
@@ -240,50 +428,30 @@ fn normalize_scheme(raw: &str) -> Option<&'static str> {
     }
 }
 
-/// `X-Forwarded-Proto: https, http` — take the leftmost, which is the hop
-/// closest to the client.
-fn first_token(value: &http::HeaderValue) -> String {
-    let text = String::from_utf8_lossy(value.as_bytes());
-    text.split(',').next().unwrap_or("").trim().to_string()
-}
-
-/// Every address in every `X-Forwarded-For` header, left to right.
+/// Every entry in every `X-Forwarded-For` header, left to right.
 ///
 /// Repeated headers are concatenated in order, which is what RFC 9110 says a
 /// list-valued field means and what an HTTP/2 client naturally produces.
-/// Entries that are not addresses are dropped rather than aborting the parse:
-/// a proxy that writes `unknown` should not make the rest of the chain
+/// Entries that are not addresses become `None` rather than aborting the
+/// parse: a proxy that writes `unknown` should not make the rest of the chain
 /// unreadable.
-fn parse_x_forwarded_for(headers: &http::HeaderMap) -> Vec<IpAddr> {
-    headers
-        .get_all("x-forwarded-for")
+fn parse_x_forwarded_for(headers: &http::HeaderMap) -> Vec<Option<IpAddr>> {
+    list_values(headers, "x-forwarded-for")
         .iter()
-        .flat_map(|value| {
-            String::from_utf8_lossy(value.as_bytes())
-                .split(',')
-                .filter_map(parse_address)
-                .collect::<Vec<_>>()
-        })
+        .map(|entry| parse_address(entry))
         .collect()
 }
 
-/// The `for=` parameter of every RFC 7239 `Forwarded` element, left to right.
-fn parse_forwarded_for(headers: &http::HeaderMap) -> Vec<IpAddr> {
-    headers
-        .get_all("forwarded")
+/// Every RFC 7239 `Forwarded` element, left to right.
+fn parse_forwarded(headers: &http::HeaderMap) -> Vec<Element> {
+    list_values(headers, "forwarded")
         .iter()
-        .flat_map(|value| {
-            String::from_utf8_lossy(value.as_bytes())
-                .split(',')
-                .filter_map(|element| param(element, "for").and_then(parse_address))
-                .collect::<Vec<_>>()
+        .map(|element| Element {
+            for_: param(element, "for").and_then(parse_address),
+            proto: param(element, "proto").map(str::to_string),
+            host: param(element, "host").map(str::to_string),
         })
         .collect()
-}
-
-fn first_element(value: &http::HeaderValue) -> Option<String> {
-    let text = String::from_utf8_lossy(value.as_bytes());
-    text.split(',').next().map(str::to_string)
 }
 
 /// Pull one `;`-separated parameter out of a `Forwarded` element.
@@ -328,6 +496,72 @@ fn parse_address(raw: &str) -> Option<IpAddr> {
     host.parse::<std::net::Ipv4Addr>().ok().map(IpAddr::V4)
 }
 
+/// Validate and lowercase one `host[:port]` authority.
+///
+/// Strict on purpose: the result is sent to the origin, which builds URLs from
+/// it, and enters the cache key. A registered name of letters, digits, `-`,
+/// `_` and dots, an IPv4 address, or a bracketed IPv6 literal, optionally with
+/// a non-zero port. No userinfo, no path, no whitespace, no list.
+pub fn normalize_authority(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.len() > MAX_AUTHORITY || !raw.bytes().all(|b| b.is_ascii_graphic()) {
+        return None;
+    }
+    let (host, port) = if let Some(rest) = raw.strip_prefix('[') {
+        let (literal, after) = rest.split_once(']')?;
+        literal.parse::<Ipv6Addr>().ok()?;
+        let port = match after {
+            "" => None,
+            _ => Some(after.strip_prefix(':')?),
+        };
+        (&raw[..literal.len() + 2], port)
+    } else {
+        match raw.rsplit_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (raw, None),
+        }
+    };
+    if !host.starts_with('[') && !valid_reg_name(host) {
+        return None;
+    }
+    if let Some(port) = port
+        && (port.is_empty()
+            || port.len() > 5
+            || !port.bytes().all(|b| b.is_ascii_digit())
+            || !port.parse::<u16>().is_ok_and(|p| p != 0))
+    {
+        return None;
+    }
+    Some(raw.to_ascii_lowercase())
+}
+
+/// A DNS-shaped name or a dotted IPv4 address: dot-separated labels of 1–63
+/// letters, digits, `-` or `_`, with no empty label.
+fn valid_reg_name(host: &str) -> bool {
+    host.len() <= 253
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+}
+
+/// The port written in an authority already accepted by
+/// [`normalize_authority`], or a `Host` as received.
+fn explicit_port(authority: &str) -> Option<u16> {
+    let after_host = match authority.strip_prefix('[') {
+        Some(rest) => rest.split_once(']')?.1,
+        None => authority.rsplit_once(':').map_or("", |(_, port)| port),
+    };
+    after_host
+        .strip_prefix(':')
+        .unwrap_or(after_host)
+        .parse()
+        .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,12 +572,33 @@ mod tests {
     }
 
     fn policy(from: &[&str], client_ip: ForwardedSource, scheme: ForwardedSource) -> TrustPolicy {
+        with_host(from, client_ip, scheme, ForwardedSource::None)
+    }
+
+    fn with_host(
+        from: &[&str],
+        client_ip: ForwardedSource,
+        scheme: ForwardedSource,
+        host: ForwardedSource,
+    ) -> TrustPolicy {
         TrustPolicy::build(&TrustedProxies {
             from: from.iter().map(|s| (*s).to_string()).collect(),
             client_ip,
             scheme,
+            host,
         })
         .unwrap()
+    }
+
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (name, value) in pairs {
+            headers.append(
+                http::header::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                HeaderValue::from_str(value).unwrap(),
+            );
+        }
+        headers
     }
 
     fn xff(policy: &TrustPolicy, peer: &str, chain: &str) -> Option<IpAddr> {
@@ -521,7 +776,8 @@ mod tests {
         );
         let facts = policy.resolve(Some(ip("10.0.0.4")), &headers, ListenerScheme::Http);
         assert_eq!(facts.client_ip, Some(ip("203.0.113.7")));
-        // The leftmost element is the hop that knows what the client dialled.
+        // The element that names the chosen hop is the one written by the
+        // proxy that saw the client, so it knows what the client dialled.
         assert_eq!(facts.scheme, "https");
     }
 
@@ -575,10 +831,7 @@ mod tests {
             ForwardedSource::XForwarded,
         );
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-forwarded-proto",
-            HeaderValue::from_static(" HtTpS , http"),
-        );
+        headers.insert("x-forwarded-proto", HeaderValue::from_static(" HtTpS "));
         assert_eq!(
             policy
                 .resolve(Some(ip("10.0.0.4")), &headers, ListenerScheme::Http)
@@ -614,6 +867,284 @@ mod tests {
         assert!(!facts.peer_trusted);
         assert_eq!(facts.client_ip, None);
     }
+
+    // ------------------------------------------- hop-aligned scheme and host
+
+    /// A client prefixes its own claims to a chain the trusted proxy appends
+    /// to. The address walk already ignores the prefix; the scheme and host
+    /// must come from the same hop, not from the leftmost entry.
+    #[test]
+    fn a_spoofed_prefix_cannot_choose_the_scheme_or_host() {
+        let policy = with_host(
+            &["10.0.0.0/8"],
+            ForwardedSource::XForwarded,
+            ForwardedSource::XForwarded,
+            ForwardedSource::XForwarded,
+        );
+        let facts = policy.resolve(
+            Some(ip("10.0.0.4")),
+            &headers(&[
+                ("x-forwarded-for", "9.9.9.9, 203.0.113.7, 10.0.0.9"),
+                ("x-forwarded-proto", "http, https, http"),
+                (
+                    "x-forwarded-host",
+                    "evil.example, shop.example, internal.lb",
+                ),
+            ]),
+            ListenerScheme::Http,
+        );
+        assert_eq!(facts.client_ip, Some(ip("203.0.113.7")));
+        assert_eq!(facts.scheme, "https");
+        assert_eq!(facts.forwarded_host.as_deref(), Some("shop.example"));
+    }
+
+    #[test]
+    fn a_single_overwritten_value_is_used_whatever_the_chain_length() {
+        let policy = with_host(
+            &["10.0.0.0/8"],
+            ForwardedSource::XForwarded,
+            ForwardedSource::XForwarded,
+            ForwardedSource::XForwarded,
+        );
+        let facts = policy.resolve(
+            Some(ip("10.0.0.4")),
+            &headers(&[
+                ("x-forwarded-for", "203.0.113.7, 10.0.0.8, 10.0.0.9"),
+                ("x-forwarded-proto", "https"),
+                ("x-forwarded-host", "Shop.Example:8443"),
+            ]),
+            ListenerScheme::Http,
+        );
+        assert_eq!(facts.scheme, "https");
+        assert_eq!(facts.forwarded_host.as_deref(), Some("shop.example:8443"));
+    }
+
+    /// Lists that cannot be lined up with the address chain fall back to the
+    /// entry the connection peer appended, never the client's.
+    #[test]
+    fn an_unalignable_list_uses_the_peers_own_entry() {
+        let policy = with_host(
+            &["10.0.0.0/8"],
+            ForwardedSource::XForwarded,
+            ForwardedSource::XForwarded,
+            ForwardedSource::XForwarded,
+        );
+        let facts = policy.resolve(
+            Some(ip("10.0.0.4")),
+            &headers(&[
+                ("x-forwarded-for", "1.1.1.1, 2.2.2.2, 203.0.113.7"),
+                ("x-forwarded-proto", "https, http"),
+                ("x-forwarded-host", "evil.example, shop.example"),
+            ]),
+            ListenerScheme::Http,
+        );
+        assert_eq!(facts.scheme, "http");
+        assert_eq!(facts.forwarded_host.as_deref(), Some("shop.example"));
+
+        // Without an address list to align against, the same rule applies.
+        let scheme_only = policy_scheme_only();
+        let facts = scheme_only.resolve(
+            Some(ip("10.0.0.4")),
+            &headers(&[("x-forwarded-proto", "https, http")]),
+            ListenerScheme::Https,
+        );
+        assert_eq!(facts.scheme, "http");
+    }
+
+    fn policy_scheme_only() -> TrustPolicy {
+        policy(
+            &["10.0.0.0/8"],
+            ForwardedSource::None,
+            ForwardedSource::XForwarded,
+        )
+    }
+
+    /// Two trusted hops, each appending to every list: CDN then load balancer.
+    #[test]
+    fn multiple_trusted_proxies_resolve_to_the_edge_hop() {
+        let policy = with_host(
+            &["10.0.0.0/8", "198.51.100.0/24"],
+            ForwardedSource::XForwarded,
+            ForwardedSource::XForwarded,
+            ForwardedSource::XForwarded,
+        );
+        let facts = policy.resolve(
+            Some(ip("10.0.0.4")),
+            &headers(&[
+                ("x-forwarded-for", "203.0.113.7, 198.51.100.20"),
+                ("x-forwarded-proto", "https, http"),
+                ("x-forwarded-host", "shop.example, origin.internal"),
+            ]),
+            ListenerScheme::Http,
+        );
+        assert_eq!(facts.client_ip, Some(ip("203.0.113.7")));
+        assert_eq!(facts.scheme, "https", "TLS ended at the CDN, not here");
+        assert_eq!(facts.forwarded_host.as_deref(), Some("shop.example"));
+    }
+
+    #[test]
+    fn rfc_7239_takes_proto_and_host_from_the_chosen_element() {
+        let policy = with_host(
+            &["10.0.0.0/8"],
+            ForwardedSource::Forwarded,
+            ForwardedSource::Forwarded,
+            ForwardedSource::Forwarded,
+        );
+        let facts = policy.resolve(
+            Some(ip("10.0.0.4")),
+            &headers(&[(
+                "forwarded",
+                r#"for=9.9.9.9;proto=http;host=evil.example, for="[2001:db8::7]";proto=https;host=shop.example, for=10.0.0.9;proto=http;host=lb.internal"#,
+            )]),
+            ListenerScheme::Http,
+        );
+        assert_eq!(facts.client_ip, Some(ip("2001:db8::7")));
+        assert_eq!(facts.scheme, "https");
+        assert_eq!(facts.forwarded_host.as_deref(), Some("shop.example"));
+    }
+
+    #[test]
+    fn the_host_is_not_read_unless_configured() {
+        let policy = policy(
+            &["10.0.0.0/8"],
+            ForwardedSource::XForwarded,
+            ForwardedSource::XForwarded,
+        );
+        let facts = policy.resolve(
+            Some(ip("10.0.0.4")),
+            &headers(&[("x-forwarded-host", "shop.example")]),
+            ListenerScheme::Http,
+        );
+        assert_eq!(facts.forwarded_host, None);
+        // And the default configuration is that.
+        assert_eq!(TrustedProxies::default().host, ForwardedSource::None);
+    }
+
+    #[test]
+    fn an_untrusted_peer_cannot_set_the_host() {
+        let policy = with_host(
+            &["10.0.0.0/8"],
+            ForwardedSource::XForwarded,
+            ForwardedSource::XForwarded,
+            ForwardedSource::XForwarded,
+        );
+        let facts = policy.resolve(
+            Some(ip("203.0.113.7")),
+            &headers(&[("x-forwarded-host", "evil.example")]),
+            ListenerScheme::Http,
+        );
+        assert_eq!(facts.forwarded_host, None);
+    }
+
+    #[test]
+    fn malformed_hosts_are_ignored_not_forwarded() {
+        let policy = with_host(
+            &["10.0.0.0/8"],
+            ForwardedSource::None,
+            ForwardedSource::None,
+            ForwardedSource::XForwarded,
+        );
+        for claim in [
+            "",
+            "user@shop.example",
+            "shop.example/path",
+            "shop.example:0",
+            "shop.example:70000",
+            "shop.example:",
+            "shop..example",
+            ".shop.example",
+            "shop example",
+            "[not-v6]",
+            "[::1",
+            "shop.example:443:1",
+            "shöp.example",
+            "shop\texample",
+        ] {
+            let mut headers = HeaderMap::new();
+            if let Ok(value) = HeaderValue::from_str(claim) {
+                headers.insert("x-forwarded-host", value);
+            } else {
+                headers.insert(
+                    "x-forwarded-host",
+                    HeaderValue::from_bytes(claim.as_bytes()).unwrap(),
+                );
+            }
+            let facts = policy.resolve(Some(ip("10.0.0.4")), &headers, ListenerScheme::Http);
+            assert_eq!(facts.forwarded_host, None, "`{claim}` was believed");
+        }
+    }
+
+    #[test]
+    fn well_formed_authorities_normalise() {
+        for (raw, expected) in [
+            ("Shop.Example", "shop.example"),
+            ("shop.example:8443", "shop.example:8443"),
+            ("203.0.113.7:80", "203.0.113.7:80"),
+            ("[2001:DB8::1]:443", "[2001:db8::1]:443"),
+            ("[::1]", "[::1]"),
+            ("internal_svc.local", "internal_svc.local"),
+            (" localhost:3000 ", "localhost:3000"),
+        ] {
+            assert_eq!(normalize_authority(raw).as_deref(), Some(expected), "{raw}");
+        }
+    }
+
+    #[test]
+    fn the_public_port_is_explicit_or_the_schemes_default() {
+        let mut facts = ClientFacts {
+            client_ip: None,
+            scheme: "https",
+            peer_trusted: false,
+            forwarded_host: None,
+        };
+        assert_eq!(facts.public_port("shop.example"), 443);
+        assert_eq!(facts.public_port("shop.example:8443"), 8443);
+        assert_eq!(facts.public_port("[::1]:9000"), 9000);
+        assert_eq!(facts.public_port("[::1]"), 443);
+        facts.scheme = "http";
+        assert_eq!(facts.public_port("shop.example"), 80);
+        assert_eq!(
+            facts.public_authority("Shop.Example:8080").as_deref(),
+            Some("shop.example:8080")
+        );
+        assert_eq!(facts.public_authority(""), None);
+        facts.forwarded_host = Some("public.example".into());
+        assert_eq!(
+            facts.public_authority("internal:3000").as_deref(),
+            Some("public.example")
+        );
+    }
+
+    /// A default port in the stated authority would never match a browser's
+    /// `Origin`, which omits it.
+    #[test]
+    fn the_default_port_is_dropped_for_the_effective_scheme_only() {
+        let facts = |scheme: &'static str, host: Option<&str>| ClientFacts {
+            client_ip: None,
+            scheme,
+            peer_trusted: true,
+            forwarded_host: host.map(str::to_string),
+        };
+        let https = facts("https", Some("shop.example:443"));
+        assert_eq!(https.public_authority("x").as_deref(), Some("shop.example"));
+        assert_eq!(https.public_port("shop.example"), 443);
+        let http = facts("http", None);
+        assert_eq!(
+            http.public_authority("Shop.Example:80").as_deref(),
+            Some("shop.example")
+        );
+        assert_eq!(
+            http.public_authority("shop.example:443").as_deref(),
+            Some("shop.example:443"),
+            "443 is not http's default"
+        );
+        assert_eq!(
+            facts("https", Some("[2001:db8::1]:443"))
+                .public_authority("x")
+                .as_deref(),
+            Some("[2001:db8::1]")
+        );
+    }
 }
 
 /// Properties over inputs no proxy would ever write on purpose.
@@ -633,6 +1164,7 @@ mod proptests {
             from: from.iter().map(|s| (*s).to_string()).collect(),
             client_ip: ForwardedSource::XForwarded,
             scheme: ForwardedSource::XForwarded,
+            host: ForwardedSource::XForwarded,
         })
         .unwrap()
     }
@@ -673,10 +1205,41 @@ mod proptests {
             if let Ok(value) = HeaderValue::from_str(&proto) {
                 headers.insert("x-forwarded-proto", value);
             }
+            if let Ok(value) = HeaderValue::from_str(&chain) {
+                headers.insert("x-forwarded-host", value);
+            }
             let peer: IpAddr = "203.0.113.7".parse().unwrap();
             let facts = policy.resolve(Some(peer), &headers, ListenerScheme::Https);
             prop_assert_eq!(facts.client_ip, Some(peer));
             prop_assert_eq!(facts.scheme, "https");
+            prop_assert_eq!(facts.forwarded_host, None);
+        }
+
+        /// Whatever a trusted peer claims, a believed host is a bare
+        /// authority: no separators that could smuggle a path, list or
+        /// userinfo into a URL the origin builds, and no upper case to split
+        /// the cache key.
+        #[test]
+        fn a_believed_host_is_always_a_plain_authority(
+            claim in prop::string::string_regex("[ -~]{0,60}").unwrap(),
+        ) {
+            let policy = policy(&["10.0.0.0/8"]);
+            let mut headers = HeaderMap::new();
+            if let Ok(value) = HeaderValue::from_str(&claim) {
+                headers.insert("x-forwarded-host", value);
+            }
+            let facts = policy.resolve(
+                Some("10.0.0.4".parse().unwrap()),
+                &headers,
+                ListenerScheme::Http,
+            );
+            if let Some(host) = facts.forwarded_host {
+                prop_assert!(!host.is_empty());
+                prop_assert!(host.bytes().all(|b| b.is_ascii_lowercase()
+                    || b.is_ascii_digit()
+                    || matches!(b, b'.' | b'-' | b'_' | b':' | b'[' | b']')));
+                prop_assert_eq!(normalize_authority(&host), Some(host.clone()));
+            }
         }
 
         /// Parsing must be total. A panic here is a denial of service that
@@ -690,6 +1253,7 @@ mod proptests {
                 from: vec!["10.0.0.0/8".into()],
                 client_ip: ForwardedSource::Forwarded,
                 scheme: ForwardedSource::Forwarded,
+                host: ForwardedSource::Forwarded,
             })
             .unwrap();
             let mut headers = HeaderMap::new();

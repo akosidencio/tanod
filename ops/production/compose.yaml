@@ -1,0 +1,41 @@
+name: tanod-production
+services:
+  app:
+    # Set this to an immutable image of your standalone Next.js application.
+    image: ${SSR_IMAGE:?set SSR_IMAGE to your application image digest}
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    expose: ["3000"]
+    restart: unless-stopped
+    stop_grace_period: 60s
+    networks: [origin]
+  tanod:
+    image: ${TANOD_IMAGE:?set TANOD_IMAGE to the reviewed image digest}
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    cpus: 1
+    mem_limit: 256m
+    ulimits:
+      nofile: {soft: 8192, hard: 8192}
+    tmpfs:
+      - /run/tanod:uid=10001,gid=10001,mode=0750,size=1m
+      - /tmp:uid=10001,gid=10001,mode=1777,size=8m
+    environment:
+      TANOD_PURGE_TOKEN: ${TANOD_PURGE_TOKEN:?set a random purge credential}
+      RUST_LOG: info
+    volumes:
+      - ./compose-tanod.yaml:/etc/tanod/tanod.yaml:ro
+    ports:
+      - "127.0.0.1:${TANOD_HTTP_PORT:-8080}:8080"
+      - "127.0.0.1:${TANOD_ADMIN_PORT:-9091}:9091"
+      - "127.0.0.1:${TANOD_METRICS_PORT:-9090}:9090"
+    stop_grace_period: 50s
+    restart: unless-stopped
+    depends_on: [app]
+    networks: [origin]
+networks:
+  origin: {}

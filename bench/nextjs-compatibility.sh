@@ -22,7 +22,7 @@ printf '{"next":"%s","node":"%s"}\n' "$TANOD_NEXT_VERSION" "$TANOD_NEXT_NODE" > 
 printf '{"passed":false,"next":"%s","node":"%s"}\n' \
   "$TANOD_NEXT_VERSION" "$TANOD_NEXT_NODE" > "$REPORT_DIR/result.json"
 
-for suite in nextjs nextjs-browser nextjs-reference nextjs-replicas; do
+for suite in nextjs nextjs-forwarded nextjs-browser nextjs-reference nextjs-replicas; do
   echo "Checking Next $TANOD_NEXT_VERSION / Node $TANOD_NEXT_NODE: $suite"
   bash "bench/$suite.sh" 2>&1 | tee "$REPORT_DIR/$suite.log"
 done

@@ -1,6 +1,10 @@
 # Cache keys and response shareability: a review brief
 
 **Status: prepared for an independent review that has not yet happened.**
+The v0.4.0 maintainer-side investigation of C7, C10, C11 and
+`coalesce.override_origin`, the three vulnerabilities it found and fixed, and
+the sign-off record are in
+[reviews/CACHE-SECURITY-REVIEW-v0.4.0.md](reviews/CACHE-SECURITY-REVIEW-v0.4.0.md).
 
 This document exists because "obtain an independent review of cache keys and
 response shareability" is a roadmap item the author cannot complete alone. What
@@ -25,11 +29,13 @@ another:
 * **`src/cache/policy.rs`** — deciding that a response may be handed to a
   request other than the one that produced it.
 
-Everything else in the codebase can be wrong without a confidentiality
-consequence. These two cannot. They are therefore written as pure functions
-with no proxy runtime attached, which is also what makes them reviewable in
-isolation: you need no Pingora knowledge and no running server to reason about
-either.
+These functions are reviewable in isolation, but runtime lifecycle and reload
+also enforce confidentiality: an otherwise correct key and sharing decision
+cannot protect a request if the stored response was authorized by an obsolete
+policy. Review `PolicySnapshot::cache_compatible`, `Reloader::reload`, and
+`BoundedStore` alongside the pure functions. The operations guide documents
+[reload compatibility](./OPERATIONS.md#cache-policy-across-reloads) and purge
+attachment semantics.
 
 Total surface under review: roughly 400 lines of logic across two files, plus
 the classifier that feeds them (`src/classifier/`, ~350 lines).
@@ -100,6 +106,22 @@ said otherwise, and is normalised to one of two values for everyone.
 `bench/forwarded.sh` (seven invented scheme values against one URL must produce
 one origin render).
 
+**C4a — Every URL-shaping header the origin receives is a function of the
+key.**
+`X-Forwarded-Proto`, `-Host` and `-Port` are restated from the scheme, the
+authority and, only when `trusted_proxies.host` is enabled and the peer is
+trusted, a validated forwarded host, which then enters the key as the
+`~forwarded-host` variant. URL-shaping aliases Tanod does not interpret
+(`X-Forwarded-Prefix`, `X-Original-URL`, ...) are removed.
+*Where:* `proxy::apply_forwarding`, `net/forwarded.rs`, `cache::key::KeyBuilder`.
+*Already asserted by:* unit tests, a proptest and the `forwarded` fuzz target
+(a believed host is always a normalised authority), `bench/forwarded.sh`
+(`/reflect`: a forged host cannot reach a shared body), and
+`bench/nextjs-forwarded.sh` against a real Next.js server.
+*Known history:* before Phase 2 an untrusted client's `X-Forwarded-Host` passed
+through to the origin unkeyed, and a cacheable page built from it was stored
+and served to the next visitor.
+
 **C5 — The authority always reaches the key, over either protocol version.**
 *Where:* `proxy::request_host`.
 *Known history:* it did not, over HTTP/2. There is no `Host` header in h2; the
@@ -118,8 +140,28 @@ sorted so ordering does not double entries.
 *Caveat worth attacking:* the default is to include everything, so a route with
 no query policy has an unbounded key space by design. Is defaulting that way
 defensible, given the component's purpose is to reduce origin work?
+*0.4.0 review:* measured bounded by the cache budget and the origin ceiling
+(`bench/query-cardinality.py`). Policies now match names as the origin decodes
+them. Matching raw names was a cache-poisoning path (`?%71=evil` past
+`include: [q]`).
 
 ### Shareability
+
+**Reload and purge lifecycle (Phase 1 hardening).** Compatibility uses exact
+typed policy comparisons, not the configuration fingerprint. Incompatible
+reloads allocate a new process-local namespace, retire admission and reclaim
+completed entries before publishing the new snapshot. Old pinned requests may
+stream, but late completion cannot persist or leave a transient handoff in a
+retired namespace. Ordinary operational reloads preserve the namespace.
+
+Purge closes new subscriptions atomically with the eligibility check. Existing
+readers continue draining. Pingora's leader attachment is reserved at miss
+registration and transferred by its private write tag; this transfer must
+survive purge between registration and retrieval because Pingora 0.9 panics
+on a missing leader reader. Further tagged lookups cannot attach after purge.
+The coordinated tests in `store_phase1_tests.rs` and `reload_phase1_tests.rs`
+exercise these transitions with CLOCK and TinyUFO. Independent review of the
+compatibility projection and the reserved-leader capability remains useful.
 
 **C8 — `Set-Cookie` is an unconditional refusal.**
 No route configuration, no override, no class reaches past it.
@@ -141,6 +183,10 @@ because a Next.js dynamic route answers `max-age=0` and the minimum would pin
 the result to zero — silently disabling the override the operator asked for.
 *Worth attacking:* this is the single most dangerous configuration option in
 the project. Is the fence sufficient?
+*0.4.0 review:* the override also lifts the cookie bypass; the class is the
+operator's statement that the route is not personalised. `coalesce.override_origin`
+now has the same explicit-class fence and never stores. Before 0.4.0 it could
+store `private, max-age=N` with the route's cache enabled.
 
 **C11 — A response that cannot be stored is never quietly shared instead.**
 The three outcomes are `Shareable`, `TransientOnly` (collapsed within one
@@ -151,6 +197,14 @@ promoted and is dropped after a short handoff window.
 releases the cache lock when the miss handler is created, so removing the
 entry immediately races the woken followers. Is a time-based window the right
 shape, and is 25ms defensible?
+*0.4.0 review:* bounded from completion, not extended by attachment, closed by
+purge and retirement; pinned by `store_phase42_tests.rs`.
+
+**C12 — Every routing, class and key decision is made on a path the origin
+resolves the same way.** Targets with `.`/`..` segments (raw or `%2e`) are
+refused in protect mode. *Known history:* before 0.4.0, `/products/x/../../account`
+was cached under a public route and `/_next/static/../../account` took no
+origin permit.
 
 ---
 

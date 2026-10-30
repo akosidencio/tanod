@@ -15,6 +15,10 @@
 //! response_body_filter  spool the body, so the origin is never paced by the
 //!                       client and the permit can go back when the origin is
 //!                       genuinely finished
+//! upstream_after_downstream_error
+//!                       a client that leaves does not end the origin's work,
+//!                       so an admitted response is read to its end and its
+//!                       permit held until then; see [`Drain`]
 //! ```
 //!
 //! Putting admission earlier would make cache hits and coalesced followers
@@ -69,12 +73,20 @@ pub struct Ctx {
     /// honest depends on the spool: with one, the origin was never paced by
     /// the client, so end of stream *is* the moment the origin finished.
     /// Without one, Pingora pairs upstream reads with downstream writes and a
-    /// slow reader delays the observation — bounded only by
-    /// `timeouts.downstream_write`. See [`spool`].
+    /// slow reader delays the observation — bounded by
+    /// `timeouts.downstream_write`, after which the reader is cut off and the
+    /// rest of the response is drained at the origin's pace. See [`spool`].
+    ///
+    /// A client disconnect does not release it: see [`Drain`].
     pub permit: Option<Permit>,
     /// Capacity for an upgraded connection, counted separately from renders
     /// because it is held for the life of a tunnel rather than a render.
     pub upgrade_permit: Option<Permit>,
+    /// The route limiter this request was admitted through, kept so the exit
+    /// path republishes the limiter that actually holds its units. Looking the
+    /// route up again by id would find a different limiter, or none, after a
+    /// reload retired it.
+    pub route_limiter: Option<Arc<Limiter>>,
     pub shed: bool,
     pub upstream: Option<String>,
     pub origin_started: Option<Instant>,
@@ -132,6 +144,9 @@ pub struct Ctx {
     pub spool: Option<Spool>,
     /// Recorded before the spool is dropped, for the access log.
     pub spool_outcome: Option<SpoolOutcome>,
+    /// Present once the client has gone and the origin response is being read
+    /// to its end anyway.
+    pub drain: Option<Drain>,
 
     /// Correlation for this request: trace id, this request's span, and the
     /// child span the origin fetch runs under. Present on every request
@@ -156,6 +171,7 @@ impl Ctx {
             route_id: None,
             permit: None,
             upgrade_permit: None,
+            route_limiter: None,
             shed: false,
             upstream: None,
             origin_started: None,
@@ -173,6 +189,7 @@ impl Ctx {
                 client_ip: None,
                 scheme: "http",
                 peer_trusted: false,
+                forwarded_host: None,
             },
             route_cache: None,
             key_headers: Vec::new(),
@@ -184,6 +201,7 @@ impl Ctx {
             spool_enabled: false,
             spool: None,
             spool_outcome: None,
+            drain: None,
             // Replaced in `early_request_filter` once the peer's trust status
             // is known. Built here rather than left as an `Option` so that
             // every path out of the proxy — including the ones that never
@@ -195,6 +213,84 @@ impl Ctx {
     }
 }
 
+/// An admitted origin exchange whose client has gone.
+///
+/// Pingora would otherwise abandon the upstream response at the client's
+/// error: the connection closes, `logging` drops the permit, and a queued
+/// request is admitted while the origin is still rendering the abandoned one.
+/// Closing a socket does not stop the work on the other end of it — an SSR
+/// server notices at its next write, if it checks at all — so that permit
+/// stopped bounding the origin's concurrency at exactly the moment a burst of
+/// disconnects made it matter.
+///
+/// Instead the response is read to its end and discarded, holding the permit,
+/// until the earlier of the origin finishing and the drain deadline. What that
+/// buys, and what it cannot:
+///
+/// * The permit now covers the whole upstream exchange, client or no client.
+///   Work that ends when its response ends — the ordinary SSR shape — is
+///   bounded by the ceiling.
+/// * An origin that keeps working after its own response ended, or after
+///   Tanod gives up at the deadline, is beyond what a proxy can observe. The
+///   deadline outcome is counted rather than presented as a recovery.
+///
+/// Created only for a request holding a permit, so exempt classes are
+/// unaffected. Counted in `tanod_origin_disconnect_drains_active` for exactly
+/// as long as it exists.
+pub struct Drain {
+    deadline: Instant,
+}
+
+impl Drain {
+    fn begin(deadline: Instant) -> Self {
+        metrics::ORIGIN_DRAINING.inc();
+        Drain { deadline }
+    }
+
+    /// How the drain ended, decided once on the way out.
+    ///
+    /// A read timeout is Tanod giving up on a silent origin, not the origin
+    /// finishing, so it is reported with the deadline: in both cases the
+    /// permit goes back without confirmation that the work stopped.
+    fn outcome(&self, origin_finished: bool, timed_out: bool, now: Instant) -> &'static str {
+        if origin_finished {
+            "completed"
+        } else if timed_out || now >= self.deadline {
+            "deadline"
+        } else {
+            "upstream_error"
+        }
+    }
+}
+
+impl Drop for Drain {
+    fn drop(&mut self) {
+        metrics::ORIGIN_DRAINING.dec();
+    }
+}
+
+/// How long an abandoned client's origin exchange may still hold its permit.
+///
+/// `timeouts.origin` already bounds one origin request end to end, so a drain
+/// ends there, never later than the request would have with its client
+/// connected. With that timeout disabled, `timeouts.downstream_write` — the
+/// bound a stalled client already had on holding a permit — applies from the
+/// disconnect. With both disabled there is no bound to honour, and the
+/// exchange is abandoned as before rather than held indefinitely.
+fn drain_deadline(
+    timeouts: &Timeouts,
+    origin_started: Option<Instant>,
+    now: Instant,
+) -> Option<Instant> {
+    let origin = timeouts.origin.as_duration();
+    let deadline = if origin.is_zero() {
+        now.checked_add(nonzero(timeouts.downstream_write.as_duration())?)?
+    } else {
+        origin_started?.checked_add(origin)?
+    };
+    (deadline > now).then_some(deadline)
+}
+
 pub struct Tanod {
     policy: Arc<ArcSwap<PolicySnapshot>>,
     admission: Arc<AdmissionController>,
@@ -204,6 +300,10 @@ pub struct Tanod {
     /// Built once at startup. Pingora's lock constructor controls how long a
     /// writer may own a key; follower wait time is configured per request.
     cache_lock: &'static pingora_cache::lock::CacheKeyLockImpl,
+    /// Remembers URLs whose streamed response outgrew `cache.max_body_size`,
+    /// so only the first such response is aborted; see
+    /// [`crate::cache::OversizePredictor`]. Leaked once, like the store.
+    oversize: &'static crate::cache::OversizePredictor,
     /// Who may describe the client. Compiled once; a reload that changes it is
     /// refused for the same reason a listen-address change is, because a
     /// request already in flight would otherwise straddle two trust models.
@@ -234,6 +334,9 @@ impl Tanod {
         // `Storage` takes `&'static self` throughout, so the store and the
         // lock are created once and leaked deliberately at startup.
         let store = BoundedStore::new(&initial.config.cache);
+        store.activate_namespace(initial.cache_namespace);
+        let oversize: &'static crate::cache::OversizePredictor =
+            Box::leak(Box::new(crate::cache::OversizePredictor::new()));
         let cache_lock: &'static pingora_cache::lock::CacheKeyLockImpl = Box::leak(
             pingora_cache::lock::CacheLock::new_boxed(initial.config.timeouts.origin.as_duration()),
         );
@@ -258,6 +361,7 @@ impl Tanod {
         Ok(Tanod {
             store,
             cache_lock,
+            oversize,
             adapter: Arc::new(NextJs),
             upstreams,
             admission,
@@ -438,7 +542,7 @@ impl Tanod {
             .set(tier.queue_depth() as i64);
         metrics::IN_FLIGHT
             .with_label_values(&[tier.name()])
-            .set((tier.limit().saturating_sub(tier.available())) as i64);
+            .set(gauge(tier.in_flight()));
     }
 
     /// Publish only the backend whose state this request touched.
@@ -493,15 +597,13 @@ impl Tanod {
     }
 
     /// Route limiter for this request, created on first use.
+    /// The registered limiter for this request's route, if its policy gives
+    /// the route a ceiling. Never creates one: see
+    /// [`AdmissionController::registered_route`].
     fn limiter_for(&self, policy: &PolicySnapshot, route_id: &str) -> Option<Arc<Limiter>> {
         let route = policy.routes.iter().find(|r| r.id == route_id)?;
-        let c = route.config.concurrency.as_ref()?;
-        Some(self.admission.route_limiter(
-            route_id,
-            c.max,
-            c.queue.max,
-            c.queue.timeout.as_duration(),
-        ))
+        route.config.concurrency.as_ref()?;
+        self.admission.registered_route(route_id)
     }
 
     /// Answer an upgrade request that Tanod will not proxy.
@@ -518,6 +620,22 @@ impl Tanod {
             resp.insert_header("X-Tanod", "UPGRADE-DISABLED")?;
         }
         session.as_downstream_mut().set_keepalive(None);
+        session.write_response_header(Box::new(resp), true).await?;
+        Ok(())
+    }
+
+    /// See [`crate::classifier::has_dot_segment`].
+    async fn refuse_dot_segment(
+        &self,
+        session: &mut Session,
+        policy: &PolicySnapshot,
+    ) -> Result<()> {
+        let mut resp = ResponseHeader::build(400, Some(3))?;
+        resp.insert_header("Cache-Control", "no-store")?;
+        resp.insert_header("Content-Length", "0")?;
+        if policy.config.debug_headers {
+            resp.insert_header("X-Tanod", "DOT-SEGMENT")?;
+        }
         session.write_response_header(Box::new(resp), true).await?;
         Ok(())
     }
@@ -630,6 +748,17 @@ impl ProxyHttp for Tanod {
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Ctx) -> Result<bool> {
+        // Before routing, classification and keying, all of which read the
+        // path as it arrived while the origin resolves it. Observe mode
+        // neither shares nor limits, so it keeps passing everything through.
+        if ctx.policy.config.mode == Mode::Protect
+            && crate::classifier::has_dot_segment(session.req_header().uri.path())
+        {
+            ctx.local_response = true;
+            let policy = ctx.policy.clone();
+            self.refuse_dot_segment(session, &policy).await?;
+            return Ok(true);
+        }
         let req = session.req_header();
         let host = request_host(req);
         let path = req.uri.path().to_string();
@@ -761,13 +890,15 @@ impl ProxyHttp for Tanod {
         session.cache.enable(
             self.store,
             None,
-            None,
+            Some(self.oversize),
             ctx.may_coalesce.then_some(self.cache_lock),
             lock_options,
         );
-        // Upstream tracks body bytes and marks the response uncacheable past
-        // this limit, so an oversized body streams to the client without
-        // being retained.
+        // Pingora checks this limit against `Content-Length` before caching,
+        // so such a body streams through unretained. A chunked body is only
+        // found to be too large mid-stream, after the client is being served
+        // from the cache, and that response is aborted; the predictor above
+        // makes later requests for the URL bypass the cache instead.
         session
             .cache
             .set_max_file_size_bytes(ctx.policy.config.cache.max_body_size.as_usize());
@@ -777,14 +908,15 @@ impl ProxyHttp for Tanod {
     fn cache_key_callback(&self, session: &Session, ctx: &mut Ctx) -> Result<PingoraCacheKey> {
         let req = session.req_header();
         let host = request_host(req);
-        let path = req.uri.path().to_string();
-        let query = req.uri.query().map(str::to_string);
+        // Borrowed: unlike `request_filter`, nothing here needs the session
+        // mutably while the key is built.
+        let path = req.uri.path();
 
         let meta = RequestMetadata {
             method: &req.method,
             host: &host,
-            path: &path,
-            query: query.as_deref(),
+            path,
+            query: req.uri.query(),
             headers: &req.headers,
         };
 
@@ -795,6 +927,10 @@ impl ProxyHttp for Tanod {
             // HSTS), and merging them is how a plaintext response reaches a
             // client that asked for TLS.
             scheme: ctx.client.scheme,
+            // Only ever set from a trusted proxy with `trusted_proxies.host`
+            // enabled. The origin builds URLs from it, so responses for two
+            // public hosts behind one internal `Host` are different entries.
+            forwarded_host: ctx.client.forwarded_host.as_deref(),
             query_policy: ctx.route_cache.as_ref().and_then(|c| c.query.as_ref()),
             variant_headers: &ctx.key_headers,
             deployment: ctx.policy.config.deployment.id.as_deref(),
@@ -809,10 +945,10 @@ impl ProxyHttp for Tanod {
         // and doing it in the one field that cannot change the key means it
         // cannot change what is shared with whom. `cache::key` remains the
         // sole authority on that, which the test below pins.
-        Ok(PingoraCacheKey::new(
-            key.canonical_string(),
-            purgeable_path(&path),
-        ))
+        Ok(
+            crate::cache::key::CacheNamespace(ctx.policy.cache_namespace)
+                .key_for(&key, purgeable_path(path)),
+        )
     }
 
     /// Admission. Reached only on a genuine cache miss, so hits and coalesced
@@ -842,13 +978,7 @@ impl ProxyHttp for Tanod {
                     metrics::UPGRADES
                         .with_label_values(&[&route_label, "admitted"])
                         .inc();
-                    metrics::UPGRADES_ACTIVE.set(
-                        (self
-                            .upgrades
-                            .limit()
-                            .saturating_sub(self.upgrades.available()))
-                            as i64,
-                    );
+                    metrics::UPGRADES_ACTIVE.set(gauge(self.upgrades.in_flight()));
                     return Ok(true);
                 }
                 Err(reason) => {
@@ -874,6 +1004,7 @@ impl ProxyHttp for Tanod {
             .route_id
             .as_deref()
             .and_then(|id| self.limiter_for(&ctx.policy, id));
+        ctx.route_limiter = route_limiter.clone();
         let waiting = Instant::now();
         let outcome = self
             .admission
@@ -893,7 +1024,7 @@ impl ProxyHttp for Tanod {
             .set(global.queue_depth() as i64);
         metrics::IN_FLIGHT
             .with_label_values(&["global"])
-            .set((global.limit().saturating_sub(global.available())) as i64);
+            .set(gauge(global.in_flight()));
         if let Some(l) = &route_limiter {
             metrics::LIMIT
                 .with_label_values(&[l.name()])
@@ -903,7 +1034,7 @@ impl ProxyHttp for Tanod {
                 .set(l.queue_depth() as i64);
             metrics::IN_FLIGHT
                 .with_label_values(&[l.name()])
-                .set((l.limit().saturating_sub(l.available())) as i64);
+                .set(gauge(l.in_flight()));
         }
         self.publish_tier_state(ctx.priority);
 
@@ -991,13 +1122,26 @@ impl ProxyHttp for Tanod {
             vary: vary.as_deref(),
         };
 
-        match evaluate_response(
+        let shareability = evaluate_response(
             &meta,
             ctx.route_cache.as_ref(),
             &ctx.key_headers,
             ctx.transient_only,
             ctx.coalesce_override,
-        ) {
+        );
+        // A full cache must not fail the response. Declining here lets Pingora
+        // stream it straight through, uncached, with nothing half-registered;
+        // a fill that passes and then loses the race is still refused safely
+        // by the store. See `crate::cache::store` on memory exhaustion.
+        if !matches!(shareability, Shareability::NotShareable(_))
+            && !self.store.accepting_fills(fill_estimate(resp))
+        {
+            self.store.note_uncached_fallback();
+            return Ok(RespCacheable::Uncacheable(NoCacheReason::Custom(
+                "memory_exhausted",
+            )));
+        }
+        match shareability {
             Shareability::Shareable { ttl, swr, sie } => {
                 let now = std::time::SystemTime::now();
                 let fresh_until = now.checked_add(ttl).ok_or_else(|| {
@@ -1150,6 +1294,12 @@ impl ProxyHttp for Tanod {
         // `retry()`, which panics on an error whose retry is still undecided.
         e.retry
             .decide_reuse(client_reused && !session.as_ref().retry_buffer_truncated());
+        // Nobody is waiting for a retried answer, and a retry would start a
+        // second render on the strength of the first one's permit.
+        if ctx.drain.is_some() {
+            e.set_retry(false);
+            return e;
+        }
         // From here Tanod only ever narrows. A `false` is never turned into
         // a `true`.
         if e.retry() && !self.decide_retry(session, ctx).allowed() {
@@ -1158,35 +1308,33 @@ impl ProxyHttp for Tanod {
         e
     }
 
+    /// The client went away during an admitted request. See [`Drain`].
+    fn upstream_after_downstream_error(
+        &self,
+        _session: &Session,
+        ctx: &mut Ctx,
+    ) -> Option<std::time::Instant> {
+        ctx.permit.as_ref()?;
+        let deadline = drain_deadline(
+            &ctx.policy.config.timeouts,
+            ctx.origin_started,
+            Instant::now(),
+        )?;
+        // Nothing buffered will ever be delivered; give the bytes back now
+        // rather than when the drain ends.
+        ctx.spool = None;
+        metrics::SPOOL_BYTES.set(self.spool_budget.used() as i64);
+        ctx.drain = Some(Drain::begin(deadline));
+        Some(deadline)
+    }
+
     async fn upstream_request_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         upstream: &mut RequestHeader,
         ctx: &mut Ctx,
     ) -> Result<()> {
-        // `insert_header`, never `append_header`.
-        //
-        // Appending kept whatever the client sent and added the peer to the
-        // end of it, so an origin reading the *first* entry — which is where
-        // every framework's `getClientIp` looks — read a value the client
-        // chose. Since the origin's own rate limits and audit logs are
-        // downstream of this, that is a forged identity with real effects.
-        //
-        // What Tanod sends is the one address it concluded, and the
-        // conclusion already accounts for the hop chain: see
-        // [`crate::net::forwarded`].
-        match ctx.client.client_ip {
-            Some(address) => {
-                upstream.insert_header("X-Forwarded-For", address.to_string())?;
-            }
-            // No address to state. Removing the header is not optional: a
-            // stale client-supplied value left in place is exactly the forgery
-            // this is here to prevent.
-            None => {
-                upstream.remove_header("X-Forwarded-For");
-            }
-        }
-        upstream.insert_header("X-Forwarded-Proto", ctx.client.scheme)?;
+        apply_forwarding(upstream, &ctx.client, &request_host(session.req_header()))?;
 
         // Propagate the context Tanod concluded, never the one that
         // arrived. `insert_header` for the same reason as `X-Forwarded-For`:
@@ -1204,9 +1352,6 @@ impl ProxyHttp for Tanod {
                 upstream.remove_header(TRACESTATE);
             }
         }
-        // Same reasoning. Tanod does not emit RFC 7239 `Forwarded` itself,
-        // so anything arriving under that name is a claim nobody vouched for.
-        upstream.remove_header("Forwarded");
         Ok(())
     }
 
@@ -1269,6 +1414,7 @@ impl ProxyHttp for Tanod {
                 // never that the origin has finished producing it. See
                 // `bench/slowclient.sh`.
                 ctx.permit_released_at = Some(match &ctx.spool {
+                    _ if ctx.drain.is_some() => "drain_end",
                     Some(spool) if spool.is_active() => "origin_end",
                     _ => "body_end",
                 });
@@ -1339,7 +1485,23 @@ impl ProxyHttp for Tanod {
         Ok(())
     }
 
-    async fn logging(&self, session: &mut Session, _e: Option<&Error>, ctx: &mut Ctx) {
+    async fn logging(&self, session: &mut Session, e: Option<&Error>, ctx: &mut Ctx) {
+        // Decided before anything below releases the permit, so that the
+        // access log names what the permit's release meant.
+        if let Some(drain) = ctx.drain.take() {
+            let timed_out = e.is_some_and(|e| {
+                matches!(e.etype, ErrorType::ReadTimedout | ErrorType::WriteTimedout)
+            });
+            let outcome =
+                drain.outcome(ctx.origin_finished_ms.is_some(), timed_out, Instant::now());
+            metrics::ORIGIN_DRAINS.with_label_values(&[outcome]).inc();
+            if ctx.permit.is_some() {
+                ctx.permit_released_at = Some(match outcome {
+                    "deadline" => "drain_deadline",
+                    _ => "drain_error",
+                });
+            }
+        }
         let status = session
             .response_written()
             .map(|r| r.status.as_u16())
@@ -1430,8 +1592,9 @@ impl ProxyHttp for Tanod {
         }
 
         // Normally already released at upstream end-of-stream; this covers
-        // the paths that never got there (shed, cache hit, upstream error,
-        // and a client that disconnected mid-body). Then republish the gauges:
+        // the paths that never got there (shed, cache hit, upstream error, a
+        // drain that hit its deadline, and a client that disconnected while
+        // no permit was held). Then republish the gauges:
         // updating them only on the way in leaves `in_flight` reading stale
         // while the proxy is idle, which is the moment an operator is most
         // likely to be looking at it.
@@ -1448,28 +1611,26 @@ impl ProxyHttp for Tanod {
         metrics::CACHE_ENTRIES.set(self.store.entries() as i64);
         metrics::CACHE_TAGS.set(self.store.tags() as i64);
         if ctx.upgrade_permit.take().is_some() {
-            metrics::UPGRADES_ACTIVE.set(
-                (self
-                    .upgrades
-                    .limit()
-                    .saturating_sub(self.upgrades.available())) as i64,
-            );
+            metrics::UPGRADES_ACTIVE.set(gauge(self.upgrades.in_flight()));
         }
         let global = self.admission.global();
         metrics::IN_FLIGHT
             .with_label_values(&["global"])
-            .set((global.limit().saturating_sub(global.available())) as i64);
+            .set(gauge(global.in_flight()));
         metrics::QUEUE_DEPTH
             .with_label_values(&["global"])
             .set(global.queue_depth() as i64);
+        // The limiter this request was admitted through, not a fresh lookup by
+        // id. A retired limiter stays silent: the reload withdrew its series,
+        // and the id may already belong to a newer limiter.
         if let Some(l) = ctx
-            .route_id
-            .as_deref()
-            .and_then(|id| self.limiter_for(&ctx.policy, id))
+            .route_limiter
+            .take()
+            .filter(|l| self.admission.is_registered(l))
         {
             metrics::IN_FLIGHT
                 .with_label_values(&[l.name()])
-                .set((l.limit().saturating_sub(l.available())) as i64);
+                .set(gauge(l.in_flight()));
             metrics::QUEUE_DEPTH
                 .with_label_values(&[l.name()])
                 .set(l.queue_depth() as i64);
@@ -1480,6 +1641,90 @@ impl ProxyHttp for Tanod {
         // guard before publishing, so the gauge is the post-release value.
         self.release_origin_slot(ctx);
     }
+}
+
+/// Restate the forwarding metadata the origin receives.
+///
+/// The contract, for every request whatever the peer sent:
+///
+/// * `X-Forwarded-For` and `X-Real-IP`: the one client address Tanod
+///   concluded, or absent.
+/// * `X-Forwarded-Proto`: the effective scheme, `http` or `https`.
+/// * `X-Forwarded-Host`: the believed forwarded host, else the request's own
+///   authority; absent if neither is a well-formed authority.
+/// * `X-Forwarded-Port`: that authority's port, else the scheme's default.
+/// * Removed: [`forwarded::STRIPPED_UPSTREAM`] always, and
+///   [`forwarded::TRUSTED_PEER_ONLY`] unless the peer is trusted.
+///
+/// Scheme, host and port are each a function of the cache key, so an origin
+/// that builds absolute URLs or redirects from them cannot make one shared
+/// entry depend on an unkeyed header.
+///
+/// `insert_header`, never `append_header`. Appending kept whatever the client
+/// sent and added the peer to the end of it, so an origin reading the *first*
+/// entry — which is where every framework's `getClientIp` looks — read a value
+/// the client chose. Since the origin's own rate limits and audit logs are
+/// downstream of this, that is a forged identity with real effects.
+///
+/// [`forwarded::STRIPPED_UPSTREAM`]: crate::net::forwarded::STRIPPED_UPSTREAM
+/// [`forwarded::TRUSTED_PEER_ONLY`]: crate::net::forwarded::TRUSTED_PEER_ONLY
+fn apply_forwarding(
+    upstream: &mut RequestHeader,
+    client: &ClientFacts,
+    request_authority: &str,
+) -> Result<()> {
+    use crate::net::forwarded::{STRIPPED_UPSTREAM, TRUSTED_PEER_ONLY};
+    match client.client_ip {
+        Some(address) => {
+            let address = address.to_string();
+            upstream.insert_header("X-Forwarded-For", &address)?;
+            upstream.insert_header("X-Real-IP", address)?;
+        }
+        // No address to state. Removing the headers is not optional: a stale
+        // client-supplied value left in place is exactly the forgery this is
+        // here to prevent.
+        None => {
+            upstream.remove_header("X-Forwarded-For");
+            upstream.remove_header("X-Real-IP");
+        }
+    }
+    upstream.insert_header("X-Forwarded-Proto", client.scheme)?;
+    match client.public_authority(request_authority) {
+        Some(authority) => {
+            let port = client.public_port(&authority);
+            upstream.insert_header("X-Forwarded-Host", authority)?;
+            upstream.insert_header("X-Forwarded-Port", port.to_string())?;
+        }
+        None => {
+            upstream.remove_header("X-Forwarded-Host");
+            upstream.remove_header("X-Forwarded-Port");
+        }
+    }
+    for name in STRIPPED_UPSTREAM {
+        upstream.remove_header(*name);
+    }
+    if !client.peer_trusted {
+        for name in TRUSTED_PEER_ONLY {
+            upstream.remove_header(*name);
+        }
+    }
+    Ok(())
+}
+
+/// Roughly what registering a fill for this response reserves: its serialised
+/// header plus Pingora's fixed metadata. Only decides whether to offer the
+/// response for caching at all; the store reserves the exact figure.
+fn fill_estimate(resp: &ResponseHeader) -> usize {
+    resp.headers
+        .iter()
+        .map(|(name, value)| name.as_str().len() + value.len() + 4)
+        .sum::<usize>()
+        .saturating_add(256)
+}
+
+/// A count as a gauge value, saturating rather than wrapping.
+fn gauge(value: usize) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 /// A header value as text, or `None`.
@@ -1804,6 +2049,70 @@ mod tests {
         );
     }
 
+    fn timeouts(origin_secs: u64, downstream_write_secs: u64) -> Timeouts {
+        Timeouts {
+            origin: crate::config::units::Dur(std::time::Duration::from_secs(origin_secs)),
+            downstream_write: crate::config::units::Dur(std::time::Duration::from_secs(
+                downstream_write_secs,
+            )),
+            ..Timeouts::default()
+        }
+    }
+
+    #[test]
+    fn a_drain_ends_where_the_origin_request_would_have() {
+        let now = Instant::now();
+        let started = now - std::time::Duration::from_secs(4);
+        assert_eq!(
+            drain_deadline(&timeouts(30, 30), Some(started), now),
+            Some(started + std::time::Duration::from_secs(30)),
+            "a disconnect must not extend the end-to-end origin deadline"
+        );
+    }
+
+    #[test]
+    fn without_an_origin_timeout_a_drain_gets_the_stalled_client_bound() {
+        let now = Instant::now();
+        assert_eq!(
+            drain_deadline(&timeouts(0, 7), Some(now), now),
+            Some(now + std::time::Duration::from_secs(7))
+        );
+    }
+
+    #[test]
+    fn no_bound_means_no_drain() {
+        let now = Instant::now();
+        assert_eq!(drain_deadline(&timeouts(0, 0), Some(now), now), None);
+        // Already past its deadline: abandon now rather than hold for nothing.
+        let long_ago = now - std::time::Duration::from_secs(31);
+        assert_eq!(drain_deadline(&timeouts(30, 30), Some(long_ago), now), None);
+        // No origin attempt yet means nothing to drain.
+        assert_eq!(drain_deadline(&timeouts(30, 30), None, now), None);
+    }
+
+    #[test]
+    fn a_drain_that_hit_its_deadline_is_never_reported_as_completed() {
+        let now = Instant::now();
+        let drain = Drain::begin(now);
+        let before = now - std::time::Duration::from_millis(1);
+        assert_eq!(drain.outcome(true, false, now), "completed");
+        assert_eq!(drain.outcome(false, false, now), "deadline");
+        // Giving up on a silent origin before the deadline is no confirmation
+        // either.
+        assert_eq!(drain.outcome(false, true, before), "deadline");
+        assert_eq!(drain.outcome(false, false, before), "upstream_error");
+    }
+
+    #[test]
+    fn the_active_drain_gauge_counts_each_drain_exactly_once() {
+        // No other test creates a `Drain`, so the global gauge is this test's.
+        let before = metrics::ORIGIN_DRAINING.get();
+        let drains: Vec<Drain> = (0..3).map(|_| Drain::begin(Instant::now())).collect();
+        assert_eq!(metrics::ORIGIN_DRAINING.get(), before + 3);
+        drop(drains);
+        assert_eq!(metrics::ORIGIN_DRAINING.get(), before);
+    }
+
     fn ctx() -> Ctx {
         let cfg: crate::config::Config =
             serde_saphyr::from_str("version: 1\norigin:\n  upstreams: [\"a:3000\"]\n").unwrap();
@@ -1840,5 +2149,172 @@ mod tests {
         let mut refused = ctx();
         refused.local_response = true;
         assert_eq!(response_source("disabled", &refused), "tanod");
+    }
+
+    // ------------------------------------------------ forwarding contract
+
+    fn facts(
+        trusted: bool,
+        ip: Option<&str>,
+        scheme: &'static str,
+        host: Option<&str>,
+    ) -> ClientFacts {
+        ClientFacts {
+            client_ip: ip.map(|ip| ip.parse().unwrap()),
+            scheme,
+            peer_trusted: trusted,
+            forwarded_host: host.map(str::to_string),
+        }
+    }
+
+    /// Every forwarding claim a client could make, several of them repeated.
+    fn forged() -> RequestHeader {
+        let mut req = RequestHeader::build("GET", b"/p", None).unwrap();
+        for (name, value) in [
+            ("host", "shop.example"),
+            ("x-forwarded-for", "9.9.9.9"),
+            ("x-forwarded-for", "8.8.8.8"),
+            ("x-real-ip", "9.9.9.9"),
+            ("x-forwarded-proto", "https"),
+            ("x-forwarded-host", "evil.example"),
+            ("x-forwarded-host", "evil2.example"),
+            ("x-forwarded-port", "8443"),
+            ("x-forwarded-prefix", "/evil"),
+            ("x-original-host", "evil.example"),
+            ("x-original-url", "/admin"),
+            ("x-rewrite-url", "/admin"),
+            ("x-forwarded-ssl", "on"),
+            ("x-forwarded-scheme", "https"),
+            ("front-end-https", "on"),
+            ("forwarded", "for=9.9.9.9;host=evil.example;proto=https"),
+            ("cf-connecting-ip", "9.9.9.9"),
+            ("true-client-ip", "9.9.9.9"),
+            ("x-unrelated", "kept"),
+        ] {
+            req.append_header(name, value).unwrap();
+        }
+        req
+    }
+
+    fn all(req: &RequestHeader, name: &str) -> Vec<String> {
+        req.headers
+            .get_all(name)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn an_untrusted_client_cannot_put_any_forwarding_claim_in_front_of_the_origin() {
+        let mut req = forged();
+        apply_forwarding(
+            &mut req,
+            &facts(false, Some("203.0.113.7"), "http", None),
+            "shop.example",
+        )
+        .unwrap();
+        assert_eq!(all(&req, "x-forwarded-for"), ["203.0.113.7"]);
+        assert_eq!(all(&req, "x-real-ip"), ["203.0.113.7"]);
+        assert_eq!(all(&req, "x-forwarded-proto"), ["http"]);
+        assert_eq!(all(&req, "x-forwarded-host"), ["shop.example"]);
+        assert_eq!(all(&req, "x-forwarded-port"), ["80"]);
+        for gone in crate::net::forwarded::STRIPPED_UPSTREAM
+            .iter()
+            .chain(crate::net::forwarded::TRUSTED_PEER_ONLY)
+        {
+            assert!(all(&req, gone).is_empty(), "{gone} reached the origin");
+        }
+        assert_eq!(
+            all(&req, "host"),
+            ["shop.example"],
+            "Host is never rewritten"
+        );
+        assert_eq!(all(&req, "x-unrelated"), ["kept"]);
+    }
+
+    #[test]
+    fn a_trusted_proxys_public_url_and_cdn_identity_reach_the_origin() {
+        let mut req = forged();
+        apply_forwarding(
+            &mut req,
+            &facts(true, Some("203.0.113.7"), "https", Some("public.example")),
+            "internal:3000",
+        )
+        .unwrap();
+        assert_eq!(all(&req, "x-forwarded-proto"), ["https"]);
+        assert_eq!(all(&req, "x-forwarded-host"), ["public.example"]);
+        assert_eq!(all(&req, "x-forwarded-port"), ["443"]);
+        assert_eq!(all(&req, "cf-connecting-ip"), ["9.9.9.9"]);
+        assert!(all(&req, "x-forwarded-prefix").is_empty());
+        assert!(all(&req, "forwarded").is_empty());
+    }
+
+    #[test]
+    fn without_a_believed_host_the_origin_sees_the_requested_authority() {
+        let mut req = forged();
+        apply_forwarding(
+            &mut req,
+            &facts(true, Some("203.0.113.7"), "https", None),
+            "Shop.Example:8443",
+        )
+        .unwrap();
+        assert_eq!(all(&req, "x-forwarded-host"), ["shop.example:8443"]);
+        assert_eq!(all(&req, "x-forwarded-port"), ["8443"]);
+    }
+
+    #[test]
+    fn nothing_to_state_means_nothing_is_forwarded() {
+        let mut req = forged();
+        apply_forwarding(&mut req, &facts(false, None, "http", None), "").unwrap();
+        for gone in [
+            "x-forwarded-for",
+            "x-real-ip",
+            "x-forwarded-host",
+            "x-forwarded-port",
+        ] {
+            assert!(all(&req, gone).is_empty(), "{gone} survived");
+        }
+        // A malformed authority is not restated either.
+        let mut req = forged();
+        apply_forwarding(
+            &mut req,
+            &facts(false, None, "http", None),
+            "evil.example/path",
+        )
+        .unwrap();
+        assert!(all(&req, "x-forwarded-host").is_empty());
+    }
+
+    /// The believed public host selects a representation, so it is in the
+    /// key; leaving it out lets one public host's absolute URLs be served for
+    /// another behind the same internal `Host`.
+    #[test]
+    fn a_believed_forwarded_host_separates_cache_entries() {
+        let headers = http::HeaderMap::new();
+        let meta = RequestMetadata {
+            method: &http::Method::GET,
+            host: "internal:3000",
+            path: "/p",
+            query: None,
+            headers: &headers,
+        };
+        let key = |host: Option<&str>| {
+            KeyBuilder {
+                scheme: "https",
+                forwarded_host: host,
+                query_policy: None,
+                variant_headers: &[],
+                deployment: None,
+            }
+            .build(&meta)
+            .canonical_string()
+        };
+        assert_ne!(key(Some("a.example")), key(Some("b.example")));
+        assert_ne!(key(Some("a.example")), key(None));
+        assert_eq!(
+            key(Some("a.example:443")),
+            key(Some("a.example")),
+            "default port is not a separate entry"
+        );
     }
 }

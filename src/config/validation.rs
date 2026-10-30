@@ -78,6 +78,7 @@ pub fn validate(cfg: &Config) -> Result<()> {
     }
 
     validate_listen(&cfg.server.listen, "server.listen")?;
+    validate_threads(cfg)?;
     validate_server_tls(cfg)?;
     validate_trusted_proxies(cfg)?;
     validate_origin_tls(cfg)?;
@@ -359,14 +360,15 @@ fn validate_trusted_proxies(cfg: &Config) -> Result<()> {
     }
     // Naming a source without naming anyone to believe is a policy that reads
     // as "trust X-Forwarded-For" and behaves as "trust nothing".
-    let reads_headers =
-        proxies.client_ip != ForwardedSource::None || proxies.scheme != ForwardedSource::None;
+    let reads_headers = proxies.client_ip != ForwardedSource::None
+        || proxies.scheme != ForwardedSource::None
+        || proxies.host != ForwardedSource::None;
     if proxies.from.is_empty()
         && reads_headers
         && cfg.server.trusted_proxies != TrustedProxies::default()
     {
         return Err(err(
-            "server.trusted_proxies names a client_ip or scheme source but `from` is empty, so no \
+            "server.trusted_proxies names a client_ip, scheme or host source but `from` is empty, so no \
              peer is ever trusted and neither is read; list the CIDR blocks your load balancer \
              connects from",
         ));
@@ -463,6 +465,24 @@ fn validate_upgrade(cfg: &Config) -> Result<()> {
 /// The zero-downtime upgrade runs on these three paths agreeing between two
 /// processes, so a nonsense value here is only discovered during the restart
 /// it was supposed to make safe.
+/// More worker threads than this is a typo, not a deployment: every thread is
+/// a runtime worker with its own stack, and no host Tanod runs on has this
+/// many CPUs to give them.
+const MAX_THREADS: usize = 1024;
+
+fn validate_threads(cfg: &Config) -> Result<()> {
+    match cfg.server.threads {
+        Some(0) => Err(err(
+            "server.threads is 0; the proxy needs at least one worker thread. Omit the key to \
+             use one per available CPU",
+        )),
+        Some(n) if n > MAX_THREADS => Err(err(format!(
+            "server.threads is {n}; at most {MAX_THREADS} is accepted"
+        ))),
+        _ => Ok(()),
+    }
+}
+
 fn validate_graceful(cfg: &Config) -> Result<()> {
     let g = &cfg.server.graceful;
     if g.pid_file.trim().is_empty() {
@@ -1017,6 +1037,17 @@ fn check_route(route: &Route, cfg: &Config) -> Result<()> {
         return Err(err(format!(
             "route `{id}` is class private_dynamic and sets coalesce.override_origin; \
              per-user responses are never shared between requests"
+        )));
+    }
+    // The same fence as `cache.override_origin`. The override shares even a
+    // `private` response with every request in the flight, cookie-bearing
+    // ones included, so it needs the operator's statement that the route is
+    // not personalised — not a class inferred afresh for each request.
+    if route.coalesce.as_ref().is_some_and(|co| co.override_origin) && route.class.is_none() {
+        return Err(err(format!(
+            "route `{id}` sets coalesce.override_origin without declaring a class; \
+             add `class: public_ssr` to state that this route's responses may be shared \
+             between visitors"
         )));
     }
     if route
@@ -1602,6 +1633,31 @@ origin:
         assert!(e.0.contains("can never"), "{e}");
     }
 
+    // ---------------------------------------------------- worker threads
+
+    #[test]
+    fn worker_threads_must_be_between_one_and_the_ceiling() {
+        for bad in ["0", "1025"] {
+            let e = validate(&parse(&format!("{BASE}server:\n  threads: {bad}\n"))).unwrap_err();
+            assert!(e.0.contains("server.threads"), "{e}");
+        }
+        for good in ["1", "4", "1024"] {
+            validate(&parse(&format!("{BASE}server:\n  threads: {good}\n"))).unwrap();
+        }
+    }
+
+    #[test]
+    fn absent_worker_threads_means_every_available_cpu() {
+        let cfg = parse(BASE);
+        assert_eq!(cfg.server.threads, None);
+        assert_eq!(
+            cfg.server.effective_threads(),
+            std::thread::available_parallelism().map_or(1, usize::from)
+        );
+        let pinned = parse(&format!("{BASE}server:\n  threads: 3\n"));
+        assert_eq!(pinned.server.effective_threads(), 3);
+    }
+
     // ------------------------------------------------- graceful upgrade
 
     #[test]
@@ -1932,6 +1988,36 @@ routes:
         ));
         let e = validate(&cfg).unwrap_err();
         assert!(e.to_string().contains("without declaring a class"), "{e}");
+    }
+
+    #[test]
+    fn rejects_coalesce_override_without_declared_class() {
+        let cfg = parse(&format!(
+            "{BASE}
+routes:
+  - id: dashboard
+    match: \"/dashboard/**\"
+    coalesce:
+      override_origin: true
+"
+        ));
+        let e = validate(&cfg).unwrap_err();
+        assert!(e.to_string().contains("without declaring a class"), "{e}");
+    }
+
+    #[test]
+    fn accepts_a_declared_coalesce_override() {
+        let cfg = parse(&format!(
+            "{BASE}
+routes:
+  - id: products
+    match: \"/products/**\"
+    class: public_ssr
+    coalesce:
+      override_origin: true
+"
+        ));
+        validate(&cfg).unwrap();
     }
 
     #[test]

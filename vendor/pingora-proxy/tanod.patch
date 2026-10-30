@@ -1,0 +1,327 @@
+diff --git a/src/proxy_common.rs b/src/proxy_common.rs
+index 14e90a0..2f3a84d 100644
+--- a/src/proxy_common.rs
++++ b/src/proxy_common.rs
+@@ -893,3 +893,20 @@ mod tests {
+         assert!(!ds.can_poll());
+     }
+ }
++
++/// Tanod patch: account for response tasks that are drained rather than written.
++///
++/// Returns whether the response ended. A failed task carries the upstream's error and
++/// is surfaced as writing it would have surfaced it.
++pub(crate) fn drained_tasks(
++    tasks: Vec<pingora_core::protocols::http::HttpTask>,
++) -> Result<bool> {
++    let mut end = false;
++    for task in tasks {
++        if let pingora_core::protocols::http::HttpTask::Failed(e) = task {
++            return Err(e);
++        }
++        end |= task.is_end();
++    }
++    Ok(end)
++}
+diff --git a/src/proxy_h1.rs b/src/proxy_h1.rs
+index 7d0881f..dd8a8f2 100644
+--- a/src/proxy_h1.rs
++++ b/src/proxy_h1.rs
+@@ -369,6 +369,8 @@ where
+         serve_from_cache: &mut ServeFromCache,
+         range_body_filter: &mut proxy_cache::range_filter::RangeBodyFilter,
+         response_state: &mut ResponseStateMachine,
++        downstream_state: &mut DownstreamStateMachine,
++        drain_until: &mut Option<std::time::Instant>,
+     ) -> Result<Option<bool>>
+     where
+         SV: ProxyHttp + Send + Sync,
+@@ -433,11 +435,71 @@ where
+             return Ok(None);
+         }
+ 
+-        let response_done = session.write_response_tasks(filtered_tasks).await?;
++        // Tanod patch: the downstream is gone and the response is being drained. The
++        // filters above have seen every task; nothing is written.
++        if drain_until.is_some() {
++            return drained_tasks(filtered_tasks).map(Some);
++        }
++
++        let end = filtered_tasks.iter().any(HttpTask::is_end);
++        // Writing a failed task returns the upstream's own error. That is never a
++        // downstream failure, and there is nothing left to drain.
++        let upstream_failed = filtered_tasks
++            .iter()
++            .any(|t| matches!(t, HttpTask::Failed(_)));
++        let response_done = match session.write_response_tasks(filtered_tasks).await {
++            Ok(done) => done,
++            Err(e) if upstream_failed => return Err(e),
++            // Tanod patch: a failed downstream write is a downstream error like a failed
++            // read, and may drain in the same way.
++            Err(e) => {
++                self.drain_after_downstream_error(session, ctx, downstream_state, e, drain_until)?;
++                end
++            }
++        };
+ 
+         Ok(Some(response_done))
+     }
+ 
++    /// Tanod patch: decide whether this downstream error abandons the upstream exchange.
++    ///
++    /// `Ok` means the error was absorbed: the downstream is marked errored, `drain_until` is
++    /// set, and the caller carries on reading the upstream response. `Err` returns the
++    /// original error, which abandons the exchange exactly as Pingora always has.
++    pub(crate) fn drain_after_downstream_error(
++        &self,
++        session: &mut Session,
++        ctx: &mut SV::CTX,
++        downstream_state: &mut DownstreamStateMachine,
++        e: Box<Error>,
++        drain_until: &mut Option<std::time::Instant>,
++    ) -> Result<()>
++    where
++        SV: ProxyHttp + Send + Sync,
++        SV::CTX: Send + Sync,
++    {
++        if drain_until.is_some() {
++            return Ok(());
++        }
++        // A request body still arriving cannot be completed for the origin, and a
++        // tunnel has no response to finish.
++        if downstream_state.is_reading() || session.was_upgraded() {
++            return Err(e);
++        }
++        let Some(deadline) = self.inner.upstream_after_downstream_error(session, ctx) else {
++            return Err(e);
++        };
++        debug!(
++            "Downstream error, draining upstream response: {}, {}",
++            e,
++            self.inner.request_summary(session, ctx)
++        );
++        downstream_state.to_errored();
++        *drain_until = Some(deadline);
++        session.downstream_session.on_proxy_failure(e);
++        Ok(())
++    }
++
+     // todo use this function to replace bidirection_1to2()
+     // returns whether this server (downstream) session can be reused
+     #[allow(clippy::too_many_arguments)]
+@@ -507,6 +569,9 @@ where
+ 
+         let mut next_upstream_task: Option<HttpTask> = None;
+ 
++        // Tanod patch: set once a downstream error leaves the upstream response draining.
++        let mut drain_until: Option<std::time::Instant> = None;
++
+         /* duplex mode without caching
+          * Read body from downstream while reading response from upstream
+          * If response is done, only read body from downstream
+@@ -583,7 +648,17 @@ where
+                                 session.downstream_session.on_proxy_failure(e);
+                                 continue;
+                            } else {
+-                                return Err(e.into_down());
++                                // Tanod patch: optionally keep the upstream exchange.
++                                match self.drain_after_downstream_error(
++                                    session,
++                                    ctx,
++                                    &mut downstream_state,
++                                    e,
++                                    &mut drain_until,
++                                ) {
++                                    Ok(()) => continue,
++                                    Err(e) => return Err(e.into_down()),
++                                }
+                            }
+                         }
+                     };
+@@ -628,6 +703,8 @@ where
+                             &mut serve_from_cache,
+                             &mut range_body_filter,
+                             &mut response_state,
++                            &mut downstream_state,
++                            &mut drain_until,
+                         ).await? else {
+                             // nothing sent downstream e.g. serve_from_cache
+                             continue;
+@@ -653,6 +730,8 @@ where
+                             &mut serve_from_cache,
+                             &mut range_body_filter,
+                             &mut response_state,
++                            &mut downstream_state,
++                            &mut drain_until,
+                         ).await? else {
+                             // nothing sent downstream e.g. serve_from_cache
+                             continue;
+@@ -791,6 +870,15 @@ where
+                     }
+                 }
+ 
++                // Tanod patch: a drained response that outlives its deadline is abandoned.
++                _ = time::sleep_until(drain_until.map_or_else(time::Instant::now, time::Instant::from_std)),
++                    if drain_until.is_some() => {
++                    return Error::e_explain(
++                        ReadTimedout,
++                        "upstream response still unfinished at its drain deadline",
++                    ).map_err(|e| e.into_up());
++                }
++
+                 data = custom_reader_next, if downstream_custom_read && !downstream_state.is_errored()  => {
+                     let Some(data) = data.flatten() else {
+                         downstream_custom_read = false;
+diff --git a/src/proxy_h2.rs b/src/proxy_h2.rs
+index 3842d19..e9355de 100644
+--- a/src/proxy_h2.rs
++++ b/src/proxy_h2.rs
+@@ -409,6 +409,8 @@ where
+         serve_from_cache: &mut ServeFromCache,
+         range_body_filter: &mut proxy_cache::range_filter::RangeBodyFilter,
+         response_state: &mut ResponseStateMachine,
++        downstream_state: &mut DownstreamStateMachine,
++        drain_until: &mut Option<std::time::Instant>,
+     ) -> Result<Option<bool>>
+     where
+         SV: ProxyHttp + Send + Sync,
+@@ -479,7 +481,23 @@ where
+             return Ok(None);
+         }
+ 
+-        let response_done = session.write_response_tasks(filtered_tasks).await?;
++        // Tanod patch: draining after a downstream error; see `proxy_h1.rs`.
++        if drain_until.is_some() {
++            return drained_tasks(filtered_tasks).map(Some);
++        }
++
++        let end = filtered_tasks.iter().any(HttpTask::is_end);
++        let upstream_failed = filtered_tasks
++            .iter()
++            .any(|t| matches!(t, HttpTask::Failed(_)));
++        let response_done = match session.write_response_tasks(filtered_tasks).await {
++            Ok(done) => done,
++            Err(e) if upstream_failed => return Err(e),
++            Err(e) => {
++                self.drain_after_downstream_error(session, ctx, downstream_state, e, drain_until)?;
++                end
++            }
++        };
+ 
+         Ok(Some(response_done))
+     }
+@@ -548,6 +566,9 @@ where
+ 
+         let mut next_upstream_task: Option<HttpTask> = None;
+ 
++        // Tanod patch: set once a downstream error leaves the upstream response draining.
++        let mut drain_until: Option<std::time::Instant> = None;
++
+         /* duplex mode
+          * see the Same function for h1 for more comments
+          */
+@@ -602,7 +623,17 @@ where
+                                 session.downstream_session.on_proxy_failure(e);
+                                 continue;
+                            } else {
+-                                return Err(e.into_down());
++                                // Tanod patch: optionally keep the upstream exchange.
++                                match self.drain_after_downstream_error(
++                                    session,
++                                    ctx,
++                                    &mut downstream_state,
++                                    e,
++                                    &mut drain_until,
++                                ) {
++                                    Ok(()) => continue,
++                                    Err(e) => return Err(e.into_down()),
++                                }
+                            }
+                         }
+                     };
+@@ -620,7 +651,15 @@ where
+                             let wait_for_cache_fill = (!serve_from_cache.is_on() && support_cache_partial_read)
+                                 || serve_from_cache.is_miss();
+                             if !wait_for_cache_fill {
+-                                return Err(e);
++                                // Tanod patch: optionally keep the upstream exchange.
++                                self.drain_after_downstream_error(
++                                    session,
++                                    ctx,
++                                    &mut downstream_state,
++                                    e,
++                                    &mut drain_until,
++                                )?;
++                                continue;
+                             }
+                             // ignore downstream error so that upstream can continue to write cache
+                             downstream_state.to_errored();
+@@ -662,6 +701,8 @@ where
+                             &mut serve_from_cache,
+                             &mut range_body_filter,
+                             &mut response_state,
++                            &mut downstream_state,
++                            &mut drain_until,
+                         ).await? else {
+                             // nothing sent downstream e.g. serve_from_cache
+                             continue;
+@@ -687,6 +728,8 @@ where
+                             &mut serve_from_cache,
+                             &mut range_body_filter,
+                             &mut response_state,
++                            &mut downstream_state,
++                            &mut drain_until,
+                         ).await? else {
+                             // nothing sent downstream e.g. serve_from_cache
+                             continue;
+@@ -815,6 +858,15 @@ where
+                         }
+                     }
+                 }
++                // Tanod patch: a drained response that outlives its deadline is abandoned.
++                _ = time::sleep_until(drain_until.map_or_else(time::Instant::now, time::Instant::from_std)),
++                    if drain_until.is_some() => {
++                    return Error::e_explain(
++                        ReadTimedout,
++                        "upstream response still unfinished at its drain deadline",
++                    ).map_err(|e| e.into_up());
++                }
++
+                 data = custom_reader_next, if downstream_custom_read && !downstream_state.is_errored()  => {
+                     let Some(data) = data.flatten() else {
+ 
+diff --git a/src/proxy_trait.rs b/src/proxy_trait.rs
+index d675c33..bc74d98 100644
+--- a/src/proxy_trait.rs
++++ b/src/proxy_trait.rs
+@@ -574,6 +574,30 @@ pub trait ProxyHttp {
+         false
+     }
+ 
++    /// Keep receiving the upstream response after the downstream fails, until `deadline`.
++    ///
++    /// While a response is filling the cache, Pingora already ignores a downstream error and
++    /// finishes reading the upstream response. Every other response is abandoned on that
++    /// error, which closes the upstream connection (or resets its HTTP/2 stream) at once.
++    ///
++    /// Returning `Some(deadline)` applies the cache-fill behaviour to this request: the
++    /// downstream is marked errored, the upstream response is still read and still passes
++    /// through the upstream filters, its bytes are discarded rather than written, and the
++    /// exchange fails with a timeout if it has not ended by `deadline`. `None`, the default,
++    /// keeps the existing behaviour.
++    ///
++    /// Consulted only once the downstream request body has been read completely, and never
++    /// for an upgraded session.
++    ///
++    /// Local patch carried by Tanod; see `vendor/pingora-proxy/TANOD-PATCH.md`.
++    fn upstream_after_downstream_error(
++        &self,
++        _session: &Session,
++        _ctx: &mut Self::CTX,
++    ) -> Option<std::time::Instant> {
++        None
++    }
++
+     /// This filter is called when there is an error **after** a connection is established (or reused)
+     /// to the upstream.
+     ///

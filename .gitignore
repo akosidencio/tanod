@@ -1,11 +1,15 @@
 # Rust
 target/
+__pycache__/
 
 # macOS
 .DS_Store
 
 # Local overrides
 *.local.yaml
+
+# Private engineering reports, validation evidence and study notes.
+/intenal_docs/
 
 # Fuzzing: cargo-fuzz's build output, generated corpora and crash artifacts.
 # The targets themselves are checked in; what a run produces is not.
@@ -33,17 +37,29 @@ node_modules/
 # so a negation inside one is silently ignored.
 docs/*
 !docs/THREAT-MODEL.md
+!docs/SECURITY-MODEL.md
+!docs/UPGRADING-0.4.md
 !docs/CACHE-KEY-REVIEW.md
 !docs/OPERATIONS.md
 !docs/CONFIG-SCHEMA.md
-!docs/RELEASE-GATES.md
 !docs/ROADMAP.md
 !docs/NEXTJS-PRODUCTION-REFERENCE.md
 !docs/STANDALONE.md
 !docs/DEPLOYMENT-GUIDE.md
+!docs/RELEASE-GATES.md
 !docs/PINGORA-REUSE.md
+!docs/RELEASE-NOTES-0.4.0.md
+!docs/reviews/
 !docs/data/
 docs/data/*
 !docs/data/pingora-eviction.csv
 # Local compatibility evidence; CI uploads it as an artifact.
 compatibility-results/
+
+# Internal implementation and validation reports stay local. Public operator,
+# security and release references are explicitly allowed above.
+docs/PHASE*.md
+/PHASE*-*.md
+/validation/
+spike/pingora-cache/FINDINGS.md
+benchmark-results/

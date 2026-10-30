@@ -14,6 +14,7 @@ is named.
 - [systemd](#systemd)
 - [Kubernetes](#kubernetes)
 - [Reloading configuration](#reloading-configuration)
+- [Worker threads](#worker-threads)
 - [Sizing the queue](#sizing-the-queue)
 - [Tracing and correlation](#tracing-and-correlation)
 - [What to alert on](#what-to-alert-on)
@@ -160,6 +161,11 @@ flight reaches it to the end. Two things follow:
   longer than it are cut at the teardown, and a larger value buys nothing
   else: every restart pays it in full. `tanod check` prints
   the total and warns above 30 seconds.
+- **Responses drained for disconnected clients are in flight too.** They end
+  by `timeouts.origin`; if `shutdown_timeout` is shorter, the teardown cuts
+  them while the origin is still rendering, and a replacement process admits
+  new work beside it. Where the ceiling must hold across restarts, keep
+  `shutdown_timeout` above `timeouts.origin`.
 
 If `SIGUSR1` already started draining, the two windows overlap: `SIGTERM` waits
 only the unelapsed part of `drain_period`. A pre-stop hook that sleeps longer
@@ -285,7 +291,8 @@ spec:
 
           resources:
             requests: { cpu: "500m", memory: "512Mi" }
-            # Must exceed cache.max_memory + spool.max_memory plus headroom.
+            # Must exceed cache.max_memory + cache.max_body_size (the
+            # abandoned-fill headroom) + spool.max_memory, plus headroom.
             limits: { memory: "1Gi" }
 ```
 
@@ -296,11 +303,26 @@ The arithmetic that matters, in one place:
 
 ```
 terminationGracePeriodSeconds  >  max(preStop sleep, drain_period) + shutdown_timeout
-memory limit                   >  cache.max_memory + spool.max_memory + ~128Mi
+memory limit                   >  cache.max_memory + cache.max_body_size + spool.max_memory + ~128Mi
 ```
 
 The second is asserted by [`bench/memory.sh`](../bench/memory.sh), which drives
 every configured budget past its limit at once and measures resident set size.
+
+Capacity is per process. Two Tanod processes using the same partition at
+once admit up to twice it; Kubernetes prevents that only in the
+[fixed StatefulSet tier](../ops/production/kubernetes.yaml), and only while
+nothing force-deletes a pod that may still be running. A StatefulSet's
+rolling update does not create a replacement until the old pod object is
+gone, which happens after its process exits or is killed at
+`terminationGracePeriodSeconds`. A Deployment with `maxSurge`, an HPA, or a
+force delete (`--grace-period=0 --force`, or a partitioned node's pod removed
+from the API) can run more processes than the partition was divided for. Keep
+`timeouts.origin` below `shutdown_timeout`, so a draining pod's exchanges end
+before it exits, and the grace period above drain + shutdown + teardown. The
+staging procedure in
+[KUBERNETES-STAGING.md](../ops/production/KUBERNETES-STAGING.md) checks it on
+a real cluster.
 
 `maxUnavailable: 0` matters more than usual here. Each replica has its own
 process-local cache and its own admission ceiling, so a replacement pod starts
@@ -351,6 +373,20 @@ ceiling or moving a priority share is an incident action, so it happens without
 a restart. Limiters are **resized** rather than replaced, so in-flight permits
 are never double-counted across the change.
 
+**Lowering a ceiling below the work already running.** Requests already
+admitted keep their permits; the limiter collects the difference as they
+finish and admits nothing new until occupancy is under the new ceiling. While
+that drains, `in_flight` in `/status` and `tanod_origin_in_flight` report the
+work actually at the origin, so they read **above** `limit` /
+`tanod_concurrency_limit`, and `available` reads `0`. That is expected, and it
+is the number to watch: the origin is still doing the old amount of work. Both
+count units of `route.weight`, not requests. A reload republishes every
+limiter's gauges at once rather than waiting for traffic to cross them.
+
+A route removed by a reload leaves `/status` and loses its gauge series at
+once. Requests it had already admitted keep their route permits until they
+finish, and their work stays in the global and priority-tier figures.
+
 ---
 
 ## Invalidating the cache
@@ -396,10 +432,21 @@ Four things worth knowing before you rely on it:
 - **Purge is per process.** Every replica has its own cache and endpoint. Fan
   out from the deploy pipeline; `@tanod/next` accepts all admin listeners
   through `endpoints` or `TANOD_PURGE_URLS` and fails on partial delivery.
-- **In-flight renders keep streaming, but are not admitted afterward.** A
-  matching render already streaming to a client is allowed to finish, while
-  its temporary fill is marked invalid so it cannot repopulate the cache after
-  the purge has reported success.
+- **No new attachment to invalidated fills.** Once a purge returns, ordinary
+  lookups and exact streaming-write-tag lookups cannot attach to a matching
+  pre-purge fill, even while its writer is still streaming. This also covers
+  transient coalescing responses and TinyUFO admission-rejection handoffs.
+  Pingora's leader reader is reserved when its fill is registered; its private
+  write tag can transfer that already attached reader once if purge intervenes
+  before Pingora retrieves it. Further tagged lookups cannot attach.
+- **Already attached readers keep streaming.** They retain their response and
+  receive subsequent chunks normally. The invalidated writer cannot admit its
+  response afterward. A canceled writer reports an error to its followers
+  rather than leaving them waiting forever. Purge does not cancel origin work.
+- **Purge covers fills registered before its linearization point.** A request
+  already rendering at the origin but not yet registered with the store may
+  register afterward. Purge is not an origin transaction or a content-version
+  fence; use deployment identity for application-build isolation.
 
 ### Purging by path
 
@@ -461,20 +508,128 @@ a supported contract; the supported one is phase 6's `@tanod/next`.
 
 ### Deployment rollovers
 
-Nothing to call. The cache key already carries `deployment.id`, so the previous
-build's entries become unreachable the moment the id changes — and a `SIGHUP`
-that changes it also purges them, so their bytes go back to the budget instead
-of aging out. A reload that does *not* change the id leaves the cache alone;
-purging on every `SIGHUP` would turn a routine config change into a stampede.
+Nothing to call. The cache key carries `deployment.id` and a process-local
+cache-policy namespace. A deployment change retires the previous namespace and
+reclaims completed entries before publishing the new snapshot.
+
+### Cache policy across reloads
+
+An accepted reload preserves the cache namespace only when its typed sharing
+inputs compare equal: configuration version, protect/observe mode, deployment
+identity, cache enablement/body limit/origin-respect/tag-header settings, global
+coalescing settings, and the ordered route matchers, classes, complete cache
+policies and coalescing policies. This includes overrides, TTL ceilings, stale
+windows, query policies and variant headers. Framework exclusions and mandatory
+Next.js variants are fixed in code and cannot change through a reload.
+
+Capacity, route names, concurrency, priority, weight, spooling, logging and shed
+page changes retain cached responses. Matching is conservative: syntactically
+different matcher forms or differently ordered variant/query lists may cause a
+cold cache even if an operator considers them equivalent. Sharing changes
+currently retire the whole namespace, including otherwise unaffected routes.
+
+Compatibility uses exact typed equality, not the exported configuration
+fingerprint. Incompatible reloads allocate a fresh monotonically increasing
+namespace; changing A to B and back to A does not revive the original A cache.
+Namespaces are local to the process and never logged or exported. The primary
+key includes the namespace, so Pingora's coalescing locks are isolated as well.
+
+In-flight requests keep their pinned policy. Retirement invalidates existing
+fills and removes completed entries. An old request registering a fill *after*
+retirement may stream in its own namespace, but completion cannot persist it or
+leave a transient handoff. Retired state has no unbounded namespace registry:
+only the active namespace is retained, and active writers release reservations
+on finish/drop. Completed transient handoffs expire through their existing
+bounded scheduler window. Rapid reloads are serialized off the request path.
+
+The logical byte budget continues to count stored entries and live fills.
+Already attached readers can retain detached body Arcs after those bytes leave
+the logical cache budget; it is not a bound on process RSS or downstream socket
+buffers. Purging/reloading does not truncate those readers to reclaim memory.
+
+**How bodies are held.** A fill's body is kept as immutable segments: a write
+of 4 KiB or more becomes its own segment, and smaller writes accumulate until
+they reach 4 KiB. Every write is copied once into an exactly sized allocation,
+never kept as the upstream's buffer, which for HTTP/2 can be a slice of a
+larger receive buffer. A finished entry is read by sharing those segments, so
+a cache hit, the leader's own response and every coalesced follower are handed
+the stored bytes by reference rather than each receiving a copy; only a
+follower reading the still-unsealed tail of a fill (under 4 KiB) copies it. A
+body that arrived as many small writes is compacted into 64 KiB segments once,
+when the fill completes, so later hits write it downstream in as few writes as
+before. Each segment carries a few tens of bytes of bookkeeping beyond its
+accounted body bytes; the 4 KiB floor keeps that under 2% of the body.
+
+### When the cache budget runs out
+
+A full cache must not fail a good origin response. What Tanod can do depends on
+how far the response has got, because past a certain point Pingora serves the
+client *from the cache* and gives up the whole request if a cache write fails:
+
+| When | What happens | `tanod_cache_memory_pressure_total{outcome}` |
+|---|---|---|
+| Before the response is offered to the cache | Served straight from the origin, uncached. Requests waiting on its coalescing lock go to the origin themselves, through admission | `uncached_fallback` |
+| Mid-body, within the headroom | The fill is *abandoned*: never stored, but it finishes streaming to the client and to every coalesced follower, byte for byte, and its memory is returned as soon as it completes | `fill_abandoned` |
+| Mid-body, past the headroom | The fill fails and Pingora aborts the response: the client sees a broken transfer, never a short body presented as complete. Followers end with an error, not a hang | `memory_exhausted` |
+
+The headroom is one `cache.max_body_size` above `cache.max_memory`, shared by
+all abandoned fills, so the logical cache total never exceeds
+`max_memory + max_body_size`. Fills that are already streaming are the only
+thing allowed into it; a new fill is never registered over budget. A
+reservation that cannot fit beside the fills in progress is refused without
+evicting anything, because only completed entries can be evicted and evicting
+them would not have helped.
+
+`/status` reports `cache.pinned_bytes` (bytes held by fills rather than stored
+entries), `cache.headroom_bytes` and the three counters.
+
+**Oversized streamed responses.** `cache.max_body_size` is enforced by Pingora.
+A response with a `Content-Length` over it is never offered to the cache and
+streams through. A chunked one is only discovered mid-body, and Pingora aborts
+that response: it cannot switch a response it is already serving from the cache
+back to the origin. Tanod remembers the URL (up to 16,384 of them, least
+recently marked forgotten first), so later requests for it bypass the cache and
+stream uncached; a later response that fits makes it cacheable again. So the
+first oversized chunked response per URL fails, and only that one. Raise
+`cache.max_body_size`, or have the origin send `Content-Length`, if even that
+is too many. [`bench/cache-pressure.sh`](../bench/cache-pressure.sh) covers all
+four cases through a real proxy.
 
 ### What to watch
 
 | Signal | Means |
 |---|---|
+| `tanod_cache_memory_pressure_total{outcome="memory_exhausted"}` rising | Responses are being aborted because concurrent fills outgrew budget and headroom. More `cache.max_memory`, or fewer large cacheable streams. |
+| `tanod_cache_memory_pressure_total{outcome=~"uncached_fallback\|fill_abandoned"}` rising | Fills are larger than the budget can hold at once. Nothing is failing, but the cache is not caching. |
 | `tanod_cache_purged_total{scope="tags"}` | Invalidations arriving. A flat line after a deploy that should have invalidated something is the failure to look for. |
 | `tanod_cache_purged_total{scope="all"}` rising | Somebody is purging everything, repeatedly. That is a stampede generator, not an invalidation strategy. |
 | `tanod_cache_evicted_total` rising while `tanod_cache_bytes` sits at its ceiling | The working set does not fit. More memory, a shorter TTL, or a narrower key. |
 | `tanod_cache_tags` growing without bound | The origin mints a tag per revision. The index is bounded by the entries pointing at it, but a tag per render means a tag index the size of the cache. |
+
+---
+
+## Worker threads
+
+`server.threads` sets how many worker threads serve the proxy listeners. The
+default is one per CPU the process may use: the process's CPU affinity
+(`taskset`, a Kubernetes static CPU policy) and, on Linux, a cgroup CPU quota
+(`resources.limits.cpu`) both lower it. Tanod prints the number it chose on
+startup: `tanod listening on 0.0.0.0:8080 (4 worker threads)`.
+
+Before this setting existed, cache hits, coalesced followers and forwarding
+shared one proxy worker. Multiple workers can use more CPU capacity, but can
+also increase CPU per request and tail latency, especially for large bodies.
+Compare explicit one/two-worker settings with the default on your workload
+using [`bench/perf.sh`](../bench/perf.sh). Record throughput, successful-response
+latency, CPU and RSS together; a higher request rate alone is not a tuning goal.
+
+When the origin runs on the same host — `origin.command`, or a sidecar
+sharing a CPU limit — leave it the cores it needs: set `threads` to what Tanod
+should take, not to the host's count. A render-bound origin starved of CPU
+renders slower, which Tanod's admission then reads as a slower origin.
+`threads: 1` restores the old behaviour exactly. The admin and metrics
+listeners keep one thread each regardless. Changing `threads` needs a
+restart; a reload that changes it is refused.
 
 ---
 
@@ -517,6 +672,157 @@ Check the result during overload:
 | `tanod_queue_wait_seconds` near `queue.timeout` | A standing queue. Admitted requests pay the full wait. Lower `queue.max`. |
 | `tanod_admission_total{decision="shed_queue_timeout"}` high relative to `shed_queue_full` | Requests waited the whole deadline and were refused anyway — the slowest way to fail. Lower `queue.max` or `queue.timeout`. |
 | `tanod_queue_depth` pinned at `queue.max` | Arrivals exceed the ceiling continuously. The queue cannot help; caching, coalescing or origin capacity can. |
+
+---
+
+## What the origin ceiling guarantees
+
+**Tanod strictly bounds its managed admitted upstream exchanges under its
+defined lifecycle and deadline contract. It does not independently bound
+arbitrary backend application work that continues after a response or beyond
+the drain deadline.** Where the application's work must never exceed a number,
+enforce that number in the origin too (see [below](#what-no-proxy-can-bound)).
+
+`origin.concurrency.max` bounds three different things to three different
+degrees. They are worth keeping apart, because only the first is entirely in
+Tanod's hands.
+
+| Quantity | Bound | Holds when |
+|---|---|---|
+| **Permits held** — weighted units Tanod has admitted (`tanod_origin_in_flight`) | **Strict.** Never above the limit except while a lowered limit drains after a reload. | Always. |
+| **Origin exchanges** — admitted requests whose origin response has not ended | **Strict.** A permit is held from admission until the origin's response ends, the origin fails or closes the connection, or Tanod gives up at the drain deadline. A client disconnect does not end it. | Always, for classes that take a permit. `static`, `streaming` and upgrades take none and are not bounded by this limit. |
+| **Origin work** — renders actually executing in the origin | **Conditional.** Bounded by the same ceiling. | The origin's work for a request ends no later than its response does, and the response ends before the drain deadline. |
+
+### When a client disconnects
+
+Closing a connection does not stop a render. A streaming SSR server notices a
+gone client at its next write, if it checks at all, so releasing capacity at
+the disconnect would admit the next request beside work still running.
+
+Tanod therefore keeps reading an admitted response after its client has gone,
+discards it, and holds the permit until the origin finishes. Pingora already
+does this for a response that is filling the cache; Tanod extends it to
+uncached responses and to responses the cache declined under memory pressure.
+The origin is never told to stop: it does the work it was given, and the
+capacity it uses comes back when it is done.
+
+A slow reader that Tanod cuts off at `timeouts.downstream_write` counts as a
+client that has gone. The write timeout still bounds how long the *reader* can
+hold a slot. From the cut-off on, the rest of the response is read at the
+origin's own pace and the slot is held only while the origin is still
+producing it. Before 0.4 the cut-off also closed the origin connection and
+released the slot at once, even when the origin was still rendering.
+
+The drain ends at the earlier of the origin finishing and the request's
+`timeouts.origin` deadline, measured from when the origin request began — never
+later than it would have ended with its client connected. With
+`timeouts.origin: 0`, `timeouts.downstream_write` applies from the disconnect;
+with both at 0, the exchange is abandoned at the disconnect as before. Nothing
+is buffered: each chunk is discarded as it arrives. A drained exchange that
+fails is not retried.
+
+| Signal | Means |
+|---|---|
+| `tanod_origin_disconnect_drains_active` | Admitted responses currently being read for a client that left. They are also in `tanod_origin_in_flight`. |
+| `tanod_origin_disconnect_drains_total{outcome="completed"}` | The origin finished; capacity came back when the work did. |
+| `tanod_origin_disconnect_drains_total{outcome="deadline"}` | Tanod stopped waiting before the origin finished — at the drain deadline, or because the origin went silent past its read timeout — and released the permit **without** knowing the origin stopped. Treat each one as possibly still-running work. |
+| `tanod_origin_disconnect_drains_total{outcome="upstream_error"}` | The origin failed or closed the connection first. |
+
+The access log's `permit_released` field says the same per request:
+`drain_end`, `drain_deadline` or `drain_error`.
+
+### What no proxy can bound
+
+- **Work the origin continues after its own response has ended** — background
+  revalidation, `after()` callbacks, queued jobs. Tanod sees the response end
+  and releases the permit; the work is invisible to it.
+- **Work past a deadline.** An origin that ignores a closed connection keeps
+  running after Tanod gives up on it. The `deadline` counter is how you learn
+  this happened.
+- **Requests that bypass Tanod**, and capacity shared with other replicas or
+  other proxies. Each Tanod process bounds its own admissions.
+
+If the origin must never exceed a number of concurrent renders whatever its
+clients and timeouts do, enforce that number in the origin as well — a
+semaphore around the render, sized to Tanod's ceiling — and size
+`timeouts.origin` to the longest render you are prepared to wait for. Tanod's
+ceiling then keeps that semaphore from queueing, and the semaphore makes the
+bound exact.
+
+---
+
+## Request targets with dot segments
+
+In protect mode Tanod answers `400` to a request whose path contains a `.` or
+`..` segment, whether written literally or percent-encoded (`%2e`, `%2E`), and
+the request never reaches the origin. Routes, classes and cache keys are
+decided on the path as it arrived, while an origin resolves the segments
+before routing. Without the refusal, `/products/x/../../account` matched a
+public route and was cached, and `/_next/static/../../account` was classed
+static and took no origin permit. Browsers resolve dot segments before
+sending, so ordinary traffic never sees the refusal. With `debug_headers` the
+response carries `X-Tanod: DOT-SEGMENT`. Observe mode passes such requests
+through unchanged.
+
+---
+
+## Forwarded headers
+
+Tanod restates the forwarding metadata the origin receives on **every**
+request. It never passes a client's own `X-Forwarded-*` through, whoever the
+client is:
+
+| Header to the origin | Value |
+|---|---|
+| `X-Forwarded-For`, `X-Real-IP` | The one client address Tanod concluded; absent if none |
+| `X-Forwarded-Proto` | `http` or `https`: the effective scheme, also a cache-key component |
+| `X-Forwarded-Host` | The trusted proxy's public host when `trusted_proxies.host` is enabled, otherwise the request's own `Host`/`:authority`; default port dropped |
+| `X-Forwarded-Port` | The port in that host, otherwise the scheme's default |
+| `Forwarded`, `X-Forwarded-Prefix`, `X-Forwarded-Server`, `X-Original-Host`, `X-Host`, `X-Original-URL`, `X-Rewrite-URL`, `X-Forwarded-Scheme`, `X-Forwarded-Ssl`, `X-Forwarded-Protocol`, `X-Url-Scheme`, `Front-End-Https` | Removed |
+| `CF-Connecting-IP`, `True-Client-IP`, `Fastly-Client-IP`, `X-Client-IP`, `X-Cluster-Client-IP` | Passed through from a trusted peer, removed from anyone else |
+| `Host` | Unchanged; route matching and the cache key use it |
+
+Scheme, host and port are all derived from cache-key components, so an origin
+that builds absolute URLs, redirects or canonical links from them cannot make
+one shared response depend on a header the key does not contain. Before this
+contract, a client could send `X-Forwarded-Host: evil.example` and have the
+origin's absolute URLs for it stored and served to everyone;
+[`bench/forwarded.sh`](../bench/forwarded.sh) now proves it cannot.
+
+**What is believed, and from whom.** Only a peer inside
+`server.trusted_proxies.from` is believed at all. `client_ip` and `scheme`
+default to `x_forwarded`; `host` defaults to `none`. For a list-valued header
+the address walk picks the hop (the rightmost address that is not itself a
+trusted proxy), and the scheme and host come from the same hop: the entry at
+that position when a proxy appended to every list, the only entry when a proxy
+overwrote the header, and otherwise the rightmost entry, which the connection
+peer wrote. Never the leftmost entry of several, because that is the one a
+client prefixes. RFC 7239 `Forwarded` is read the same way, from the element
+the chosen `for=` is in. Invalid values are ignored: a scheme other than
+`http`/`https`, or a host that is not a plain `host[:port]` (no userinfo, path,
+list, whitespace or non-ASCII).
+
+**`trusted_proxies.host`** is for proxies that change `Host` — a load balancer
+that sends its own service name, say — so that the origin needs the public host
+to build URLs and to check Server Action origins. Enable it only if **every**
+trusted proxy overwrites `X-Forwarded-Host` (or `Forwarded: host=`): many pass a
+client's value through untouched, and then the client chooses the host. A
+believed host enters the cache key. Most edges, including the
+[`ops/edge`](../ops/edge) nginx config, preserve `Host`, and need nothing.
+
+**Next.js.** Next compares a Server Action's `Origin` with
+`X-Forwarded-Host` (falling back to `Host`) and rejects a mismatch with
+`500 Invalid Server Actions request`; it builds `request.url` with the scheme
+from `X-Forwarded-Proto`. Behind an edge that preserves `Host`, nothing needs
+configuring. Behind one that rewrites `Host`, enable `trusted_proxies.host`, or
+Server Actions fail the origin check. Both cases are checked against a real
+Next.js server by [`bench/nextjs-forwarded.sh`](../bench/nextjs-forwarded.sh).
+
+Proxy assumptions, stated: a trusted proxy either overwrites each forwarding
+header or appends exactly one entry per hop to all of them; it does not pass a
+client's `X-Forwarded-For` through unchanged while overwriting the others. A
+proxy that forwards a client's header verbatim makes the client the author of
+it, whatever Tanod does.
 
 ---
 
@@ -575,7 +881,7 @@ four that matter most:
 | Signal | Means |
 |---|---|
 | `tanod_admission_total{decision=~"shed_.*"}` rising | The origin ceiling is being hit. Either the origin got slower or traffic grew. This is Tanod working, but it is also users seeing `503`; `tanod_responses_total{source="tanod"}` says how many. |
-| `tanod_origin_in_flight` pinned at `tanod_concurrency_limit` | Saturated. Look at `tanod_origin_latency_seconds` before raising the ceiling — a higher ceiling against a slower origin makes it slower still. |
+| `tanod_origin_in_flight` pinned at `tanod_concurrency_limit` | Saturated. Look at `tanod_origin_latency_seconds` before raising the ceiling — a higher ceiling against a slower origin makes it slower still. Above the limit right after a reload is a lowered ceiling draining, not a breach. |
 | `tanod_upstream_healthy == 0` | No backend is passing its health check. Tanod is still serving, on `stale_if_error` and on whatever the origin manages. |
 | `tanod_draining == 1` for longer than a deploy | An instance drained and was never replaced. It is serving and reporting itself not-ready, so a balancer has withdrawn it and nothing is watching. |
 
@@ -588,6 +894,10 @@ Three that are easy to miss:
 - `tanod_cache_bytes` at `cache.max_memory` **with a low hit ratio** — the
   working set does not fit and eviction is destroying entries before they are
   reused. More memory, or a shorter TTL and a narrower key.
+- `tanod_origin_disconnect_drains_total{outcome="deadline"}` rising — origin
+  work for disconnected clients is outliving `timeouts.origin`, and the ceiling
+  no longer bounds it. See
+  [what the origin ceiling guarantees](#what-the-origin-ceiling-guarantees).
 
 ### Origin resilience
 
@@ -691,7 +1001,7 @@ eviction. Purged content cannot become a persistent entry afterward.
 
 TTL and stale windows continue to be interpreted by Pingora's HTTP cache.
 Metadata revalidation updates the stored tags and accounting. Tag/path purges
-and deployment rollover work with every policy.
+and deployment/cache-policy retirement work with every policy.
 
 `/status` reports `cache.eviction`, `cache.bytes_used`, `cache.evicted`, and
 `cache.admission_rejected`. Prometheus exposes
@@ -708,3 +1018,43 @@ storage path, preventing an unflushed spool from truncating them. To spool a
 route, disable both `cache.enabled` and `coalesce.enabled` on that route;
 client backpressure can still affect cached/coalesced responses. This applies
 to every eviction policy.
+
+## Production candidate validation
+
+The [production examples](../ops/production/README.md) include VPS, Compose,
+fixed Kubernetes-tier and trusted NGINX configurations. Validate them with
+`bash scripts/check-production-configs.sh`. Their memory and admission budgets
+are starting points to calibrate, not claims about your application's capacity.
+See the [0.4 migration notes](UPGRADING-0.4.md) and
+[deployment security model](SECURITY-MODEL.md).
+
+`tanod_config_reloads_total{outcome="success"}` counts accepted reload attempts;
+`outcome="failure"` counts refusals, including invalid configuration and edits
+requiring restart. Both fixed series exist before the first attempt. A refusal
+keeps `tanod_config_generation` and the active policy unchanged. These counters
+count attempts actually processed, not Unix signals sent (signals may coalesce).
+
+`tanod_process_start_time_seconds` is a Unix timestamp set once at startup,
+unchanged by reload. `changes(...[1h])` can flag repeated process restarts at a
+stable scrape address; it cannot decide whether a restart was planned. Use
+supervisor exit status, OOM events and deployment history to distinguish crashes
+from intentional SIGTERM stops. Kubernetes pod-IP changes require a container
+restart metric from the orchestrator instead.
+
+`/health/live` stays 200 when the origin fails or readiness is withdrawn.
+`/health/ready` returns 503 during draining; with
+`telemetry.admin.require_healthy_upstream: true` it also requires at least one
+healthy backend. Keep that option off when every replica shares the same failed
+origin and stale responses remain useful. `/status` supplies generation,
+limiter queues/work, backend health/breaker state and cache pressure. These
+checks read maintained state; they do not initiate expensive origin probes.
+
+Read-only status and metrics have no bearer authentication. Purge does. Keep
+all operator ports private; a loopback host port does not prevent peer containers
+from connecting on their internal network. Restrict configuration and signal
+access too: SIGHUP is the reload authorization boundary.
+
+Historical Phase 3 timed figures predate a load-generator boundary correction:
+high-latency samples could lose a whole connection's accumulated tally. Measure
+the deployed binary with the current harness before choosing capacity or latency
+targets; desktop campaigns do not establish isolated-host latency guarantees.

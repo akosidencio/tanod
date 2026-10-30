@@ -14,6 +14,40 @@ use crate::classifier::RequestMetadata;
 use crate::config::schema::{QueryMode, QueryPolicy};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
+/// Carried in Pingora extensions for admission, and encoded in the primary
+/// key for both completed-cache lookup and Pingora's coalescing lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CacheNamespace(pub u64);
+
+impl CacheNamespace {
+    /// The Pingora key for `key` in this namespace: exactly
+    /// `key(key.canonical_string(), path)`, rendered into one buffer instead
+    /// of two.
+    pub(crate) fn key_for(self, key: &CacheKey, path: &str) -> pingora_cache::key::CacheKey {
+        use std::fmt::Write as _;
+        let mut primary = String::with_capacity(192);
+        // Writing to a `String` cannot fail.
+        let _ = write!(primary, "tanod-policy-v1:{}:", self.0);
+        key.write_canonical(&mut primary);
+        let mut key = pingora_cache::key::CacheKey::new(primary, path);
+        key.extensions.insert(self);
+        key
+    }
+
+    /// The same key from an already rendered canonical string. Tests use it
+    /// to state the encoding independently of [`key_for`](Self::key_for).
+    #[cfg(test)]
+    pub(crate) fn key(self, canonical: String, path: &str) -> pingora_cache::key::CacheKey {
+        // The fixed marker, decimal number and colon have unambiguous bounds.
+        let mut key = pingora_cache::key::CacheKey::new(
+            format!("tanod-policy-v1:{}:{canonical}", self.0),
+            path,
+        );
+        key.extensions.insert(self);
+        key
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
     scheme: String,
@@ -70,10 +104,19 @@ impl CacheKey {
     /// input at all, which is what the property test asserts.
     pub fn canonical_string(&self) -> String {
         let mut out = String::with_capacity(160);
+        self.write_canonical(&mut out);
+        out
+    }
+
+    /// [`canonical_string`](Self::canonical_string), appended to `out`.
+    fn write_canonical(&self, out: &mut String) {
+        use std::fmt::Write as _;
         let mut push = |part: &str| {
             // The separators are kept as well: they cost nothing and keep a
-            // fingerprinted key readable when one turns up in a log.
-            out.push_str(&part.len().to_string());
+            // fingerprinted key readable when one turns up in a log. The
+            // length is formatted straight into the key, not through a
+            // temporary string per component.
+            let _ = write!(out, "{}", part.len());
             out.push('\u{1e}');
             out.push_str(part);
             out.push('\u{1f}');
@@ -106,7 +149,6 @@ impl CacheKey {
             push(name);
             push(value);
         }
-        out
     }
 }
 
@@ -114,6 +156,10 @@ impl CacheKey {
 /// and adapter hints.
 pub struct KeyBuilder<'a> {
     pub scheme: &'a str,
+    /// The public host a trusted proxy reported, already validated by
+    /// [`crate::net::forwarded`]. `None` leaves the key exactly as it was
+    /// before host forwarding existed.
+    pub forwarded_host: Option<&'a str>,
     pub query_policy: Option<&'a QueryPolicy>,
     /// Header names from route `cache.vary` plus the framework adapter's
     /// mandatory variant headers.
@@ -126,15 +172,20 @@ impl<'a> KeyBuilder<'a> {
         let mut variant: Vec<(String, String)> = self
             .variant_headers
             .iter()
-            .filter_map(|name| {
-                let lower = name.to_ascii_lowercase();
-                header_values(req, &lower).map(|v| (lower, v))
-            })
+            // Header lookup is case-insensitive, so the lowercased name is
+            // only allocated for a header the request actually carries; most
+            // requests carry none of the framework's variant headers.
+            .filter_map(|name| header_values(req, name).map(|v| (name.to_ascii_lowercase(), v)))
             .collect();
 
         // Content coding is part of the identity of a stored body. Omit it and
         // a brotli entry eventually reaches a client that only reads gzip.
         variant.push(("~encoding".into(), normalize_accept_encoding(req)));
+        // The origin sees this as `X-Forwarded-Host` and builds URLs from it,
+        // so it selects a representation exactly as the routing host does.
+        if let Some(host) = self.forwarded_host {
+            variant.push(("~forwarded-host".into(), normalize_host(host, self.scheme)));
+        }
         variant.sort();
 
         CacheKey {
@@ -231,7 +282,8 @@ pub(crate) fn canonical_query(raw: &str, policy: Option<&QueryPolicy>) -> String
         .filter(|(k, _)| match policy {
             None => true,
             Some(p) => {
-                let listed = p.keys.iter().any(|want| want == k);
+                let name = form_decoded(k);
+                let listed = p.keys.iter().any(|want| want.as_bytes() == name);
                 match p.mode {
                     QueryMode::Include => listed,
                     QueryMode::Exclude => !listed,
@@ -240,9 +292,10 @@ pub(crate) fn canonical_query(raw: &str, policy: Option<&QueryPolicy>) -> String
         })
         .collect();
     // Reordering duplicate keys can change application semantics. Only sort
-    // when every key is unique; otherwise retain the request's original order.
+    // when every key is unique as the origin will read it (`q` and `%71` are
+    // one key); otherwise retain the request's original order.
     let mut seen = std::collections::HashSet::new();
-    if pairs.iter().all(|(key, _)| seen.insert(*key)) {
+    if pairs.iter().all(|(key, _)| seen.insert(form_decoded(key))) {
         pairs.sort_unstable();
     }
     pairs
@@ -253,6 +306,39 @@ pub(crate) fn canonical_query(raw: &str, policy: Option<&QueryPolicy>) -> String
         })
         .collect::<Vec<_>>()
         .join("&")
+}
+
+/// A query parameter name as an origin reads it: `application/x-www-form-
+/// urlencoded`, so `+` is a space and `%XX` a byte. A malformed escape stays
+/// literal, as `URLSearchParams` leaves it.
+///
+/// Only for deciding which configured key a parameter is. The key itself keeps
+/// the bytes as sent. Matching the raw name let `?%71=evil` slip past an
+/// `include: [q]` allowlist while the origin rendered it as `q=evil`, and the
+/// result was stored under the bare page for every visitor.
+fn form_decoded(name: &str) -> Vec<u8> {
+    let hex = |byte: Option<&u8>| {
+        byte.and_then(|b| (*b as char).to_digit(16))
+            .and_then(|digit| u8::try_from(digit).ok())
+    };
+    let bytes = name.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        at += 1;
+        match byte {
+            b'+' => out.push(b' '),
+            b'%' => match (hex(bytes.get(at)), hex(bytes.get(at + 1))) {
+                (Some(high), Some(low)) => {
+                    out.push(high * 16 + low);
+                    at += 2;
+                }
+                _ => out.push(b'%'),
+            },
+            _ => out.push(byte),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -296,6 +382,7 @@ mod tests {
             .collect::<Vec<_>>();
         KeyBuilder {
             scheme: "https",
+            forwarded_host: None,
             query_policy: None,
             variant_headers: &variant,
             deployment,
@@ -353,6 +440,7 @@ mod tests {
         let build = |headers: &HeaderMap| {
             KeyBuilder {
                 scheme: "https",
+                forwarded_host: None,
                 query_policy: None,
                 variant_headers: &["x-variant".to_string()],
                 deployment: None,
@@ -464,6 +552,59 @@ mod tests {
         );
     }
 
+    /// Phase 4.2. Next renders `?%71=evil` as `q=evil`; Tanod matched the raw
+    /// name, dropped it, and stored the "evil" page under bare `/search`.
+    #[test]
+    fn query_policies_match_names_as_the_origin_decodes_them() {
+        let include = QueryPolicy {
+            mode: QueryMode::Include,
+            keys: vec!["q".into(), "page size".into()],
+        };
+        assert_eq!(canonical_query("%71=evil", Some(&include)), "%71=evil");
+        assert_ne!(
+            canonical_query("%71=evil", Some(&include)),
+            canonical_query("", Some(&include))
+        );
+        assert_eq!(
+            canonical_query("page+size=2", Some(&include)),
+            "page+size=2"
+        );
+        assert_eq!(
+            canonical_query("page%20size=2", Some(&include)),
+            "page%20size=2"
+        );
+        // A malformed escape is not a listed name.
+        assert_eq!(canonical_query("%7=x&%zz=y&%", Some(&include)), "");
+        // One key spelled two ways is a duplicate: order is the origin's.
+        assert_eq!(canonical_query("q=b&%71=a", Some(&include)), "q=b&%71=a");
+        let exclude = QueryPolicy {
+            mode: QueryMode::Exclude,
+            keys: vec!["utm_source".into()],
+        };
+        assert_eq!(
+            canonical_query("utm%5Fsource=fb&q=1", Some(&exclude)),
+            "q=1"
+        );
+        assert_eq!(
+            canonical_query("utm%5fsource=fb&q=1", Some(&exclude)),
+            "q=1"
+        );
+        // A configured key is a decoded name. The origin reads `+` as a
+        // space, so `exclude: ["+"]` names a parameter no request can send,
+        // and `exclude: [" "]` is the one that drops `+=1` (fuzz finding).
+        let plus = QueryPolicy {
+            mode: QueryMode::Exclude,
+            keys: vec!["+".into()],
+        };
+        assert_eq!(canonical_query("+=1", Some(&plus)), "+=1");
+        assert_eq!(canonical_query("%2B=1", Some(&plus)), "");
+        let space = QueryPolicy {
+            mode: QueryMode::Exclude,
+            keys: vec![" ".into()],
+        };
+        assert_eq!(canonical_query("+=1&%20=2&q=3", Some(&space)), "q=3");
+    }
+
     #[test]
     fn exclude_policy_drops_only_listed_parameters() {
         let p = QueryPolicy {
@@ -494,6 +635,30 @@ mod tests {
         assert_ne!(
             canonical_query("flag", None),
             canonical_query("flag=", None)
+        );
+    }
+
+    /// The exact encoding, pinned: changing it moves every stored entry to a
+    /// new key, so it must never change as a side effect of how it is built.
+    #[test]
+    fn the_canonical_encoding_is_byte_for_byte_stable() {
+        let ctx = Ctx::new().with("rsc", "1").with("accept-encoding", "gzip");
+        let key = key("/p", Some("a=1"), &ctx, &["RSC"], Some("d1"));
+        let expected = "5\u{1e}https\u{1f}16\u{1e}shop.example.com\u{1f}3\u{1e}GET\u{1f}\
+                        2\u{1e}/p\u{1f}3\u{1e}a=1\u{1f}1\u{1e}d\u{1f}2\u{1e}d1\u{1f}\
+                        1\u{1e}2\u{1f}3\u{1e}rsc\u{1f}1\u{1e}1\u{1f}\
+                        9\u{1e}~encoding\u{1f}4\u{1e}gzip\u{1f}";
+        assert_eq!(key.canonical_string(), expected);
+        let pingora = CacheNamespace(7).key_for(&key, "/p");
+        assert_eq!(
+            pingora.primary_key_str(),
+            Some(format!("tanod-policy-v1:7:{expected}").as_str())
+        );
+        assert_eq!(
+            pingora_cache::key::CacheHashKey::combined(&pingora),
+            pingora_cache::key::CacheHashKey::combined(
+                &CacheNamespace(7).key(key.canonical_string(), "/p")
+            )
         );
     }
 
@@ -578,6 +743,7 @@ mod proptests {
     ) -> CacheKey {
         KeyBuilder {
             scheme,
+            forwarded_host: None,
             query_policy: None,
             variant_headers: variant,
             deployment,
@@ -775,6 +941,27 @@ mod proptests {
                 let key = pair.split('=').next().unwrap_or("");
                 prop_assert!(allowed.iter().any(|a| a == key), "kept unlisted key `{}`", key);
             }
+        }
+
+        /// However a listed name is percent-encoded, the policy treats it as
+        /// that name: kept by `include`, removed by `exclude`. Otherwise the
+        /// key and the origin disagree about which parameters are present.
+        #[test]
+        fn query_policies_see_through_percent_encoding(
+            name in prop::string::string_regex("[a-z_]{1,6}").unwrap(),
+            encode in prop::collection::vec(any::<(bool, bool)>(), 6),
+            value in prop::string::string_regex("[a-z0-9]{0,4}").unwrap(),
+        ) {
+            let spelled: String = name.bytes().zip(encode).map(|(b, (escape, upper))| match (escape, upper) {
+                (true, true) => format!("%{b:02X}"),
+                (true, false) => format!("%{b:02x}"),
+                (false, _) => (b as char).to_string(),
+            }).collect();
+            let raw = format!("{spelled}={value}");
+            let include = QueryPolicy { mode: QueryMode::Include, keys: vec![name.clone()] };
+            let exclude = QueryPolicy { mode: QueryMode::Exclude, keys: vec![name] };
+            prop_assert_eq!(canonical_query(&raw, Some(&include)), raw.clone());
+            prop_assert_eq!(canonical_query(&raw, Some(&exclude)), "");
         }
 
         /// And the mirror image: an `exclude` list must remove every key it

@@ -47,6 +47,12 @@ RUN mkdir -p /rootfs/etc/ssl/certs /rootfs/etc/tanod /rootfs/run/tanod /rootfs/t
 
 FROM scratch AS runtime
 
+ARG VCS_REF=unknown
+ARG SOURCE_ID=unknown
+LABEL org.opencontainers.image.source="https://github.com/akosidencio/tanod" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      io.tanod.build-inputs-sha256="${SOURCE_ID}"
+
 COPY --from=builder /rootfs/ /
 COPY --from=builder /tmp/tanod /usr/local/bin/tanod
 

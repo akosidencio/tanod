@@ -11,10 +11,10 @@
 //! client could put on the wire.
 
 use arbitrary::Arbitrary;
-use tanod::cache::KeyBuilder;
-use tanod::classifier::RequestMetadata;
 use http::{HeaderMap, HeaderName, HeaderValue, Method};
 use libfuzzer_sys::fuzz_target;
+use tanod::cache::KeyBuilder;
+use tanod::classifier::RequestMetadata;
 
 #[derive(Arbitrary, Debug)]
 struct Request<'a> {
@@ -50,6 +50,7 @@ fn build(req: &Request<'_>) -> Option<tanod::cache::CacheKey> {
     Some(
         KeyBuilder {
             scheme: req.scheme,
+            forwarded_host: None,
             query_policy: None,
             variant_headers: &variant,
             deployment: req.deployment,

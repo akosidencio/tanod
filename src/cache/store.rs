@@ -16,6 +16,29 @@
 //! Both Pingora's per-response size limit and this store's global budget are
 //! enforced while a fill is in progress. Abandoned fills remove their temporary
 //! entry on drop.
+//!
+//! # Memory exhaustion
+//!
+//! Running out of budget must not turn a good origin response into a failed
+//! request where that can be avoided, and where it cannot, it must fail
+//! visibly rather than truncate silently. What is possible depends on where in
+//! Pingora's lifecycle the budget runs out:
+//!
+//! * **Registering a fill** (the metadata reservation in `get_miss_handler`).
+//!   Refused, and Pingora, which has sent nothing downstream yet, disables the
+//!   cache for that response and serves it uncached. The proxy checks
+//!   [`BoundedStore::accepting_fills`] first so the usual case is a clean
+//!   uncacheable decision rather than a storage error.
+//! * **Writing the body.** By now Pingora serves the client *from this store*
+//!   and gives up the whole request if a write fails. So a fill that cannot
+//!   reserve its next chunk is *abandoned* instead: it will never be stored,
+//!   and it keeps streaming to the readers it has, accounted against a bounded
+//!   headroom of one `cache.max_body_size` above the budget. Only when that
+//!   headroom is exhausted too does the write fail, and Pingora aborts the
+//!   response rather than presenting a truncated body as complete.
+//!
+//! Every reserved byte is released exactly once: by completion, by the
+//! handoff timer, or by the handler's drop, whichever owns it.
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -31,10 +54,11 @@ use pingora_error::{Error, ErrorType, Result};
 use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::watch;
 
 use super::eviction::{TinyPolicy, Victim};
+use super::key::CacheNamespace;
 use crate::config::schema::{CacheDefaults, Eviction};
 
 type BinaryMeta = (Vec<u8>, Vec<u8>);
@@ -56,6 +80,17 @@ const TRANSIENT_HANDOFF: std::time::Duration = std::time::Duration::from_millis(
 const MAX_TAGS_PER_ENTRY: usize = 64;
 const MAX_TAG_LEN: usize = 256;
 
+/// How a fill's bytes were accounted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Grant {
+    /// Within `cache.max_memory`.
+    Budget,
+    /// Above it, within the abandoned-fill headroom.
+    Headroom,
+    /// Neither. Nothing was reserved and nothing was evicted.
+    Refused,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Written {
     Partial(usize),
@@ -73,10 +108,189 @@ impl Written {
     }
 }
 
+/// The most one `read_body` call returns, from a finished entry or a fill.
+///
+/// Pingora writes each returned chunk downstream as one write, and
+/// `timeouts.downstream_write` bounds each write, so this is also what a slow
+/// reader has to accept within that timeout. Unchanged from when bodies were
+/// copied out in slices of this size.
+const READ_CHUNK: usize = 64 * 1024;
+
+/// A body write at least this large is kept as its own immutable segment.
+/// Smaller writes accumulate until they reach it, so a stream of tiny chunks
+/// costs one segment per this many bytes rather than one per write.
+const SEAL_AT: usize = 4 * 1024;
+
+/// The body of a fill in progress.
+///
+/// Readers — the leader's own response and every coalesced follower — share
+/// sealed segments by reference count rather than copying them. Only the
+/// unsealed tail, under [`SEAL_AT`] bytes, is copied out, so following a fill
+/// costs no more than a few kilobytes of copying per reader however large the
+/// body.
+///
+/// Append-only: a segment never changes or moves once sealed, which is what
+/// lets a reader keep its position as a segment index across calls.
+#[derive(Default)]
+struct FillBody {
+    sealed: Vec<Bytes>,
+    sealed_len: usize,
+    /// Writes not yet sealed, fewer than [`SEAL_AT`] bytes.
+    open: Vec<u8>,
+}
+
+/// A reader's position in a body: a byte offset, plus the segment that holds
+/// it so a read does not rescan from the start.
+#[derive(Default)]
+struct Cursor {
+    offset: usize,
+    segment: usize,
+    segment_start: usize,
+}
+
+impl Cursor {
+    fn at(offset: usize) -> Self {
+        Cursor {
+            offset,
+            ..Cursor::default()
+        }
+    }
+
+    /// Up to `limit` bytes from the sealed segments at this position, without
+    /// copying, or `None` once the position is past every sealed segment.
+    fn slice(&mut self, segments: &[Bytes], limit: usize) -> Option<Bytes> {
+        while let Some(segment) = segments.get(self.segment) {
+            let from = self.offset.checked_sub(self.segment_start)?;
+            if from < segment.len() {
+                let chunk = segment.slice(from..segment.len().min(from + limit));
+                self.offset += chunk.len();
+                return Some(chunk);
+            }
+            self.segment_start += segment.len();
+            self.segment += 1;
+        }
+        None
+    }
+}
+
+impl FillBody {
+    fn len(&self) -> usize {
+        self.sealed_len + self.open.len()
+    }
+
+    /// Append one write. `owned` is `data` already copied into its own exact
+    /// allocation — done by the caller before taking the body lock — when the
+    /// write is large enough to become a segment by itself.
+    ///
+    /// Always a copy, never the caller's `Bytes`: an upstream chunk can be a
+    /// slice of a larger receive buffer (HTTP/2 frames are), and retaining it
+    /// would keep that whole buffer alive behind a few accounted bytes.
+    fn append(&mut self, data: &[u8], owned: Option<Bytes>) {
+        match owned {
+            Some(segment) => {
+                self.seal_open();
+                self.sealed_len += segment.len();
+                self.sealed.push(segment);
+            }
+            None => {
+                self.open.extend_from_slice(data);
+                if self.open.len() >= SEAL_AT {
+                    self.seal_open();
+                }
+            }
+        }
+    }
+
+    fn seal_open(&mut self) {
+        if self.open.is_empty() {
+            return;
+        }
+        let segment = Bytes::copy_from_slice(&self.open);
+        self.open.clear();
+        self.sealed_len += segment.len();
+        self.sealed.push(segment);
+    }
+
+    /// The next chunk at `cursor`, ending no later than `available`: what the
+    /// writer had published when the reader looked. Sealed bytes are shared;
+    /// tail bytes are copied.
+    fn read(&self, cursor: &mut Cursor, available: usize) -> Option<Bytes> {
+        let available = available.min(self.len());
+        if cursor.offset >= available {
+            return None;
+        }
+        let limit = READ_CHUNK.min(available - cursor.offset);
+        if let Some(chunk) = cursor.slice(&self.sealed, limit) {
+            return Some(chunk);
+        }
+        let from = cursor.offset.checked_sub(self.sealed_len)?;
+        let tail = self.open.get(from..from + limit)?;
+        cursor.offset += tail.len();
+        Some(Bytes::copy_from_slice(tail))
+    }
+
+    /// The finished body, for storage. Seals the tail first; followers still
+    /// reading this fill keep their positions, because sealing moves bytes
+    /// from the tail into a segment without changing any offset.
+    ///
+    /// A body whose segments would make a hit take more downstream writes
+    /// than a contiguous body is compacted into [`READ_CHUNK`]-sized segments,
+    /// once, here. One copy per fill buys every later hit the fewest writes:
+    /// a 16 KiB page that arrived in two upstream reads is otherwise two
+    /// writes on every hit, which measured slower than the copy it saves. A
+    /// body already laid out for the fewest writes is shared with no copy.
+    fn freeze(&mut self) -> Frozen {
+        self.seal_open();
+        let len = self.sealed_len;
+        let fewest = len.div_ceil(READ_CHUNK);
+        let writes: usize = self
+            .sealed
+            .iter()
+            .map(|s| s.len().div_ceil(READ_CHUNK))
+            .sum();
+        if writes <= fewest {
+            return Frozen {
+                segments: self.sealed.clone(),
+                len,
+            };
+        }
+        let mut segments = Vec::with_capacity(fewest);
+        let mut remaining = len;
+        // Never a zero capacity: the copy below advances by the room left.
+        let mut current = Vec::with_capacity(READ_CHUNK.min(remaining).max(1));
+        for segment in &self.sealed {
+            let mut rest = segment.as_ref();
+            while !rest.is_empty() {
+                let take = (current.capacity() - current.len()).min(rest.len());
+                let (head, tail) = rest.split_at(take);
+                current.extend_from_slice(head);
+                rest = tail;
+                if current.len() == current.capacity() {
+                    remaining = remaining.saturating_sub(current.len());
+                    segments.push(Bytes::from(std::mem::replace(
+                        &mut current,
+                        Vec::with_capacity(READ_CHUNK.min(remaining).max(1)),
+                    )));
+                }
+            }
+        }
+        if !current.is_empty() {
+            segments.push(Bytes::from(current));
+        }
+        Frozen { segments, len }
+    }
+}
+
+/// A finished body. Immutable, so hits read it with no lock at all.
+struct Frozen {
+    segments: Vec<Bytes>,
+    len: usize,
+}
+
 /// A finished entry.
 struct Stored {
-    meta: BinaryMeta,
-    body: Arc<RwLock<Vec<u8>>>,
+    meta: Arc<BinaryMeta>,
+    body: Arc<Frozen>,
     /// The request path this entry answers, so it can be purged by path.
     ///
     /// Empty when the path was too long to remember; see
@@ -96,8 +310,10 @@ struct Stored {
     /// here. A relaxed store is enough — losing one bit under contention costs
     /// an entry one extra chance, not correctness.
     visited: AtomicBool,
-    /// TinyUFO's revision distinguishes replacements from retired queue
-    /// records; the shared hash avoids allocating a lookup key on every hit.
+    /// Distinguishes this admission from earlier ones under the same key, so
+    /// a retired queue record cannot evict a replacement: TinyUFO's policy
+    /// revision, or under CLOCK and FIFO the [`EvictionQueue`] ticket. The
+    /// shared hash avoids allocating a lookup key on every TinyUFO hit.
     revision: u64,
     tiny_hash: Option<Arc<str>>,
 }
@@ -106,7 +322,7 @@ impl Stored {
     fn size(&self) -> usize {
         self.meta.0.len()
             + self.meta.1.len()
-            + self.body.read().len()
+            + self.body.len
             + self.path.len()
             + self.tags.iter().map(String::len).sum::<usize>()
     }
@@ -114,8 +330,8 @@ impl Stored {
 
 /// A write in progress. Readers attach to this and follow it.
 struct Temp {
-    meta: BinaryMeta,
-    body: Arc<RwLock<Vec<u8>>>,
+    meta: Arc<BinaryMeta>,
+    body: Arc<RwLock<FillBody>>,
     written: Arc<watch::Sender<Written>>,
     transient: bool,
     tags: Vec<String>,
@@ -123,19 +339,27 @@ struct Temp {
     /// A purge matched this fill while it was in progress. Existing followers
     /// may still drain the body, but it must not be admitted afterward.
     invalidated: bool,
+    namespace: Option<CacheNamespace>,
+    /// Pingora's leader is a reader too. Reserve its attachment at registration:
+    /// set_miss_handler panics if its subsequent exact-tag lookup misses. The
+    /// private writer tag transfers this reader once, even if purge intervenes;
+    /// it never authorizes a new attachment to an invalidated response.
+    leader: Option<watch::Receiver<Written>>,
 }
 
 impl Temp {
     fn new(meta: BinaryMeta, transient: bool, tags: Vec<String>, path: String) -> Self {
-        let (tx, _rx) = watch::channel(Written::Partial(0));
+        let (tx, rx) = watch::channel(Written::Partial(0));
         Temp {
-            meta,
-            body: Arc::new(RwLock::new(Vec::new())),
+            meta: Arc::new(meta),
+            body: Arc::new(RwLock::new(FillBody::default())),
             written: Arc::new(tx),
             transient,
             tags,
             path,
             invalidated: false,
+            namespace: None,
+            leader: Some(rx),
         }
     }
 }
@@ -175,14 +399,16 @@ fn parse_tags(value: &str) -> Vec<String> {
 /// traffic spikes.
 pub struct BoundedStore {
     /// Makes registering and completing a fill atomic with respect to purge.
+    /// Contains the namespace allowed to admit completed entries. Old pinned
+    /// requests may stream in their own namespace, but cannot retain entries.
     /// The read side is held only for those short state transitions, never
     /// while response bytes stream.
-    lifecycle: RwLock<()>,
+    lifecycle: RwLock<Option<CacheNamespace>>,
     cached: RwLock<HashMap<String, Stored>>,
     /// Eviction queue. Front is the next candidate; under
     /// [`Eviction::Clock`] an entry that has been read gets requeued at the
     /// back instead of being discarded.
-    order: RwLock<VecDeque<String>>,
+    order: RwLock<EvictionQueue>,
     /// Reverse index from invalidation tag to the entries carrying it.
     ///
     /// A reverse index rather than a scan because purging is the operation an
@@ -194,7 +420,17 @@ pub struct BoundedStore {
     /// Includes completed entries and every byte in an in-progress fill.
     /// All memory-accounting mutations take this lock before cache-map locks.
     used: Mutex<usize>,
+    /// The part of `used` held by fills: in progress, in a handoff, or
+    /// abandoned. Unlike completed entries these cannot be evicted, so a
+    /// reservation that would not fit beside them is refused up front rather
+    /// than after emptying the cache for nothing. Written only while `used`
+    /// is held; an atomic so status and metrics can read it without the lock.
+    pinned: AtomicUsize,
     max_bytes: usize,
+    /// How far abandoned fills may take `pinned` above `max_bytes` so the
+    /// responses already streaming from them can finish. One maximum body:
+    /// whatever else happens, the fill that runs out first can complete.
+    headroom: usize,
     next_id: AtomicU64,
     policy: Eviction,
     tiny: Option<RwLock<TinyPolicy>>,
@@ -207,6 +443,23 @@ pub struct BoundedStore {
     evicted: AtomicU64,
     purged: AtomicU64,
     admission_rejected: AtomicU64,
+    /// Memory-pressure outcomes; see the module documentation.
+    uncached_fallbacks: AtomicU64,
+    fills_abandoned: AtomicU64,
+    fills_exhausted: AtomicU64,
+    #[cfg(test)]
+    hooks: phase31_tests::Hooks,
+}
+
+/// Memory-pressure counters, for the status document.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MemoryPressure {
+    /// Responses served uncached because a fill could not be registered.
+    pub uncached_fallback: u64,
+    /// Fills that ran out mid-body and finished from the headroom, unstored.
+    pub fill_abandoned: u64,
+    /// Fills that ran out of headroom too; their responses were aborted.
+    pub memory_exhausted: u64,
 }
 
 /// Everything a purge removed, for the response and the metrics.
@@ -223,13 +476,17 @@ impl BoundedStore {
         // `Storage` takes `&'static self` throughout (upstream marks this a
         // TODO). Leaking once at startup is the intended shape.
         Box::leak(Box::new(BoundedStore {
-            lifecycle: RwLock::new(()),
+            lifecycle: RwLock::new(None),
             cached: RwLock::new(HashMap::new()),
-            order: RwLock::new(VecDeque::new()),
+            order: RwLock::new(EvictionQueue::default()),
             tag_index: RwLock::new(HashMap::new()),
             temp: RwLock::new(HashMap::new()),
             used: Mutex::new(0),
+            pinned: AtomicUsize::new(0),
             max_bytes: cfg.max_memory.as_usize(),
+            // Validation already keeps `max_body_size` within `max_memory`;
+            // the clamp keeps the bound at most twice the budget regardless.
+            headroom: cfg.max_body_size.as_usize().min(cfg.max_memory.as_usize()),
             next_id: AtomicU64::new(0),
             policy: cfg.eviction,
             tiny: (cfg.eviction == Eviction::Tinyufo)
@@ -238,6 +495,11 @@ impl BoundedStore {
             evicted: AtomicU64::new(0),
             purged: AtomicU64::new(0),
             admission_rejected: AtomicU64::new(0),
+            uncached_fallbacks: AtomicU64::new(0),
+            fills_abandoned: AtomicU64::new(0),
+            fills_exhausted: AtomicU64::new(0),
+            #[cfg(test)]
+            hooks: phase31_tests::Hooks::default(),
         }))
     }
 
@@ -282,17 +544,83 @@ impl BoundedStore {
         self.cached.read().len()
     }
 
-    /// Make room for `additional` bytes, evicting until the budget allows it.
+    /// Bytes held by fills rather than completed entries.
+    pub fn bytes_pinned(&self) -> usize {
+        self.pinned.load(Ordering::Relaxed)
+    }
+
+    /// How far abandoned fills may exceed [`limit`](Self::limit).
+    pub fn headroom(&self) -> usize {
+        self.headroom
+    }
+
+    pub fn memory_pressure(&self) -> MemoryPressure {
+        MemoryPressure {
+            uncached_fallback: self.uncached_fallbacks.load(Ordering::Relaxed),
+            fill_abandoned: self.fills_abandoned.load(Ordering::Relaxed),
+            memory_exhausted: self.fills_exhausted.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Could a new fill of about `estimate` bytes of metadata register now?
+    ///
+    /// Advisory: the proxy asks before offering Pingora a cacheable response,
+    /// so that the usual exhaustion case becomes an uncacheable response
+    /// instead of a storage error. A fill that passes this and then loses a
+    /// race is still refused safely by `get_miss_handler`.
+    pub fn accepting_fills(&self, estimate: usize) -> bool {
+        self.pinned.load(Ordering::Relaxed).saturating_add(estimate) <= self.max_bytes
+    }
+
+    /// Record a response the proxy served uncached because the cache was full.
+    pub fn note_uncached_fallback(&self) {
+        self.uncached_fallbacks.fetch_add(1, Ordering::Relaxed);
+        crate::telemetry::metrics::CACHE_MEMORY_PRESSURE
+            .with_label_values(&["uncached_fallback"])
+            .inc();
+    }
+
+    /// Reserve `additional` bytes for a fill, evicting completed entries as
+    /// needed.
+    ///
+    /// `budget` allows the reservation inside `max_bytes`; `headroom` allows
+    /// it inside `max_bytes + headroom`, which only an abandoned fill may use.
+    /// Feasibility is decided from `pinned` before anything is evicted:
+    /// completed entries can always be evicted, fills cannot, so a
+    /// reservation that cannot fit beside the fills is refused without
+    /// emptying the cache first.
     ///
     /// Accounting transitions lock `used` → `cached` → `order` →
     /// `tag_index` → `tiny`, skipping unused locks. Lookup takes only cache
     /// and policy read locks. Never acquire the cache map after the policy
     /// lock: readers and eviction must observe the same entry identity.
-    fn reserve(&self, additional: usize) -> bool {
-        if additional > self.max_bytes {
-            return false;
-        }
+    ///
+    /// A reservation that fits without evicting takes `used` alone. The map
+    /// locks are only for choosing and removing victims, and taking them for
+    /// every body chunk of every fill made each chunk wait out — and block —
+    /// every concurrent lookup's read of the cache map.
+    fn reserve_fill(&self, additional: usize, budget: bool, headroom: bool) -> Grant {
         let mut used = self.used.lock();
+        let pinned = self.pinned.load(Ordering::Relaxed);
+        let wanted = pinned.saturating_add(additional);
+        let (cap, grant) = if budget && wanted <= self.max_bytes {
+            (self.max_bytes, Grant::Budget)
+        } else if headroom && wanted <= self.max_bytes.saturating_add(self.headroom) {
+            (
+                self.max_bytes.saturating_add(self.headroom),
+                Grant::Headroom,
+            )
+        } else {
+            return Grant::Refused;
+        };
+        // Exactly what the eviction loop below would conclude after zero
+        // iterations; `used` is held throughout, so nothing can change it in
+        // between.
+        if used.saturating_add(additional) <= cap {
+            *used += additional;
+            self.pinned.fetch_add(additional, Ordering::Relaxed);
+            return grant;
+        }
         let mut cached = self.cached.write();
         let mut order = self.order.write();
         let mut tag_index = self.tag_index.write();
@@ -303,30 +631,31 @@ impl BoundedStore {
         // taken in FIFO order, which is the correct degradation: if everything
         // is hot, arrival order is as good a tiebreak as any.
         let mut chances = match self.policy {
-            Eviction::Clock => order.len().saturating_add(1),
+            Eviction::Clock => order.records.len().saturating_add(1),
             Eviction::Fifo | Eviction::Tinyufo => 0,
         };
         let mut tiny = self.tiny.as_ref().map(|policy| policy.write());
-        while used.saturating_add(additional) > self.max_bytes {
+        while used.saturating_add(additional) > cap {
             if let Some(policy) = tiny.as_mut() {
                 let victims = policy.evict();
                 if victims.is_empty() {
-                    return false;
+                    return Grant::Refused;
                 }
                 self.discard_victims(victims, &mut used, &mut cached, &mut tag_index);
                 Self::compact(policy, &cached);
                 continue;
             }
-            let Some(victim) = order.pop_front() else {
-                return false;
+            let Some((victim, ticket)) = order.records.pop_front() else {
+                return Grant::Refused;
             };
-            let spared = chances > 0
-                && cached
-                    .get(&victim)
-                    .is_some_and(|entry| entry.visited.swap(false, Ordering::Relaxed));
-            if spared {
+            // A record whose entry was replaced or purged since it was queued
+            // is retired here rather than searched for at the time.
+            let Some(entry) = cached.get(&victim).filter(|entry| entry.revision == ticket) else {
+                continue;
+            };
+            if chances > 0 && entry.visited.swap(false, Ordering::Relaxed) {
                 chances -= 1;
-                order.push_back(victim);
+                order.records.push_back((victim, ticket));
                 continue;
             }
             if let Some(entry) = cached.remove(&victim) {
@@ -337,17 +666,29 @@ impl BoundedStore {
             }
         }
         *used += additional;
-        true
+        self.pinned.fetch_add(additional, Ordering::Relaxed);
+        grant
     }
 
+    /// Return a fill's whole reservation. Called exactly once per fill, by
+    /// whichever of completion, handoff expiry or drop owns it.
     fn release(&self, amount: usize) {
         let mut used = self.used.lock();
         *used = used.saturating_sub(amount);
+        let pinned = self.pinned.load(Ordering::Relaxed);
+        debug_assert!(
+            pinned >= amount,
+            "released {amount} of {pinned} pinned bytes"
+        );
+        self.pinned
+            .store(pinned.saturating_sub(amount), Ordering::Relaxed);
     }
 
     /// Convert an already-accounted fill. Return an admission-rejected object
     /// to its streaming handoff; its bytes remain reserved until handoff ends.
-    fn admit(&self, key: String, mut obj: Stored) -> Option<Stored> {
+    /// An admitted fill's `accounted` bytes stop being pinned: they are now a
+    /// completed entry, which eviction may take.
+    fn admit(&self, key: String, mut obj: Stored, accounted: usize) -> Option<Stored> {
         let mut used = self.used.lock();
         let mut cached = self.cached.write();
         let mut order = self.order.write();
@@ -356,11 +697,13 @@ impl BoundedStore {
         if let Some(old) = cached.remove(&key) {
             *used = used.saturating_sub(old.size());
             unindex_tags(&mut tag_index, &key, &old.tags);
+            // Under CLOCK and FIFO the old entry's queue record is left to be
+            // retired when it reaches the front: removing it here meant a
+            // scan of the whole queue, under every cache write lock, on every
+            // replacement — every expiry of a microcached page.
             if let Some(policy) = tiny.as_mut() {
                 policy.remove(&key, old.revision);
                 policy.invalidate();
-            } else {
-                order.retain(|existing| existing != &key);
             }
         }
         if let Some(policy) = tiny.as_mut() {
@@ -384,11 +727,18 @@ impl BoundedStore {
                 .or_default()
                 .insert(key.clone());
         }
-        cached.insert(key.clone(), obj);
+        if tiny.is_none() {
+            obj.revision = order.ticket();
+            order.records.push_back((key.clone(), obj.revision));
+        }
+        cached.insert(key, obj);
+        let pinned = self.pinned.load(Ordering::Relaxed);
+        self.pinned
+            .store(pinned.saturating_sub(accounted), Ordering::Relaxed);
         if let Some(policy) = tiny.as_mut() {
             Self::compact(policy, &cached);
         } else {
-            order.push_back(key);
+            order.compact_if_needed(&cached);
         }
         None
     }
@@ -463,15 +813,28 @@ impl BoundedStore {
         self.purge_matching_locked(|key, _| victims.contains(key))
     }
 
-    /// Drop every completed entry.
-    ///
-    /// This is what a deployment rollover uses. The cache key already carries
-    /// `deployment.id`, so entries from the previous build are unreachable the
-    /// moment the id changes — but unreachable is not the same as reclaimed,
-    /// and a cache still holding a whole build's worth of dead responses has
-    /// that much less room for the one now serving traffic.
+    /// Invalidate all registered fills and drop every completed entry.
+    /// Existing followers retain their body and progress notification Arcs.
     pub fn purge_all(&self) -> Purged {
         let _lifecycle = self.lifecycle.write();
+        self.purge_all_locked()
+    }
+
+    /// Rotate admission before publishing the new policy. The lifecycle write
+    /// guard makes retirement, invalidation and completed-entry reclamation one
+    /// transition against writer registration/completion. No namespace history
+    /// is retained, so rapid reloads cannot grow a retired-generation registry.
+    pub(crate) fn activate_namespace(&self, namespace: u64) -> Purged {
+        let mut active = self.lifecycle.write();
+        let next = Some(CacheNamespace(namespace));
+        if *active == next {
+            return Purged::default();
+        }
+        *active = next;
+        self.purge_all_locked()
+    }
+
+    fn purge_all_locked(&self) -> Purged {
         {
             let mut temp = self.temp.write();
             for writes in temp.values_mut() {
@@ -559,12 +922,54 @@ impl BoundedStore {
             Self::compact(policy, &cached);
         }
         if !doomed.is_empty() {
-            let removed: HashSet<&String> = doomed.iter().collect();
-            order.retain(|key| !removed.contains(key));
+            order.compact_if_needed(&cached);
             self.purged
                 .fetch_add(purged.entries as u64, Ordering::Relaxed);
         }
         purged
+    }
+
+    /// A hit on a finished entry, if there is one. The caller holds the
+    /// read side of `lifecycle`.
+    ///
+    /// Recording the read here rather than in the hit handler is deliberate:
+    /// this is the point at which the entry demonstrably had value, whether
+    /// or not the client goes on to read the whole body.
+    fn completed(&self, hash: &str) -> Result<Option<(CacheMeta, HitHandler)>> {
+        let found = {
+            let cached = self.cached.read();
+            cached.get(hash).map(|obj| {
+                obj.visited.store(true, Ordering::Relaxed);
+                if let (Some(policy), Some(hash)) = (&self.tiny, &obj.tiny_hash) {
+                    policy.read().hit(hash, obj.revision);
+                }
+                (obj.meta.clone(), obj.body.clone())
+            })
+        };
+        let Some((meta, body)) = found else {
+            return Ok(None);
+        };
+        let meta = CacheMeta::deserialize(&meta.0, &meta.1)?;
+        Ok(Some((
+            meta,
+            Box::new(CompleteHit {
+                body,
+                cursor: Cursor::default(),
+            }),
+        )))
+    }
+
+    /// Stop new readers attaching to one fill. Its existing readers keep
+    /// what they have; see `Temp::invalidated`.
+    fn invalidate_fill(&self, key: &str, id: u64) {
+        if let Some(fill) = self
+            .temp
+            .write()
+            .get_mut(key)
+            .and_then(|writes| writes.get_mut(&id))
+        {
+            fill.invalidated = true;
+        }
     }
 
     fn remove_temp(&self, key: &str, id: u64) -> Option<Temp> {
@@ -574,6 +979,42 @@ impl BoundedStore {
             temp.remove(key);
         }
         removed
+    }
+}
+
+/// The CLOCK/FIFO eviction queue: one record per stored entry, plus records
+/// for entries since replaced or purged, which are skipped when they reach
+/// the front.
+///
+/// A record names its entry by key and ticket. The ticket is the entry's
+/// `revision`, unique per admission, so a replacement under the same key is
+/// never mistaken for the entry an older record was queued for. Victims are
+/// chosen in exactly the order an eagerly cleaned queue would give.
+#[derive(Default)]
+struct EvictionQueue {
+    records: VecDeque<(String, u64)>,
+    next_ticket: u64,
+}
+
+impl EvictionQueue {
+    fn ticket(&mut self) -> u64 {
+        self.next_ticket = self.next_ticket.wrapping_add(1);
+        self.next_ticket
+    }
+
+    /// Drop retired records once they outnumber live entries, so a cache
+    /// that is replaced or purged faster than it evicts cannot grow its queue
+    /// without bound. Amortized: each rebuild is paid for by the retirements
+    /// that made it necessary.
+    fn compact_if_needed(&mut self, cached: &HashMap<String, Stored>) {
+        if self.records.len() <= cached.len().saturating_mul(2).saturating_add(64) {
+            return;
+        }
+        self.records.retain(|(key, ticket)| {
+            cached
+                .get(key)
+                .is_some_and(|entry| entry.revision == *ticket)
+        });
     }
 }
 
@@ -602,27 +1043,15 @@ impl Storage for BoundedStore {
         key: &CacheKey,
         _t: &SpanHandle,
     ) -> Result<Option<(CacheMeta, HitHandler)>> {
-        // TinyUFO rejection must atomically move a fill into its handoff.
-        let _lifecycle = self.tiny.as_ref().map(|_| self.lifecycle.read());
+        // Attachment is atomic with purge and completion/handoff transitions.
+        let _lifecycle = self.lifecycle.read();
         let hash = key.combined();
 
-        // Recording the read here rather than in the hit handler is
-        // deliberate: this is the point at which the entry demonstrably had
-        // value, whether or not the client goes on to read the whole body.
-        let found = {
-            let cached = self.cached.read();
-            cached.get(&hash).map(|obj| {
-                obj.visited.store(true, Ordering::Relaxed);
-                if let (Some(policy), Some(hash)) = (&self.tiny, &obj.tiny_hash) {
-                    policy.read().hit(hash, obj.revision);
-                }
-                (obj.meta.clone(), obj.body.clone())
-            })
-        };
-        if let Some((meta, body)) = found {
-            let meta = CacheMeta::deserialize(&meta.0, &meta.1)?;
-            return Ok(Some((meta, Box::new(CompleteHit { body, read: 0 }))));
+        if let Some(hit) = self.completed(&hash)? {
+            return Ok(Some(hit));
         }
+        #[cfg(test)]
+        phase31_tests::Hooks::run(&self.hooks.lookup_missed);
 
         // Nothing finished — but a write may be in progress, and this is the
         // path a coalesced waiter arrives on.
@@ -634,6 +1063,10 @@ impl Storage for BoundedStore {
         // entries, every one of them would miss and go to the origin — which
         // is request collapsing failing silently, in the one shape where the
         // collapsing matters most.
+        // Eligibility check and subscription share the temp read guard. Purge
+        // marks fills under its write guard: subscribing here is attachment's
+        // linearization point. Purge linearizes when its lifecycle write guard
+        // is released, after all matching temps and completed entries change.
         let partial = {
             let temp = self.temp.read();
             temp.get(&hash).and_then(|writes| {
@@ -641,13 +1074,20 @@ impl Storage for BoundedStore {
                 // revalidation overlaps.
                 writes
                     .iter()
-                    .filter(|(_, fill)| !fill.invalidated || !fill.written.borrow().done())
+                    .filter(|(_, fill)| !fill.invalidated)
                     .max_by_key(|(id, _)| **id)
                     .map(|(_, t)| (t.meta.clone(), t.body.clone(), t.written.subscribe()))
             })
         };
         let Some((meta, body, written)) = partial else {
-            return Ok(None);
+            // Completion does not exclude lookups: it admits the entry to
+            // `cached` and only then removes the fill from `temp`. A lookup
+            // can therefore miss `cached` just before the admission and miss
+            // `temp` just after the removal. Missing `temp` means any such
+            // completion has already admitted, so a second look at `cached`
+            // finds the entry unless it was genuinely evicted or purged. Only
+            // a full miss pays for it.
+            return self.completed(&hash);
         };
         let meta = CacheMeta::deserialize(&meta.0, &meta.1)?;
         Ok(Some((
@@ -655,7 +1095,7 @@ impl Storage for BoundedStore {
             Box::new(PartialHit {
                 body,
                 written,
-                read: 0,
+                cursor: Cursor::default(),
             }),
         )))
     }
@@ -675,24 +1115,26 @@ impl Storage for BoundedStore {
             return Ok(None);
         };
         let id: u64 = write_id.into();
-        let _lifecycle = self.tiny.as_ref().map(|_| self.lifecycle.read());
+        let _lifecycle = self.lifecycle.read();
         let hash = key.combined();
 
         // Take everything needed out of the lock in one scope: a parking_lot
         // guard is !Send, so holding one across the await below makes the
         // whole future non-Send.
         let found = {
-            let guard = self.temp.read();
+            let mut guard = self.temp.write();
             guard
-                .get(&hash)
-                .and_then(|m| m.get(&id))
-                .filter(|temp| !temp.invalidated || !temp.written.borrow().done())
-                .map(|temp| {
-                    (
-                        temp.meta.clone(),
-                        temp.body.clone(),
-                        temp.written.subscribe(),
-                    )
+                .get_mut(&hash)
+                .and_then(|m| m.get_mut(&id))
+                .and_then(|temp| {
+                    // This capability belongs to the miss handler, not to later
+                    // requests. Transfer its pre-purge reservation first; all new
+                    // subscriptions still require an eligible fill under this lock.
+                    let reader = temp
+                        .leader
+                        .take()
+                        .or_else(|| (!temp.invalidated).then(|| temp.written.subscribe()))?;
+                    Some((temp.meta.clone(), temp.body.clone(), reader))
                 })
         };
         let Some((meta, body, written)) = found else {
@@ -707,7 +1149,7 @@ impl Storage for BoundedStore {
             Box::new(PartialHit {
                 body,
                 written,
-                read: 0,
+                cursor: Cursor::default(),
             }),
         )))
     }
@@ -726,33 +1168,34 @@ impl Storage for BoundedStore {
             .response_header()
             .headers
             .contains_key(crate::cache::TRANSIENT_HEADER);
-        // Read the origin's tags here, where the response header is still in
-        // hand. A transient entry is never admitted, so its tags would only be
-        // accounted and thrown away.
-        let tags = if transient {
-            Vec::new()
-        } else {
-            meta.response_header()
-                .headers
-                .get(&self.tag_header)
-                .and_then(|value| value.to_str().ok())
-                .map(parse_tags)
-                .unwrap_or_default()
-        };
-        // The path travels in the key's `user_tag`, which Pingora does not
-        // hash. See `Tanod::cache_key_callback`.
-        let path = if transient {
-            String::new()
-        } else {
-            key.user_tag().to_string()
-        };
+        // Transient responses also need purge identity: a path/tag purge must
+        // hide their in-progress and scheduler-handoff forms from new readers.
+        // Only completed admission populates the reverse tag index.
+        let tags = meta
+            .response_header()
+            .headers
+            .get(&self.tag_header)
+            .and_then(|value| value.to_str().ok())
+            .map(parse_tags)
+            .unwrap_or_default();
+        let path = key.user_tag().to_string();
         let serialized = meta.serialize()?;
         let tags_size: usize = tags.iter().map(String::len).sum();
         let meta_size = serialized.0.len() + serialized.1.len() + tags_size + path.len();
-        if !self.reserve(meta_size) {
+        if self.reserve_fill(meta_size, true, false) == Grant::Refused {
+            // Nothing has been sent downstream yet, so Pingora disables the
+            // cache for this response and serves it straight from the origin.
+            // Headroom is not offered here: it exists to finish responses
+            // already streaming, not to start new fills over budget.
+            self.note_uncached_fallback();
             return Error::e_explain(ErrorType::InternalError, "cache memory budget exhausted");
         }
-        let temp = Temp::new(serialized, transient, tags, path);
+        let mut temp = Temp::new(serialized, transient, tags, path);
+        temp.namespace = key.extensions.get::<CacheNamespace>().copied();
+        // An old request may reach registration after retirement. Its leader
+        // already owns a reserved reader, but no new follower may attach to
+        // this obsolete namespace, even before completion discards the fill.
+        temp.invalidated = temp.namespace.is_some() && temp.namespace != *_lifecycle;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let handler = FollowableMiss {
             store: self,
@@ -762,6 +1205,7 @@ impl Storage for BoundedStore {
             written: temp.written.clone(),
             accounted: meta_size,
             finished: false,
+            abandoned: false,
         };
         self.temp.write().entry(hash).or_default().insert(id, temp);
         Ok(Box::new(handler))
@@ -839,7 +1283,7 @@ impl Storage for BoundedStore {
                 .or_default()
                 .insert(hash.clone());
         }
-        obj.meta = replacement;
+        obj.meta = Arc::new(replacement);
         obj.tags = replacement_tags;
         let mut tiny = self.tiny.as_ref().map(|policy| policy.write());
         if let Some(policy) = tiny.as_mut() {
@@ -863,24 +1307,16 @@ impl Storage for BoundedStore {
     }
 }
 
-/// Reads a finished entry.
+/// Reads a finished entry: slices of an immutable body, never a copy.
 struct CompleteHit {
-    body: Arc<RwLock<Vec<u8>>>,
-    read: usize,
+    body: Arc<Frozen>,
+    cursor: Cursor,
 }
 
 #[async_trait]
 impl HandleHit for CompleteHit {
     async fn read_body(&mut self) -> Result<Option<Bytes>> {
-        const CHUNK: usize = 64 * 1024;
-        let body = self.body.read();
-        if self.read >= body.len() {
-            return Ok(None);
-        }
-        let end = (self.read + CHUNK).min(body.len());
-        let chunk = Bytes::copy_from_slice(&body[self.read..end]);
-        self.read = end;
-        Ok(Some(chunk))
+        Ok(self.cursor.slice(&self.body.segments, READ_CHUNK))
     }
 
     async fn finish(
@@ -897,7 +1333,7 @@ impl HandleHit for CompleteHit {
     }
 
     fn seek(&mut self, start: usize, _end: Option<usize>) -> Result<()> {
-        self.read = start.min(self.body.read().len());
+        self.cursor = Cursor::at(start.min(self.body.len));
         Ok(())
     }
 
@@ -916,9 +1352,9 @@ impl HandleHit for CompleteHit {
 /// receives the leader's first chunk as soon as the leader produces it, rather
 /// than waiting for the whole render to finish.
 struct PartialHit {
-    body: Arc<RwLock<Vec<u8>>>,
+    body: Arc<RwLock<FillBody>>,
     written: watch::Receiver<Written>,
-    read: usize,
+    cursor: Cursor,
 }
 
 #[async_trait]
@@ -926,12 +1362,10 @@ impl HandleHit for PartialHit {
     async fn read_body(&mut self) -> Result<Option<Bytes>> {
         loop {
             let state = *self.written.borrow_and_update();
-            let available = state.bytes();
-            if available > self.read {
-                // Copy out under the lock, then release it before awaiting.
-                let end = (self.read + 64 * 1024).min(available);
-                let chunk = Bytes::copy_from_slice(&self.body.read()[self.read..end]);
-                self.read = end;
+            // Taken and released before awaiting: the guard is held only
+            // while a segment is sliced or a tail of at most `SEAL_AT` bytes
+            // is copied.
+            if let Some(chunk) = self.body.read().read(&mut self.cursor, state.bytes()) {
                 return Ok(Some(chunk));
             }
             if state.done() {
@@ -974,25 +1408,57 @@ struct FollowableMiss {
     store: &'static BoundedStore,
     key: String,
     id: U64WriteId,
-    body: Arc<RwLock<Vec<u8>>>,
+    body: Arc<RwLock<FillBody>>,
     written: Arc<watch::Sender<Written>>,
     accounted: usize,
     finished: bool,
+    /// Ran out of budget mid-body and continued on the headroom. Never
+    /// stored; still served to the readers it has and any that attach.
+    abandoned: bool,
 }
 
 #[async_trait]
 impl HandleMiss for FollowableMiss {
     async fn write_body(&mut self, data: Bytes, eof: bool) -> Result<()> {
-        if !data.is_empty() && !self.store.reserve(data.len()) {
-            return Error::e_explain(
-                ErrorType::InternalError,
-                "cache memory budget exhausted during fill",
-            );
+        if !data.is_empty() {
+            match self.store.reserve_fill(data.len(), !self.abandoned, true) {
+                Grant::Budget => {}
+                Grant::Headroom => {
+                    if !self.abandoned {
+                        self.abandoned = true;
+                        self.store.fills_abandoned.fetch_add(1, Ordering::Relaxed);
+                        crate::telemetry::metrics::CACHE_MEMORY_PRESSURE
+                            .with_label_values(&["fill_abandoned"])
+                            .inc();
+                    }
+                }
+                Grant::Refused => {
+                    // Pingora gives up the whole request on this error: the
+                    // client sees an aborted response, never a short one
+                    // presented as complete. Hide the fill from new readers
+                    // now; the drop that follows releases its reservation and
+                    // ends the readers it has with an error.
+                    self.store.invalidate_fill(&self.key, self.id.into());
+                    self.store.fills_exhausted.fetch_add(1, Ordering::Relaxed);
+                    crate::telemetry::metrics::CACHE_MEMORY_PRESSURE
+                        .with_label_values(&["memory_exhausted"])
+                        .inc();
+                    return Error::e_explain(
+                        ErrorType::InternalError,
+                        "cache memory budget and headroom exhausted during fill",
+                    );
+                }
+            }
         }
         self.accounted += data.len();
-        let so_far = self.written.borrow().bytes();
-        self.body.write().extend_from_slice(&data);
-        let total = so_far + data.len();
+        // A chunk large enough to be its own segment is copied before the
+        // body lock is taken, so no reader waits on that copy.
+        let owned = (data.len() >= SEAL_AT).then(|| Bytes::copy_from_slice(&data));
+        let total = {
+            let mut body = self.body.write();
+            body.append(&data, owned);
+            body.len()
+        };
         self.written.send_replace(if eof {
             Written::Complete(total)
         } else {
@@ -1003,65 +1469,48 @@ impl HandleMiss for FollowableMiss {
 
     async fn finish(mut self: Box<Self>) -> Result<MissFinishType> {
         let id: u64 = self.id.into();
-        // Make sure any follower that has not drained yet sees the end.
-        let total = self.written.borrow().bytes();
-        self.written.send_replace(Written::Complete(total));
+        // Seal the body and make sure any follower that has not drained yet
+        // sees the end. Sealing moves no byte to a new offset, so followers
+        // keep their positions.
+        let frozen = self.body.write().freeze();
+        let size = frozen.len;
+        self.written.send_replace(Written::Complete(size));
+        #[cfg(test)]
+        phase31_tests::Hooks::run(&self.store.hooks.before_completion);
 
-        let transient = {
-            let temp = self.store.temp.read();
-            temp.get(&self.key)
-                .and_then(|writes| writes.get(&id))
-                .map(|entry| entry.transient)
-        };
-        let Some(transient) = transient else {
-            return Err(Error::explain(ErrorType::InternalError, "write vanished"));
-        };
-        let size = self.body.read().len();
-        self.finished = true;
-        if transient {
-            // The lock is released when the miss handler is created. If the
-            // whole body arrives in the same upstream read as the headers,
-            // removing this temp immediately races the woken followers and
-            // turns each into a new origin request. Keep it only for a short
-            // scheduler handoff; attached readers retain their own Arcs.
-            let store = self.store;
-            let key = self.key.clone();
-            let accounted = self.accounted;
-            tokio::spawn(async move {
-                tokio::time::sleep(TRANSIENT_HANDOFF).await;
-                if store.remove_temp(&key, id).is_some() {
-                    store.release(accounted);
-                }
-            });
-        } else {
-            // A purge either marks this fill before this transition or waits
-            // until it has become a completed entry and removes it there.
-            let _shared = self
-                .store
-                .tiny
-                .is_none()
-                .then(|| self.store.lifecycle.read());
-            let _exclusive = self
-                .store
-                .tiny
-                .is_some()
-                .then(|| self.store.lifecycle.write());
-            let temp = self
-                .store
-                .remove_temp(&self.key, id)
-                .ok_or_else(|| Error::explain(ErrorType::InternalError, "write vanished"))?;
-            if temp.invalidated {
-                self.store.release(self.accounted);
-                return Ok(MissFinishType::Created(size));
-            }
-            let body = temp.body;
-            let rejected = self.store.admit(
-                self.key.clone(),
-                Stored {
-                    meta: temp.meta,
-                    body,
-                    tags: temp.tags,
-                    path: temp.path,
+        // The read side of `lifecycle` excludes purge and namespace
+        // retirement for the whole transition: a fill a purge has marked is
+        // never admitted, and a purge never sees one half admitted. Lookups
+        // share the read side and are not held up by it. They cannot observe
+        // a gap either: the fill stays attachable in `temp` until `cached`
+        // holds the entry, and a lookup that misses `temp` looks at `cached`
+        // again (see `lookup`). Hold this only for the transition; never
+        // while streaming bytes or awaiting work.
+        let active = self.store.lifecycle.read();
+        let completion = {
+            let mut temp = self.store.temp.write();
+            let Some(fill) = temp.get_mut(&self.key).and_then(|w| w.get_mut(&id)) else {
+                return Err(Error::explain(ErrorType::InternalError, "write vanished"));
+            };
+            // A finished writer no longer needs its unused leader reservation.
+            fill.leader = None;
+            let retired = fill.namespace.is_some() && *active != fill.namespace;
+            // An abandoned fill skips the transient handoff too: its bytes are
+            // over budget, and returning them now matters more than sparing a
+            // late follower a render.
+            if fill.invalidated || retired || self.abandoned {
+                Completion::Discard
+            } else if fill.transient {
+                Completion::Handoff
+            } else {
+                // Purge cannot read this fill's tags or path while `lifecycle`
+                // is held, so the entry can take them; a rejection below puts
+                // them back.
+                Completion::Admit(Stored {
+                    meta: fill.meta.clone(),
+                    body: Arc::new(frozen),
+                    tags: std::mem::take(&mut fill.tags),
+                    path: std::mem::take(&mut fill.path),
                     // A freshly stored entry starts unvisited. The request
                     // that filled it does not count as a read: one arrival is
                     // exactly the evidence FIFO already has, and crediting it
@@ -1070,42 +1519,76 @@ impl HandleMiss for FollowableMiss {
                     visited: AtomicBool::new(false),
                     revision: 0,
                     tiny_hash: None,
-                },
-            );
-            if let Some(obj) = rejected {
-                self.store
-                    .temp
-                    .write()
-                    .entry(self.key.clone())
-                    .or_default()
-                    .insert(
-                        id,
-                        Temp {
-                            meta: obj.meta,
-                            body: obj.body,
-                            written: self.written.clone(),
-                            transient: true,
-                            tags: obj.tags,
-                            path: obj.path,
-                            invalidated: false,
-                        },
-                    );
-                let store = self.store;
-                let key = self.key.clone();
-                let accounted = self.accounted;
-                tokio::spawn(async move {
-                    tokio::time::sleep(TRANSIENT_HANDOFF).await;
-                    if store.remove_temp(&key, id).is_some() {
-                        store.release(accounted);
+                })
+            }
+        };
+        self.finished = true;
+        match completion {
+            Completion::Discard => {
+                self.store.remove_temp(&self.key, id);
+                self.store.release(self.accounted);
+            }
+            // Already in `temp`, where the late followers look for it.
+            Completion::Handoff => self.schedule_handoff(id),
+            Completion::Admit(stored) => {
+                match self.store.admit(self.key.clone(), stored, self.accounted) {
+                    None => {
+                        #[cfg(test)]
+                        phase31_tests::Hooks::run(&self.store.hooks.admitted);
+                        self.store.remove_temp(&self.key, id);
                     }
-                });
+                    // TinyUFO declined it. What is already streaming finishes
+                    // from the fill, which becomes a transient handoff and
+                    // keeps its bytes reserved until the handoff ends.
+                    Some(rejected) => {
+                        if let Some(fill) = self
+                            .store
+                            .temp
+                            .write()
+                            .get_mut(&self.key)
+                            .and_then(|w| w.get_mut(&id))
+                        {
+                            fill.transient = true;
+                            fill.tags = rejected.tags;
+                            fill.path = rejected.path;
+                        }
+                        self.schedule_handoff(id);
+                    }
+                }
             }
         }
+        drop(active);
         Ok(MissFinishType::Created(size))
     }
 
     fn streaming_write_tag(&self) -> Option<&[u8]> {
         Some(self.id.as_bytes())
+    }
+}
+
+/// What finishing a fill does with it.
+enum Completion {
+    /// Purged, retired or abandoned: never stored, reservation released now.
+    Discard,
+    /// Transient: kept briefly for the cache-lock waiters already woken.
+    Handoff,
+    Admit(Stored),
+}
+
+impl FollowableMiss {
+    /// Keep a finished fill attachable for [`TRANSIENT_HANDOFF`], then
+    /// release it. Its reservation is returned by whichever of this timer or
+    /// a competing removal takes the fill out of `temp`.
+    fn schedule_handoff(&self, id: u64) {
+        let store = self.store;
+        let key = self.key.clone();
+        let accounted = self.accounted;
+        tokio::spawn(async move {
+            tokio::time::sleep(TRANSIENT_HANDOFF).await;
+            if store.remove_temp(&key, id).is_some() {
+                store.release(accounted);
+            }
+        });
     }
 }
 
@@ -1122,13 +1605,33 @@ impl Drop for FollowableMiss {
 }
 
 #[cfg(test)]
+#[path = "store_phase1_tests.rs"]
+mod phase1_tests;
+
+#[cfg(test)]
+#[path = "store_phase2_tests.rs"]
+mod phase2_tests;
+
+#[cfg(test)]
+#[path = "store_phase3_tests.rs"]
+mod phase3_tests;
+
+#[cfg(test)]
+#[path = "store_phase42_tests.rs"]
+mod phase42_tests;
+
+#[cfg(test)]
+#[path = "store_phase31_tests.rs"]
+mod phase31_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     // Aliased: `Bytes` in this file already means `bytes::Bytes`, and the
     // body-writing tests below use it.
     use crate::config::units::Bytes as ByteSize;
 
-    fn cache_cfg(max_bytes: usize) -> CacheDefaults {
+    pub(super) fn cache_cfg(max_bytes: usize) -> CacheDefaults {
         CacheDefaults {
             max_memory: ByteSize(max_bytes as u64),
             ..Default::default()
@@ -1144,7 +1647,7 @@ mod tests {
     use pingora_http::ResponseHeader;
     use std::time::{Duration, SystemTime};
 
-    fn meta() -> CacheMeta {
+    pub(super) fn meta() -> CacheMeta {
         let now = SystemTime::now();
         CacheMeta::new(
             now + Duration::from_secs(60),
@@ -1608,7 +2111,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_transient_entry_is_never_tagged_or_indexed() {
+    async fn a_transient_entry_is_never_persistently_indexed() {
         let store = store_of(1 << 20);
         let mut header = ResponseHeader::build(200, None).unwrap();
         header
@@ -1983,9 +2486,13 @@ mod tests {
         );
     }
 
+    /// In-progress fills count toward the budget. The fill that cannot fit
+    /// is not stored, and the one after that cannot fit even in the headroom
+    /// is refused: the logical total never passes budget plus headroom.
     #[tokio::test]
     async fn in_progress_fills_count_toward_the_global_budget() {
         let store = store_of(4096);
+        assert_eq!(store.headroom(), 4096, "headroom is clamped to the budget");
         let first = CacheKey::new("/one", "");
         let second = CacheKey::new("/two", "");
         let mut a = store
@@ -1999,15 +2506,22 @@ mod tests {
             .get_miss_handler(&second, &meta(), &Span::inactive().handle())
             .await
             .unwrap();
+        b.write_body(Bytes::from(vec![b'b'; 3000]), false)
+            .await
+            .unwrap();
+        assert!(store.bytes_used() > 4096, "b is running on the headroom");
+        assert_eq!(store.memory_pressure().fill_abandoned, 1);
         assert!(
             b.write_body(Bytes::from(vec![b'b'; 3000]), false)
                 .await
                 .is_err()
         );
-        assert!(store.bytes_used() <= 4096);
+        assert!(store.bytes_used() <= 4096 + store.headroom());
+        assert_eq!(store.memory_pressure().memory_exhausted, 1);
         drop(a);
         drop(b);
         assert_eq!(store.bytes_used(), 0);
+        assert_eq!(store.bytes_pinned(), 0);
     }
     fn tiny_store(budget: usize) -> &'static BoundedStore {
         BoundedStore::new(&CacheDefaults {

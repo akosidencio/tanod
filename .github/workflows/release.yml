@@ -3,7 +3,9 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  # Lets you re-cut an image from a tag without moving the tag.
+  # Runs the release again for an existing tag, without moving the tag: for a
+  # tag-triggered run that failed before publishing. A version tag already
+  # published under a different image is never overwritten (image-publish).
   workflow_dispatch:
     inputs:
       tag:
@@ -11,12 +13,23 @@ on:
         required: true
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
+
+# Read-only unless a job says otherwise. image-publish, publish and npm each
+# declare the one write they need; nothing else here, nor the CI and extended
+# workflows it calls, may write anything.
+permissions:
+  contents: read
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+
+# Every action is pinned to a full commit SHA, with the release it was resolved
+# from in the comment. A tag can be moved by whoever controls the action's
+# repository; a SHA cannot. docs/RELEASE-GATES.md#pinned-actions describes how
+# to update one.
 
 jobs:
   # A tag is cut by hand, and the two mistakes a human makes cutting one both
@@ -29,26 +42,76 @@ jobs:
   #
   # Both checks are cheap and neither needs the project to compile, so they run
   # ahead of everything and gate it. A mis-cut tag now costs seconds.
+  #
+  # This job also fixes the release to one commit. Every later job checks out
+  # `outputs.sha`, never the tag name, so a tag moved while the release runs
+  # cannot make the image, the binaries and the tested tree disagree.
   preflight:
     name: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      sha: ${{ steps.tag.outputs.sha }}
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          # The tag and main's history, for the ancestry check below.
+          fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      # The tag reaches the shell through the environment, never through
+      # `${{ }}` inside a script: a ref name may contain `$(...)`.
+      - name: Resolve the tag to one commit on main
+        id: tag
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::'$TAG' is not a release tag (vMAJOR.MINOR.PATCH[-PRERELEASE])"
+            exit 1
+          fi
+          if ! sha="$(git rev-parse --verify --quiet "refs/tags/$TAG^{commit}")"; then
+            echo "::error::$TAG is not a tag in this repository"
+            exit 1
+          fi
+          if [ "$sha" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::checked out $(git rev-parse HEAD), but $TAG is $sha"
+            exit 1
+          fi
+          # Releases are cut from main, after review and green CI there. A tag
+          # on a branch nobody merged is refused rather than published.
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::$TAG ($sha) is not on main; merge the release to main and tag the merge"
+            exit 1
+          fi
+          version="${TAG#v}"
+          prerelease=false
+          case "$version" in *-*) prerelease=true ;; esac
+          {
+            echo "tag=$TAG"
+            echo "sha=$sha"
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "release $TAG = $sha (version $version, prerelease $prerelease)"
+
+      - name: Verify clean source and synchronized package metadata
+        run: python3 scripts/release-preflight.py
 
       # A tag that disagrees with Cargo.toml ships a mislabelled release.
       - name: Verify the tag matches Cargo.toml
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          tag="${{ inputs.tag || github.ref_name }}"
           crate="$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
-          echo "tag=$tag crate=$crate"
-          if [ "$tag" != "v$crate" ]; then
-            echo "::error::tag $tag does not match Cargo.toml version $crate"
+          echo "tag=$TAG crate=$crate"
+          if [ "$TAG" != "v$crate" ]; then
+            echo "::error::tag $TAG does not match Cargo.toml version $crate"
             exit 1
           fi
 
@@ -56,20 +119,21 @@ jobs:
       # can never be reused once published, so a mismatch is caught here rather
       # than as a mislabelled package nobody can take back.
       - name: Verify the tag matches the npm packages
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          tag="${{ inputs.tag || github.ref_name }}"
           for pkg in tanod-next tanod-linux-x64; do
             version="$(node -p "require('./packages/$pkg/package.json').version")"
-            echo "tag=$tag $pkg=$version"
-            if [ "$tag" != "v$version" ]; then
-              echo "::error::tag $tag does not match packages/$pkg/package.json version $version"
+            echo "tag=$TAG $pkg=$version"
+            if [ "$TAG" != "v$version" ]; then
+              echo "::error::tag $TAG does not match packages/$pkg/package.json version $version"
               exit 1
             fi
           done
           # @tanod/next must install the binary built from this same tag.
           pinned="$(node -p "require('./packages/tanod-next/package.json').optionalDependencies['@tanod/linux-x64']")"
-          if [ "$tag" != "v$pinned" ]; then
-            echo "::error::@tanod/next pins @tanod/linux-x64 $pinned, not ${tag#v}"
+          if [ "$TAG" != "v$pinned" ]; then
+            echo "::error::@tanod/next pins @tanod/linux-x64 $pinned, not ${TAG#v}"
             exit 1
           fi
 
@@ -85,14 +149,22 @@ jobs:
           fi
 
   # A tag can point at any commit, and CI only runs on branches — so re-run the
-  # full QA suite against the tagged tree before anything is published. The ref
-  # is passed explicitly: a `workflow_dispatch` re-cut would otherwise test the
-  # branch it was started from while the artifacts below are built from the tag.
-  test:
+  # full QA suite against the tagged tree before anything is published. The
+  # commit is passed explicitly: a `workflow_dispatch` re-cut would otherwise
+  # test the branch it was started from while the artifacts below are built
+  # from the tag.
+  stability:
     needs: preflight
+    uses: ./.github/workflows/extended.yml
+    with:
+      ref: ${{ needs.preflight.outputs.sha }}
+      release_candidate: true
+
+  test:
+    needs: [preflight, stability]
     uses: ./.github/workflows/ci.yml
     with:
-      ref: ${{ inputs.tag || github.ref }}
+      ref: ${{ needs.preflight.outputs.sha }}
 
   # The versioned release binary — Linux only, deliberately.
   #
@@ -109,7 +181,7 @@ jobs:
   # the same bytes as CI.
   binaries:
     name: binary (x86_64-unknown-linux-gnu)
-    needs: test
+    needs: [preflight, test]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -121,9 +193,9 @@ jobs:
       artifact: ${{ steps.package.outputs.name }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.preflight.outputs.sha }}
 
       - name: Install build dependencies
         run: |
@@ -132,7 +204,7 @@ jobs:
             clang cmake libssl-dev pkg-config
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ env.TARGET }}
 
@@ -145,17 +217,23 @@ jobs:
       # It has to actually run. A binary that builds and then dies on a missing
       # shared library is a release nobody can use, discovered by users.
       - name: Smoke test
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           bin="target/${{ env.TARGET }}/release/tanod"
-          "$bin" version
+          line="$("$bin" version)"
+          echo "$line"
+          case "$line" in "tanod $VERSION "*"features: tls"*) ;; *)
+            echo "::error::'$line' is not tanod $VERSION with tls"; exit 1 ;; esac
           "$bin" check --config tanod.yaml
 
       - name: Package
         id: package
         shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          version="$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
-          name="tanod-${version}-${{ env.TARGET }}"
+          name="tanod-${VERSION}-${{ env.TARGET }}"
           mkdir -p "dist/$name/docs"
           cp "target/${{ env.TARGET }}/release/tanod" "dist/$name/"
           cp packaging/systemd/tanod.service "dist/$name/"
@@ -171,9 +249,8 @@ jobs:
           ( cd "dist/$name" && shasum -a 256 tanod > "../$name.binary.sha256" )
           ( cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256" )
           echo "name=$name" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ steps.package.outputs.name }}
           path: |
@@ -188,7 +265,7 @@ jobs:
   # musl C toolchain.
   musl:
     name: binary (x86_64-unknown-linux-musl)
-    needs: test
+    needs: [preflight, test]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -196,9 +273,9 @@ jobs:
     outputs:
       artifact: ${{ steps.package.outputs.name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.preflight.outputs.sha }}
 
       - name: Build
         run: |
@@ -214,19 +291,25 @@ jobs:
 
       # Static means it must run with no libc at all, on both kinds of host.
       - name: Smoke test
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           bin="target/${{ env.TARGET }}/release/tanod"
           file "$bin" | grep -q 'static' || { echo "::error::not statically linked"; file "$bin"; exit 1; }
-          "$bin" version
+          line="$("$bin" version)"
+          echo "$line"
+          case "$line" in "tanod $VERSION "*"features: tls"*) ;; *)
+            echo "::error::'$line' is not tanod $VERSION with tls"; exit 1 ;; esac
           "$bin" check --config tanod.yaml
           docker run --rm -v "$PWD/$bin:/tanod:ro" -v "$PWD/tanod.yaml:/tanod.yaml:ro" \
             alpine:3 /tanod check --config /tanod.yaml
 
       - name: Package
         id: package
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          version="$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
-          name="tanod-${version}-${{ env.TARGET }}"
+          name="tanod-${VERSION}-${{ env.TARGET }}"
           mkdir -p "dist/$name/docs"
           cp "target/${{ env.TARGET }}/release/tanod" "dist/$name/"
           cp packaging/systemd/tanod.service "dist/$name/"
@@ -239,7 +322,7 @@ jobs:
           ( cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256" )
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ steps.package.outputs.name }}
           path: |
@@ -253,80 +336,107 @@ jobs:
   # features and other platforms that are never compiled into a given artifact.
   # It over-reports rather than under-reports, which is the safe direction, and
   # must not be read as an exact inventory of what runs.
+  #
+  # No build cache: the tool that writes a published artifact is installed
+  # fresh rather than restored from a cache another ref may have written.
   sbom:
     name: sbom
-    needs: test
+    needs: [preflight, test]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ inputs.tag || github.ref }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+          ref: ${{ needs.preflight.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Install cargo-cyclonedx
-        run: cargo install cargo-cyclonedx --locked
+        run: cargo install cargo-cyclonedx --version 0.5.9 --locked
       - name: Generate
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          version="$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
           # --all-features so the SBOM covers the TLS build too, which is what
           # the published binary and the image are compiled with.
           cargo cyclonedx --format json --all-features --spec-version 1.5
           find . -name '*.cdx.json' -not -path './target/*' -print
           mkdir -p dist
-          cp tanod.cdx.json "dist/tanod-${version}.cdx.json"
-      - uses: actions/upload-artifact@v4
+          cp tanod.cdx.json "dist/tanod-${VERSION}.cdx.json"
+          # An SBOM that does not name this release is not the SBOM of it.
+          jq -e --arg v "$VERSION" \
+            '.metadata.component.name == "tanod" and .metadata.component.version == $v and (.components | length) > 0' \
+            "dist/tanod-${VERSION}.cdx.json" > /dev/null
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sbom
           path: dist/*.cdx.json
           if-no-files-found: error
 
+  # Build the image once, into an OCI archive, and test that archive. Nothing
+  # here can publish: the job has no registry credentials and no write
+  # permission. image-publish pushes this same archive, digests preserved, only
+  # after every check below and every other artifact has passed.
+  #
+  # Identity is carried, not rebuilt. The archive's image index digest is the
+  # digest the registry reports after the push; verify-oci-image.py records it
+  # here and checks it again before the push, and the image Docker ran in the
+  # smoke test is compared layer by layer with the archive.
   image:
-    name: build + push image
-    needs: test
+    name: image (build + smoke test, no push)
+    needs: [preflight, test]
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      digest: ${{ steps.verify.outputs.digest }}
 
-    permissions:
-      contents: read
-      packages: write
+    # A registry on the runner's loopback, discarded with the job: the push
+    # below is rehearsed against it so a layout skopeo cannot push with its
+    # digests intact fails here, not halfway into GHCR.
+    services:
+      staging:
+        image: registry@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e # registry:3.0.0
+        ports:
+          - 5000:5000
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.preflight.outputs.sha }}
 
-      - uses: docker/setup-buildx-action@v3
+      - name: Identify the checked-out image source
+        id: source
+        run: |
+          revision=$(git rev-parse HEAD)
+          source_inputs=$(python3 scripts/build-manifest.py --source-only)
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "inputs=$source_inputs" >> "$GITHUB_OUTPUT"
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - name: Derive image tags
+      - name: Derive image labels
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}},value=${{ inputs.tag || github.ref_name }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.tag || github.ref_name }}
-            type=raw,value=latest,enable=${{ !contains(inputs.tag || github.ref_name, '-') }}
+            type=raw,value=${{ needs.preflight.outputs.version }}
           labels: |
             org.opencontainers.image.title=tanod
             org.opencontainers.image.description=Origin workload governor for server-rendered applications
             org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.preflight.outputs.version }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.revision }}
+            io.tanod.build-inputs-sha256=${{ steps.source.outputs.inputs }}
 
-      - name: Build and push
-        id: push
-        uses: docker/build-push-action@v6
+      # No layer cache: a cache another run wrote could otherwise supply layers
+      # of the published image. The Dockerfile's cargo cache mounts live in this
+      # job's fresh builder only.
+      - name: Build into an OCI archive (no push)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          push: true
+          push: false
           platforms: linux/amd64
           # The published image includes TLS. Unlike a source build, nobody can
           # recompile a container to turn a feature on, so shipping without it
@@ -335,46 +445,190 @@ jobs:
           # which is correct but a poor first experience.
           build-args: |
             FEATURES=tls
-          tags: ${{ steps.meta.outputs.tags }}
+            VCS_REF=${{ steps.source.outputs.revision }}
+            SOURCE_ID=${{ steps.source.outputs.inputs }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          outputs: type=oci,dest=${{ runner.temp }}/tanod-image.oci.tar
           provenance: mode=max
           sbom: true
 
-      - name: Smoke test the pushed image
+      - name: Verify the archive (one amd64 image, provenance, SBOM, labels)
+        id: verify
+        env:
+          REVISION: ${{ steps.source.outputs.revision }}
+          INPUTS: ${{ steps.source.outputs.inputs }}
         run: |
-          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}"
-          docker run --rm "$image" version
-          docker run --rm -v "$PWD/tanod.yaml:/etc/tanod/tanod.yaml:ro" \
-            "$image" check --config /etc/tanod/tanod.yaml
+          mkdir -p image
+          mv "$RUNNER_TEMP/tanod-image.oci.tar" image/tanod-image.oci.tar
+          python3 scripts/verify-oci-image.py image/tanod-image.oci.tar \
+            --expect-revision "$REVISION" --expect-inputs "$INPUTS" \
+            --json image/verify-build.json
+          echo "digest=$(jq -r .index_digest image/verify-build.json)" >> "$GITHUB_OUTPUT"
 
-      - name: Summarise
+      # The runtime image only (skopeo picks the runner's platform out of the
+      # index), into the local daemon, then compared with the archive.
+      - name: Load the archive's image into Docker
         run: |
+          skopeo --version
+          skopeo copy --quiet oci-archive:image/tanod-image.oci.tar docker-daemon:tanod:release-candidate
+          python3 scripts/verify-oci-image.py image/tanod-image.oci.tar \
+            --expect-digest "${{ steps.verify.outputs.digest }}" \
+            --compare-docker tanod:release-candidate --json image/verify-loaded.json
+
+      - name: Smoke test the image that will be published
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          EXPECT_REVISION: ${{ steps.source.outputs.revision }}
+          SMOKE_REPORT: image/smoke.json
+        run: bash scripts/image-smoke.sh tanod:release-candidate "$VERSION"
+
+      # The same skopeo invocation image-publish uses, against the loopback
+      # registry: the digest must survive the push, and the provenance must be
+      # readable the way the release notes tell users to read it.
+      - name: Rehearse the push against a private loopback registry
+        env:
+          DIGEST: ${{ steps.verify.outputs.digest }}
+        run: |
+          staged="localhost:5000/tanod"
+          skopeo copy --all --preserve-digests --dest-tls-verify=false \
+            oci-archive:image/tanod-image.oci.tar "docker://$staged:candidate"
+          pushed="sha256:$(skopeo inspect --raw --tls-verify=false "docker://$staged:candidate" | sha256sum | cut -d' ' -f1)"
+          echo "built $DIGEST, staged $pushed"
+          [ "$pushed" = "$DIGEST" ] || { echo "::error::the push changed the digest"; exit 1; }
+          docker buildx imagetools inspect "$staged@$DIGEST" \
+            --format '{{ json .Provenance.SLSA }}' > image/provenance.json
+          jq -e 'type == "object" and ((.buildType // .buildDefinition.buildType) | type == "string" and length > 0)' \
+            image/provenance.json > /dev/null
+          docker buildx imagetools inspect "$staged@$DIGEST" --format '{{ json .SBOM }}' > image/sbom.json
+          jq -e 'type == "object" and length > 0' image/sbom.json > /dev/null
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-image
+          path: image/
+          if-no-files-found: error
+          # The layers are already compressed.
+          compression-level: 0
+
+  # Publication starts here, and only once every artifact has built and passed
+  # its own checks. The tested archive is pushed with its digests preserved:
+  # first under the immutable version tag, verified, and only then are the
+  # moving tags (`MAJOR.MINOR`, and `latest` for a stable release) pointed at
+  # that digest. A version tag that already names a different image is refused,
+  # never overwritten.
+  #
+  # The `release` environment is the approval point. With required reviewers
+  # configured on it (Settings → Environments), the run stops here, after every
+  # check has passed and before anything is published, until a maintainer
+  # approves; publish and npm follow only from this job. Without reviewers the
+  # environment is created on first use and does not wait.
+  image-publish:
+    name: publish image
+    needs: [preflight, image, binaries, musl, sbom]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    outputs:
+      digest: ${{ needs.image.outputs.digest }}
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-image
+          path: image
+
+      - name: Verify this is the archive that was tested
+        run: |
+          python3 scripts/verify-oci-image.py image/tanod-image.oci.tar \
+            --expect-digest "${{ needs.image.outputs.digest }}" \
+            --expect-revision "${{ needs.preflight.outputs.sha }}"
+          jq -e '.result == "pass"' image/smoke.json > /dev/null
+
+      - name: Push the version tag, then verify it
+        id: push
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          repo="${REGISTRY}/${IMAGE_NAME}"
+          # One login, read by both: skopeo uses Docker's file when told to.
+          printf '%s' "$TOKEN" | docker login "$REGISTRY" -u "$ACTOR" --password-stdin
+          echo "REGISTRY_AUTH_FILE=$HOME/.docker/config.json" >> "$GITHUB_ENV"
+          export REGISTRY_AUTH_FILE="$HOME/.docker/config.json"
+          remote_digest() {
+            raw="$(skopeo inspect --raw "docker://$1" 2>/dev/null)" || return 1
+            printf 'sha256:%s' "$(printf '%s' "$raw" | sha256sum | cut -d' ' -f1)"
+          }
+          if existing="$(remote_digest "$repo:$VERSION")"; then
+            if [ "$existing" != "$DIGEST" ]; then
+              echo "::error::$repo:$VERSION already names $existing; refusing to overwrite it with $DIGEST"
+              exit 1
+            fi
+            echo "::notice::$repo:$VERSION already names $DIGEST (a re-run); not pushing again"
+          else
+            skopeo copy --all --preserve-digests \
+              oci-archive:image/tanod-image.oci.tar "docker://$repo:$VERSION"
+          fi
+          pushed="$(remote_digest "$repo:$VERSION")"
+          [ "$pushed" = "$DIGEST" ] || { echo "::error::$repo:$VERSION is $pushed, expected $DIGEST"; exit 1; }
+          # BuildKit attaches provenance metadata; this is not a signed GitHub
+          # artifact attestation. Refuse a missing attachment.
+          docker buildx imagetools inspect "$repo@$DIGEST" \
+            --format '{{ json .Provenance.SLSA }}' > "$RUNNER_TEMP/provenance.json"
+          jq -e 'type == "object" and ((.buildType // .buildDefinition.buildType) | type == "string" and length > 0)' \
+            "$RUNNER_TEMP/provenance.json" > /dev/null
+
+      - name: Point the moving tags at the verified digest
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
+        run: |
+          repo="${REGISTRY}/${IMAGE_NAME}"
+          # A prerelease moves nothing: `0.4` and `latest` keep naming the last
+          # stable release, as docker/metadata-action's semver tags did.
+          tags=""
+          if [ "$PRERELEASE" = false ]; then
+            tags="${VERSION%.*} latest"
+          fi
+          for tag in $tags; do
+            skopeo copy --all --preserve-digests "docker://$repo@$DIGEST" "docker://$repo:$tag"
+            raw="$(skopeo inspect --raw "docker://$repo:$tag")"
+            got="sha256:$(printf '%s' "$raw" | sha256sum | cut -d' ' -f1)"
+            [ "$got" = "$DIGEST" ] || { echo "::error::$repo:$tag is $got, expected $DIGEST"; exit 1; }
+          done
+          docker logout "$REGISTRY"
           {
-            echo "### Pushed"
+            echo "### Published image"
             echo
-            echo '```'
-            echo "${{ steps.meta.outputs.tags }}"
-            echo '```'
+            echo "\`$repo@$DIGEST\`"
             echo
-            echo "Digest: \`${{ steps.push.outputs.digest }}\`"
+            echo "Tags: \`$VERSION\` $(for t in $tags; do printf '`%s` ' "$t"; done)"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Attach everything to the GitHub release, with one SHA256SUMS covering every
   # archive.
   publish:
     name: publish release artifacts
-    needs: [binaries, musl, sbom, image]
+    needs: [preflight, binaries, musl, sbom, image-publish]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.preflight.outputs.sha }}
 
       # By exact name, both of them. Downloading the whole run instead pulls in
       # artifacts this job has no use for: `benchmark-results` from the CI
@@ -384,51 +638,64 @@ jobs:
       # down with it — a record of how the image was built has no place in a
       # step whose job is to attach archives to a tag.
       - name: Download the release binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ${{ needs.binaries.outputs.artifact }}
           path: staging/binary
 
       - name: Download the musl binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ${{ needs.musl.outputs.artifact }}
           path: staging/musl
 
       - name: Download the SBOM
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: sbom
           path: staging/sbom
 
-      - name: Collect and checksum
-        id: collect
+      # Every file the release promises, by exact name, each checked against
+      # the checksum written beside it when it was built. A release missing one
+      # is a green build and a broken download page.
+      - name: Collect, verify and checksum
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          version="$(sed -n '/^\[package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
           mkdir -p dist
-          find staging -name '*.tar.gz' -exec cp {} dist/ \;
-          find staging -name '*.cdx.json' -exec cp {} dist/ \;
-          find staging -name '*.binary.sha256' -exec cp {} dist/ \;
+          expected=""
+          for target in x86_64-unknown-linux-gnu x86_64-unknown-linux-musl; do
+            name="tanod-${VERSION}-${target}"
+            archive="$(find staging -name "$name.tar.gz" | head -1)"
+            [ -n "$archive" ] || { echo "::error::missing $name.tar.gz"; exit 1; }
+            ( cd "$(dirname "$archive")" && sha256sum -c "$name.tar.gz.sha256" )
+            # The binary inside the archive is the one the build job hashed.
+            tar -xzf "$archive" -C "$RUNNER_TEMP"
+            want="$(cut -d' ' -f1 "$(dirname "$archive")/$name.binary.sha256")"
+            got="$(sha256sum "$RUNNER_TEMP/$name/tanod" | cut -d' ' -f1)"
+            [ "$want" = "$got" ] || { echo "::error::$name binary is $got, its checksum file says $want"; exit 1; }
+            cp "$archive" "$(dirname "$archive")/$name.binary.sha256" dist/
+            expected="$expected $name.tar.gz $name.binary.sha256"
+          done
+          sbom="tanod-${VERSION}.cdx.json"
+          [ -s "staging/sbom/$sbom" ] || { echo "::error::missing $sbom"; exit 1; }
+          cp "staging/sbom/$sbom" dist/
           ( cd dist && sha256sum ./*.tar.gz ./*.cdx.json | sed 's| \./| |' > SHA256SUMS )
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          for file in $expected "$sbom" SHA256SUMS; do
+            [ -s "dist/$file" ] || { echo "::error::dist/$file is missing or empty"; exit 1; }
+          done
+          [ "$(wc -l < dist/SHA256SUMS)" -eq 3 ] || { echo "::error::SHA256SUMS should list 3 files"; exit 1; }
           ls -la dist
           cat dist/SHA256SUMS
-
-      # A release with no archives in it is a green build and a broken
-      # download page, and nothing else in this workflow would have noticed.
-      - name: Refuse to publish an empty release
-        run: |
-          count=$(find dist -name '*.tar.gz' | wc -l)
-          echo "archives: $count"
-          [ "$count" -ge 1 ] || { echo "::error::no archives to publish"; exit 1; }
-          [ -s dist/SHA256SUMS ] || { echo "::error::SHA256SUMS is empty"; exit 1; }
 
       - name: Upload to the release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ needs.preflight.outputs.tag }}
+          prerelease: ${{ needs.preflight.outputs.prerelease == 'true' }}
           files: |
             dist/*.tar.gz
+            dist/*.binary.sha256
             dist/*.cdx.json
             dist/SHA256SUMS
           fail_on_unmatched_files: true
@@ -439,26 +706,33 @@ jobs:
             sha256sum --ignore-missing -c SHA256SUMS
             ```
 
-            The container image carries build provenance and its own SBOM as
-            attestations:
+            The container image is
+            `ghcr.io/${{ github.repository }}@${{ needs.image-publish.outputs.digest }}`.
+            It was smoke-tested before it was pushed, and the push preserved
+            that digest. It includes BuildKit provenance metadata and an SBOM:
 
             ```bash
-            gh attestation verify \
-              "oci://ghcr.io/${{ github.repository }}:${{ steps.collect.outputs.version }}" \
-              --repo ${{ github.repository }}
+            docker buildx imagetools inspect \
+              "ghcr.io/${{ github.repository }}@${{ needs.image-publish.outputs.digest }}" \
+              --format '{{ json .Provenance.SLSA }}'
             ```
 
-            `tanod-${{ steps.collect.outputs.version }}.cdx.json` is a
+            Compare its inputs and revision with the reviewed source. These
+            OCI attachments do not establish a signed GitHub builder identity;
+            this workflow does not generate GitHub artifact attestations.
+
+            `tanod-${{ needs.preflight.outputs.version }}.cdx.json` is a
             CycloneDX SBOM of the resolved Rust dependency tree. It lists what
             Cargo resolved, which is a superset of what is linked into any one
             artifact.
 
             A Linux binary reproduces from a clean checkout of this tag with
-            [scripts/reproducible-build.sh](https://github.com/${{ github.repository }}/blob/${{ inputs.tag || github.ref_name }}/scripts/reproducible-build.sh).
+            [scripts/reproducible-build.sh](https://github.com/${{ github.repository }}/blob/${{ needs.preflight.outputs.tag }}/scripts/reproducible-build.sh).
             The `.tar.gz` archive is not: gzip stores a modification time, so
-            compare the checksum of the binary inside it. The image digest is
-            not reproducible either — verify the image through its provenance
-            attestation instead.
+            compare the checksum of the binary inside it with the attached
+            `*.binary.sha256`. The image digest is
+            not reproducible either — pin its reviewed digest and inspect its
+            recorded provenance instead.
 
   # The npm packages, last: @tanod/linux-x64 (the musl binary) and then
   # @tanod/next, which pins it as an optional dependency.
@@ -472,7 +746,7 @@ jobs:
   # repository publishes without it rather than not at all.
   npm:
     name: publish npm packages
-    needs: [publish, musl]
+    needs: [preflight, publish, musl]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -481,29 +755,43 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.preflight.outputs.sha }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
       - name: Download the musl binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ${{ needs.musl.outputs.artifact }}
           path: staging/musl
 
+      # The binary the musl job hashed, and nothing else, goes into the package.
       - name: Put the binary in @tanod/linux-x64
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          ARTIFACT: ${{ needs.musl.outputs.artifact }}
         run: |
-          archive="$(find staging/musl -name '*.tar.gz' | head -1)"
+          tar -xzf "staging/musl/$ARTIFACT.tar.gz" -C staging/musl
           mkdir -p packages/tanod-linux-x64/bin
-          tar -xzf "$archive" -C staging/musl
-          cp "$(find staging/musl -type f -name tanod | head -1)" packages/tanod-linux-x64/bin/tanod
+          cp "staging/musl/$ARTIFACT/tanod" packages/tanod-linux-x64/bin/tanod
           chmod 0755 packages/tanod-linux-x64/bin/tanod
-          packages/tanod-linux-x64/bin/tanod version
+          want="$(cut -d' ' -f1 "staging/musl/$ARTIFACT.binary.sha256")"
+          got="$(sha256sum packages/tanod-linux-x64/bin/tanod | cut -d' ' -f1)"
+          [ "$want" = "$got" ] || { echo "::error::packaged binary is $got, the musl job built $want"; exit 1; }
+          line="$(packages/tanod-linux-x64/bin/tanod version)"
+          case "$line" in "tanod $VERSION "*) ;; *)
+            echo "::error::packaged binary reports '$line'"; exit 1 ;; esac
+          # The tarball npm would upload must carry the executable binary.
+          ( cd packages/tanod-linux-x64 && npm pack --dry-run --json ) > "$RUNNER_TEMP/pack.json"
+          jq -e --arg v "$VERSION" \
+            '.[0].version == $v and any(.[0].files[]; .path == "bin/tanod" and .mode == 493 and .size > 1000000)' \
+            "$RUNNER_TEMP/pack.json" > /dev/null \
+            || { echo "::error::@tanod/linux-x64 would not ship an executable bin/tanod at $VERSION"; cat "$RUNNER_TEMP/pack.json"; exit 1; }
 
       # The platform package first: @tanod/next depends on it, and an install
       # that resolved @tanod/next before its binary existed would quietly
@@ -513,7 +801,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::error::the NPM_TOKEN repository secret is not set"
+            echo "::error::the NPM_TOKEN secret is not set"
             exit 1
           fi
           if [ "${{ github.event.repository.private }}" = "false" ]; then

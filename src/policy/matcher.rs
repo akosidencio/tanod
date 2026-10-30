@@ -1,7 +1,7 @@
 //! Route matching: host, path glob, method.
 
 use crate::config::schema::{DetailedMatcher, Matcher};
-use globset::{Glob, GlobMatcher};
+use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use http::Method;
 
 #[derive(Debug, thiserror::Error)]
@@ -32,6 +32,62 @@ pub struct CompiledMatcher {
     host: Option<String>,
     path: GlobMatcher,
     methods: Option<Vec<Method>>,
+}
+
+/// Every route's path glob in one [`GlobSet`], so resolving a request asks
+/// one automaton which routes could match instead of asking each route in
+/// turn.
+///
+/// Only a candidate filter: each candidate is still confirmed with its own
+/// matcher — host, methods and path — in file order, so the route that wins
+/// is exactly the one a linear scan would pick. `GlobSet` reports the indices
+/// of *every* glob that matches, in ascending order, from the same `Glob`s the
+/// route matchers were compiled from.
+pub struct RouteIndex {
+    set: GlobSet,
+}
+
+/// Below this many routes a linear scan is as fast as consulting the index.
+/// Measured with `bench/hotpath.rs` (`route/*`).
+pub const INDEX_MIN_ROUTES: usize = 16;
+
+thread_local! {
+    /// Candidate indices, reused so resolving a request allocates nothing.
+    static CANDIDATES: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+impl RouteIndex {
+    /// `None` when the table is small enough that the index cannot win, or
+    /// if the combined set fails to build — every glob in it has already
+    /// compiled on its own, and the linear scan is always correct.
+    pub fn build(matchers: &[&CompiledMatcher]) -> Option<Self> {
+        if matchers.len() < INDEX_MIN_ROUTES {
+            return None;
+        }
+        let mut builder = GlobSetBuilder::new();
+        for matcher in matchers {
+            builder.add(matcher.path.glob().clone());
+        }
+        builder.build().ok().map(|set| RouteIndex { set })
+    }
+
+    /// The position of the first matcher, in order, that matches.
+    pub fn first<'a>(
+        &self,
+        matchers: impl Fn(usize) -> Option<&'a CompiledMatcher>,
+        host: &str,
+        path: &str,
+        method: &Method,
+    ) -> Option<usize> {
+        CANDIDATES.with(|candidates| {
+            let mut candidates = candidates.borrow_mut();
+            self.set.matches_into(path, &mut candidates);
+            candidates
+                .iter()
+                .copied()
+                .find(|&i| matchers(i).is_some_and(|m| m.matches(host, path, method)))
+        })
+    }
 }
 
 impl std::fmt::Debug for CompiledMatcher {

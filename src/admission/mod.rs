@@ -140,6 +140,30 @@ impl AdmissionController {
             .clone()
     }
 
+    /// The registered limiter for a route, without creating one.
+    ///
+    /// The request path uses this rather than [`route_limiter`]: every route
+    /// with a concurrency ceiling is registered at startup and by each reload
+    /// before its policy is published, so a miss here means a reload retired
+    /// the route while this request was pinned to an older policy. Creating a
+    /// limiter for it would resurrect the retired id with zero occupancy and
+    /// the old ceiling, beside the retired limiter still holding the work.
+    ///
+    /// [`route_limiter`]: Self::route_limiter
+    pub fn registered_route(&self, id: &str) -> Option<Arc<Limiter>> {
+        self.routes.read().get(id).cloned()
+    }
+
+    /// Is this exact limiter still the registered one for its route? A retired
+    /// limiter can outlive its registration while permits drain, and must not
+    /// publish gauges under a name a newer limiter may now own.
+    pub fn is_registered(&self, limiter: &Arc<Limiter>) -> bool {
+        self.routes
+            .read()
+            .get(limiter.name())
+            .is_some_and(|registered| Arc::ptr_eq(registered, limiter))
+    }
+
     /// Every route limiter currently registered, for the admin status
     /// document. A snapshot of the `Arc`s rather than a borrow, so the read
     /// lock is held for the length of a clone and not for the length of
@@ -156,7 +180,10 @@ impl AdmissionController {
     ///
     /// Limiters are resized rather than replaced, and one that has disappeared
     /// from the config is dropped from the registry but stays alive until its
-    /// last in-flight permit returns.
+    /// last in-flight permit returns. Its work is still counted by the global
+    /// and tier limiters it was admitted through.
+    ///
+    /// Returns the retired route ids, so their gauges can be withdrawn.
     pub fn apply_limits(
         &self,
         global_max: usize,
@@ -164,7 +191,7 @@ impl AdmissionController {
         global_queue_timeout: Duration,
         priorities: &Priorities,
         routes: &[(String, usize, usize, Duration)],
-    ) {
+    ) -> Vec<String> {
         self.global.resize(global_max);
         self.global
             .set_queue(global_queue_max, global_queue_timeout);
@@ -192,7 +219,16 @@ impl AdmissionController {
             }
         }
         let keep: Vec<String> = routes.iter().map(|(id, ..)| id.clone()).collect();
-        w.retain(|id, _| keep.contains(id));
+        let mut retired = Vec::new();
+        w.retain(|id, _| {
+            let kept = keep.contains(id);
+            if !kept {
+                retired.push(id.clone());
+            }
+            kept
+        });
+        retired.sort();
+        retired
     }
 
     /// Ask for capacity.
@@ -571,6 +607,101 @@ mod tests {
         assert_eq!(route.available(), 6);
         assert_eq!(c.tier_limiter(Priority::Low).unwrap().available(), 20);
         assert_eq!(c.global().available(), 20);
+    }
+
+    // ------------------------------------------------ in-flight accounting
+
+    #[tokio::test]
+    async fn a_global_refusal_after_route_and_tier_admission_leaves_no_units_behind() {
+        let c = tiered(2, 100, 100, 100);
+        let route = c.route_limiter("r", 8, 0, Duration::ZERO);
+        let _hog = c
+            .admit(RequestClass::PublicDocument, None, Priority::High, 2)
+            .await;
+        assert!(matches!(
+            c.admit(RequestClass::PublicDocument, Some(&route), Priority::Low, 2)
+                .await,
+            Admission::Shed(_)
+        ));
+        assert_eq!(route.in_flight(), 0, "route units leaked on a global shed");
+        assert_eq!(c.tier_limiter(Priority::Low).unwrap().in_flight(), 0);
+        assert_eq!(c.global().in_flight(), 2);
+    }
+
+    /// A reload that lowers every ceiling below the work already admitted:
+    /// all three layers keep reporting the running work, and each drains to
+    /// zero when the request finishes.
+    #[tokio::test]
+    async fn an_oversubscribing_reload_reports_running_work_at_every_layer() {
+        let c = tiered(10, 100, 100, 100);
+        let route = c.route_limiter("search", 10, 0, Duration::ZERO);
+        let Admission::Admitted(permits) = c
+            .admit(
+                RequestClass::PublicDynamic,
+                Some(&route),
+                Priority::Normal,
+                4,
+            )
+            .await
+        else {
+            panic!("not admitted");
+        };
+        let held = permits.into_inner();
+
+        let retired = c.apply_limits(
+            2,
+            0,
+            Duration::ZERO,
+            &Priorities::default(),
+            &[("search".into(), 1, 0, Duration::ZERO)],
+        );
+        assert!(retired.is_empty());
+        let normal = c.tier_limiter(Priority::Normal).unwrap();
+        for limiter in [&route, normal, c.global()] {
+            assert_eq!(limiter.in_flight(), 4, "{}", limiter.name());
+            assert!(limiter.in_flight() > limiter.limit(), "{}", limiter.name());
+        }
+        drop(held);
+        for limiter in [&route, normal, c.global()] {
+            assert_eq!(limiter.in_flight(), 0, "{}", limiter.name());
+            assert_eq!(limiter.available(), limiter.limit(), "{}", limiter.name());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_retired_route_limiter_keeps_its_work_until_the_permit_returns() {
+        let c = controller(10);
+        let old = c.route_limiter("old", 5, 0, Duration::ZERO);
+        let Admission::Admitted(permits) = c
+            .admit(RequestClass::PublicDynamic, Some(&old), Priority::Normal, 2)
+            .await
+        else {
+            panic!("not admitted");
+        };
+        let held = permits.into_inner();
+
+        let retired = c.apply_limits(10, 0, Duration::ZERO, &Priorities::default(), &[]);
+        assert_eq!(retired, vec!["old".to_string()]);
+        assert!(c.registered_route("old").is_none());
+        assert!(!c.is_registered(&old));
+        assert_eq!(old.in_flight(), 2, "retirement discarded running work");
+        assert_eq!(c.global().in_flight(), 2);
+
+        // Re-adding the id makes a new limiter; the retired one stays apart.
+        c.apply_limits(
+            10,
+            0,
+            Duration::ZERO,
+            &Priorities::default(),
+            &[("old".into(), 5, 0, Duration::ZERO)],
+        );
+        let readded = c.registered_route("old").unwrap();
+        assert!(!Arc::ptr_eq(&readded, &old));
+        assert_eq!(readded.in_flight(), 0);
+
+        drop(held);
+        assert_eq!(old.in_flight(), 0);
+        assert_eq!(c.global().in_flight(), 0);
     }
 
     #[tokio::test]
