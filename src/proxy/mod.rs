@@ -73,8 +73,9 @@ pub struct Ctx {
     /// honest depends on the spool: with one, the origin was never paced by
     /// the client, so end of stream *is* the moment the origin finished.
     /// Without one, Pingora pairs upstream reads with downstream writes and a
-    /// slow reader delays the observation — bounded only by
-    /// `timeouts.downstream_write`. See [`spool`].
+    /// slow reader delays the observation — bounded by
+    /// `timeouts.downstream_write`, after which the reader is cut off and the
+    /// rest of the response is drained at the origin's pace. See [`spool`].
     ///
     /// A client disconnect does not release it: see [`Drain`].
     pub permit: Option<Permit>,

@@ -685,6 +685,13 @@ uncached responses and to responses the cache declined under memory pressure.
 The origin is never told to stop: it does the work it was given, and the
 capacity it uses comes back when it is done.
 
+A slow reader that Tanod cuts off at `timeouts.downstream_write` counts as a
+client that has gone. The write timeout still bounds how long the *reader* can
+hold a slot. From the cut-off on, the rest of the response is read at the
+origin's own pace and the slot is held only while the origin is still
+producing it. Before 0.4 the cut-off also closed the origin connection and
+released the slot at once, even when the origin was still rendering.
+
 The drain ends at the earlier of the origin finishing and the request's
 `timeouts.origin` deadline, measured from when the origin request began — never
 later than it would have ended with its client connected. With
