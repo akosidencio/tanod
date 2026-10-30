@@ -1,0 +1,25 @@
+# Live view for bench/showcase/run.sh --observe. k6 pushes client-side metrics
+# here by remote write (tagged arm=baseline|tanod); Prometheus scrapes Tanod and
+# the origins' own render counters. Nothing in results.json comes from here: the
+# run's numbers come from files the run writes, so a scrape gap cannot change
+# them.
+global:
+  scrape_interval: 2s
+  evaluation_interval: 2s
+
+scrape_configs:
+  # Only up during the Tanod arm; a down target in the baseline arm is expected.
+  - job_name: tanod
+    static_configs:
+      - targets: ["tanod:9090"]
+
+  # The witness: renders in progress inside each Next.js process, in both arms.
+  # `reader=prometheus` keeps this scrape's peak window separate from the
+  # sampler's, so neither resets the other.
+  - job_name: origins
+    metrics_path: /api/fixture-stats
+    params:
+      format: [prometheus]
+      reader: [prometheus]
+    static_configs:
+      - targets: ["next-1:3000", "next-2:3000", "next-3:3000"]
