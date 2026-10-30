@@ -2,13 +2,15 @@
 
 What has to be true before a tag is cut, and what runs where.
 
-The current 0.4 candidate is **CONDITIONALLY READY**. Both required hour-long
-runs (CLOCK and TinyUFO, 24 workers) now hold the origin ceiling at 8 against 8.
-Two fixes got them there: the disconnect drain, and `slow-origin` no longer
-counting renders that had already finished. The assertion itself is unchanged.
-Still open before a tag: a Kubernetes staging run
-([procedure](../ops/production/KUBERNETES-STAGING.md)), the external cache-key
-review, and green CI on the release ref.
+The current 0.4 candidate is **CONDITIONALLY READY**. The 0.4.0 cache security
+review ([package](reviews/CACHE-SECURITY-REVIEW-v0.4.0.md)) found and fixed
+three vulnerabilities that are also present in 0.3.2. Both required hour-long
+runs (CLOCK and TinyUFO, 24 workers) were repeated with the uncached-disconnect
+arm. Each held the origin ceiling at 8 against 8 and completed every
+disconnect drain inside the deadline. Still open before a tag: an independent
+sign-off on the cache security review, a Kubernetes staging run
+([procedure](../ops/production/KUBERNETES-STAGING.md)), and green CI on the
+release ref.
 
 The distinction that matters: **a gate is something that fails the build**, not
 something a person reads afterwards. Every item below either exits non-zero on
