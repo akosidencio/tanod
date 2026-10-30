@@ -550,10 +550,33 @@ async def main():
     parser.add_argument('--policy', default='clock', choices=['clock', 'tinyufo'])
     parser.add_argument('--json')
     parser.add_argument('--next-origin')
+    parser.add_argument('--next-image', help='start this fixture image and use it as --next-origin')
     parser.add_argument('--skip-refusal', action='store_true',
                         help='for comparing a binary that predates the class fence')
     args = parser.parse_args()
     binary = Path(args.tanod).resolve()
+    container = None
+    if args.next_image:
+        port = free_port()
+        container = f'tanod-cache-isolation-{os.getpid()}'
+        subprocess.run(['docker', 'run', '-d', '--rm', '--name', container, '-p', f'127.0.0.1:{port}:3000',
+                        '-e', 'TANOD_BUILD_ID=next-fixture-v1', '-e', 'INSTANCE_ID=isolation',
+                        args.next_image], check=True, capture_output=True)
+        args.next_origin = f'127.0.0.1:{port}'
+        for _ in range(240):
+            try:
+                await request(port, 'GET', '/healthz', {}, timeout=2)
+                break
+            except (OSError, asyncio.TimeoutError, ValueError, IndexError):
+                await asyncio.sleep(.25)
+    try:
+        return await run(args, binary)
+    finally:
+        if container:
+            subprocess.run(['docker', 'rm', '-f', container], capture_output=True)
+
+
+async def run(args, binary):
     results, counters = Results(), {}
     origin = Origin()
     await origin.start()

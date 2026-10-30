@@ -36,6 +36,19 @@ docker_available() {
   wait "$probe"
 }
 
+py() { # name, python script, args... : a harness that is not a bench_* script
+  local name=$1; shift
+  echo
+  echo "=================================================================="
+  echo "  $name"
+  echo "=================================================================="
+  if python3 "$@" ${BENCH_REPORT_DIR:+--json "$BENCH_REPORT_DIR/$name.json"}; then
+    PASSED="$PASSED $name"
+  else
+    FAILED="$FAILED $name"
+  fi
+}
+
 run() { # script, args...
   local script=$1; shift
   echo
@@ -124,6 +137,22 @@ if command -v python3 >/dev/null; then
   else
     FAILED="$FAILED origin-concurrency.py"
   fi
+  # The same scenarios against an h2c origin: the vendored drain patch's
+  # HTTP/2 upstream loop. The origin is Node's built-in http2 module.
+  if command -v node >/dev/null; then
+    py origin-concurrency-h2 bench/origin-concurrency.py --h2 --tanod "target/${BENCH_PROFILE:-debug}/tanod"
+  else
+    echo "SKIPPED origin-concurrency.py --h2 — no node for the h2c origin."
+    FAILED="$FAILED origin-concurrency-h2(no-node)"
+  fi
+  # Cross-user isolation across every sharing contract, and what a flood of
+  # distinct query strings costs. Both cache policies.
+  for policy in clock tinyufo; do
+    py "cache-isolation-$policy" bench/cache-isolation.py --policy "$policy" \
+      --tanod "target/${BENCH_PROFILE:-debug}/tanod"
+    py "query-cardinality-$policy" bench/query-cardinality.py --policy "$policy" \
+      --seconds "${QUERY_CARDINALITY_SECONDS:-5}" --bin-dir "target/${BENCH_PROFILE:-debug}"
+  done
 else
   echo
   echo "SKIPPED bench/websocket.sh — no python3 for the WebSocket client."
@@ -166,6 +195,11 @@ elif docker_available; then
   # Reuses the fixture image nextjs.sh just built: forwarded headers against
   # Next's own redirect and Server Action origin checks.
   run nextjs-forwarded.sh
+  # Next's own cookie-reading page, HTML and RSC, never shared between users.
+  if command -v python3 >/dev/null; then
+    py cache-isolation-nextjs bench/cache-isolation.py --tanod "target/${BENCH_PROFILE:-debug}/tanod" \
+      --next-image "${TANOD_NEXT_IMAGE:-tanod-next-origin:reference}"
+  fi
   if [ "${SKIP_BROWSER:-0}" = "1" ]; then
     echo "SKIPPED bench/nextjs-browser.sh (SKIP_BROWSER=1)"
   else

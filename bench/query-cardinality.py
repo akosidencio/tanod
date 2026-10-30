@@ -22,7 +22,7 @@ within budget, pinned bytes within budget plus one body of headroom, origin
 render concurrency within the ceiling, and nothing held once traffic stops.
 
 Usage: bench/query-cardinality.py [--policy clock|tinyufo] [--seconds N]
-       [--json OUT]
+       [--json OUT] [--bin-dir target/release]
 """
 import argparse
 import json
@@ -39,6 +39,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+BIN = ROOT / 'target/release'
 BUDGET = 16 * 1024 * 1024
 BODY = 16384
 CEILING = 8
@@ -148,7 +149,7 @@ def load(listen, mix, seconds, folder, label, pid):
     path = Path(folder) / f'{label}.mix'
     path.write_text(''.join(f'{w}|{p}\n' for w, p in mix))
     out = subprocess.run(
-        [str(ROOT / 'target/release/loadgen'), 'run', '--addr', f'127.0.0.1:{listen}',
+        [str(BIN / 'loadgen'), 'run', '--addr', f'127.0.0.1:{listen}',
          '--mix', str(path), '--connections', '32', '--threads', '2',
          '--duration', str(seconds), '--warmup', '1', '--timeout', '10',
          '--watch-pid', str(pid), '--label', label],
@@ -161,7 +162,11 @@ def main():
     parser.add_argument('--policy', default='clock', choices=['clock', 'tinyufo'])
     parser.add_argument('--seconds', type=int, default=15)
     parser.add_argument('--json')
+    parser.add_argument('--bin-dir', default=str(ROOT / 'target/release'),
+                        help='where tanod, slow-origin and loadgen were built')
     args = parser.parse_args()
+    global BIN
+    BIN = Path(args.bin_dir).resolve()
     hot = f'/size/{BODY}?p={{n:100}}'
     long_name = 'n' * 2048
     phases = {
@@ -174,13 +179,13 @@ def main():
     results, failures = {'policy': args.policy, 'budget': BUDGET, 'ceiling': CEILING}, []
     with tempfile.TemporaryDirectory(prefix='tanod-qc-', dir=os.environ.get('TMPDIR')) as folder:
         origin_port = free_port()
-        origin = subprocess.Popen([str(ROOT / 'target/release/slow-origin'), str(origin_port), '20'],
+        origin = subprocess.Popen([str(BIN / 'slow-origin'), str(origin_port), '20'],
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         listen, metrics, admin = free_port(), free_port(), free_port()
         cfg = Path(folder) / 'tanod.yaml'
         cfg.write_text(config(folder, listen, metrics, admin, origin_port, args.policy))
         log = (Path(folder) / 'tanod.log').open('wb')
-        tanod = subprocess.Popen([str(ROOT / 'target/release/tanod'), 'run', '--config', str(cfg)],
+        tanod = subprocess.Popen([str(BIN / 'tanod'), 'run', '--config', str(cfg)],
                                  stdout=log, stderr=log)
         try:
             for _ in range(200):
