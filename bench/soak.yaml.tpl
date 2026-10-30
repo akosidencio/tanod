@@ -72,5 +72,14 @@ routes:
       override_origin: true
       ttl:
         max: 30s
+  # Uncached and permit-holding. A client that hangs up here leaves Tanod
+  # draining the origin's response until it ends, so this is the arm that
+  # takes the disconnect drain (`SOAK_UNCACHED_DISCONNECT`). Not spooled, so
+  # the exchange is the plain uncached one Pingora used to abandon.
+  - id: uncached-disconnect
+    match: "/stream/**"
+    class: private_dynamic
+    spool:
+      enabled: false
   - id: catchall
     match: "/**"
