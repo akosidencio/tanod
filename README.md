@@ -402,6 +402,8 @@ Use these guides for the next step:
 | [Threat model](./docs/THREAT-MODEL.md) | Protected assets, security assumptions, controls, and exclusions |
 | [Cache-key review brief](./docs/CACHE-KEY-REVIEW.md) | Claims and attack cases for an independent cache-safety review |
 | [v0.4.0 cache security review](./docs/reviews/CACHE-SECURITY-REVIEW-v0.4.0.md) | Maintainer-side review package, fixes, and the pending independent sign-off |
+| [0.4.0 release notes](./docs/RELEASE-NOTES-0.4.0.md) | Security fixes, mitigations for 0.3.2, and what changed |
+| [Upgrading to 0.4](./docs/UPGRADING-0.4.md) | Configuration and behavior changes from 0.3.2 |
 | [Release gates](./docs/RELEASE-GATES.md) | Required checks and validation beyond CI |
 | [Roadmap](./docs/ROADMAP.md) | Remaining features, limitations, and validation work |
 | [Changelog](./CHANGELOG.md) | Release history and upgrade notes |
@@ -409,6 +411,8 @@ Use these guides for the next step:
 ## Contributing and security
 
 Report reproducible bugs or propose improvements through [GitHub issues](https://github.com/akosidencio/tanod/issues). Include the Tanod version, a redacted configuration, the request pattern, and the observed behavior. Review the relevant [release gates](./docs/RELEASE-GATES.md) when contributing code.
+
+Report suspected vulnerabilities privately, as described in [SECURITY.md](./SECURITY.md), never in a public issue. Versions before 0.4.0 are affected by the vulnerabilities listed in the [0.4.0 release notes](./docs/RELEASE-NOTES-0.4.0.md#2-security-fixes).
 
 An independent review of cache keys and response shareability is a priority. The [review brief](./docs/CACHE-KEY-REVIEW.md) describes falsifiable claims and known review gaps. Tanod's threat model has not been independently audited; keep credentials and private application data out of public reports.
 

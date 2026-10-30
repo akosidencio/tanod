@@ -60,6 +60,12 @@ prepared for an independent reviewer, whose sign-off it records as pending.
 6. Purge and namespace retirement close a fill, including its transient
    handoff, to new readers atomically; existing readers finish.
 
+Releases before 0.4.0 do not hold invariants 2, 4 and 5, and passed
+untrusted forwarding headers to the origin outside the key (the forwarding
+boundary above). Those four defects, their affected configurations and the
+mitigations for 0.3.2 are in the
+[release notes](RELEASE-NOTES-0.4.0.md#2-security-fixes).
+
 The declared route class is the operator's statement that a route is not
 personalised. Nothing detects an origin that personalises a response without
 `Set-Cookie`, `Cache-Control: private` or a declared `Vary` on a route
@@ -125,9 +131,35 @@ route counter/histogram series can persist across changing route IDs until
 process restart. Keep IDs stable across reloads; arbitrary operator-driven
 route-ID churn is not a bounded-cardinality promise.
 
+## Release supply chain
+
+* Every GitHub Action in the workflows is pinned to a full commit SHA;
+  `scripts/check-workflows.py` enforces it in CI, along with read-only default
+  permissions and that no job able to publish can run before every check.
+  Only `image-publish` (`packages: write`), `publish` (`contents: write`) and
+  `npm` (`id-token: write`) hold write permissions.
+* The release image is built once, smoke-tested from the archive that is then
+  pushed with its digest preserved, and never pushed before its tests pass.
+  Its BuildKit provenance and SBOM are OCI attachments, not signed GitHub
+  artifact attestations.
+* The GNU release binary reproduces from a clean checkout of the tag; the
+  image digest does not.
+* `vendor/pingora-proxy` is invisible to `cargo audit` and to registry-based
+  scanners that read `Cargo.lock` sources (it is a path package). CI holds it
+  to the published crate's checksum plus `tanod.patch`; its advisories are
+  checked by hand below.
+* CI caches (`Swatinem/rust-cache`) are used by test jobs. The released
+  binaries, the image and the SBOM are built without restoring a cache that
+  another ref could have written.
+
 ## Dependency advisory review (2026-10-29, rechecked 2026-10-30)
 
-Rechecked for the 0.4.0 candidate against advisory-db `ee1a49a` (2026-10-29):
+Rechecked for the 0.4.0 finalization on 2026-10-30 against advisory-db
+`2295466c` (1,395 advisories): both lockfiles pass with the exception set
+below. The only advisory naming `pingora-proxy`, RUSTSEC-2026-0390, is patched
+in `>= 0.9.0`, the vendored version; every `pingora-*` advisory is patched at or
+below 0.9.0. Previously checked against advisory-db
+`ee1a49a` (2026-10-29):
 `cargo audit -D warnings` passes for `Cargo.lock` and `fuzz/Cargo.lock` with
 the exception set below, unchanged. The vendored `pingora-proxy` is a path
 package that `cargo audit` cannot match, so its advisories were checked by

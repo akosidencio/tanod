@@ -10,7 +10,8 @@ Record every command's output; a step that could not run is a gap, not a pass.
 available; the only kubeconfig on the validation machine belongs to another
 project and was not used. The manifest and configuration were checked
 statically (see `PHASE4.2-DEPLOYMENT-VALIDATION`), which certifies nothing about
-a cluster's behaviour.
+a cluster's behaviour. Rechecked 2026-10-30 for the 0.4.0 finalization: still
+no Tanod-owned cluster, so still NOT EXECUTED. Every section below is open.
 
 Use a dedicated kubeconfig for the staging cluster and nothing else, so no
 command below can reach another cluster:
@@ -190,6 +191,44 @@ the breaker counters (`tanod_upstream_breaker_trips_total`) and
 **Pass:** `kubectl exec` each pod's `/status` reports `concurrency.max` 4 and
 the `capacity` group 8/2; under saturating load both pods' `tanod_origin_in_flight`
 reach 4 and the origin's `peak` is 8, not more.
+
+## 10a. Interrupted rollout and recovery
+
+A rollout that stops halfway must not overlap capacity while it is stuck, and
+must be recoverable without force-deleting a running pod. Make the new
+revision fail to start, with §1's load running:
+
+```sh
+kubectl -n "$NS" create configmap tanod-config-bad \
+  --from-literal=tanod.yaml='version: 1
+origin: {upstreams: []}'
+kubectl -n "$NS" patch statefulset tanod --type=json -p='[{"op":"replace",
+  "path":"/spec/template/spec/volumes/0/configMap/name","value":"tanod-config-bad"}]'
+kubectl -n "$NS" rollout status statefulset/tanod --timeout=2m   # expected to time out
+kubectl -n "$NS" get pods -l app=tanod -o wide
+curl -s http://next-origin:3000/__stats
+```
+
+(Check that `volumes/0` is the configuration volume in the manifest first.)
+
+**Pass while stuck:** the StatefulSet stops at `tanod-1` (ordinal order,
+highest first) and leaves `tanod-0` on the old revision, Ready and serving;
+`tanod-1` is not Ready and receives no traffic; `peak` ≤ 8.
+
+Then recover:
+
+```sh
+kubectl -n "$NS" rollout undo statefulset/tanod
+# A StatefulSet does not replace a pod stuck on a broken revision by itself
+# after the template is reverted; delete it (gracefully — it is not running).
+kubectl -n "$NS" delete pod tanod-1
+kubectl -n "$NS" rollout status statefulset/tanod --timeout=5m
+curl -s http://next-origin:3000/__stats
+```
+
+**Pass:** both pods Ready on the previous revision, `peak` ≤ 8 throughout,
+`tanod-0` never restarted, and no pod was force-deleted. Record how long
+`tanod-1` was unavailable: half the capacity is offline for that time.
 
 ## 11. Clean up
 
