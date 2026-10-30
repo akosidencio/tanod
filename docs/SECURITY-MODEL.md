@@ -37,6 +37,34 @@ and the [cache review brief](CACHE-KEY-REVIEW.md) before approving a release.
   invalidation and new origin work: restrict its network and callers. There
   is no per-credential purge rate limiter; rate-limit a purge gateway if needed.
 
+## Response-sharing invariants (0.4.0 review)
+
+The [v0.4.0 cache security review package](reviews/CACHE-SECURITY-REVIEW-v0.4.0.md)
+states these as the release's invariants. It is a maintainer-side review
+prepared for an independent reviewer, whose sign-off it records as pending.
+
+1. A response is never shared, in flight or stored, if it sets a cookie, if
+   its `Vary` names a header outside the key, or if its request carried
+   `Authorization`, a Next.js draft-mode cookie or a Server Action.
+2. Only `cache.override_origin` stores a response the origin refused, or the
+   response to a cookie-bearing request, and only on a route with an explicit
+   non-private class and a `ttl.max`. `coalesce.override_origin` shares such a
+   response within one flight and never stores it, and also needs an explicit
+   class.
+3. Followers attach to a fill only after its response headers were judged
+   shareable. Before the origin answers, only request-side rules apply.
+4. Query policies decide on parameter names as the origin decodes them; the
+   key keeps the bytes as sent, so equivalent encodings never merge.
+5. Routes, classes and keys are never decided on a path the origin would
+   resolve differently: dot segments are refused in protect mode.
+6. Purge and namespace retirement close a fill, including its transient
+   handoff, to new readers atomically; existing readers finish.
+
+The declared route class is the operator's statement that a route is not
+personalised. Nothing detects an origin that personalises a response without
+`Set-Cookie`, `Cache-Control: private` or a declared `Vary` on a route
+declared public; on such a route both overrides share it.
+
 ## Cache lifecycle
 
 Lookup attaches under a shared lifecycle guard, excludes invalidated fills,
@@ -54,6 +82,11 @@ an origin transaction: work not registered at purge time may register later
 in the same active namespace. See [operations](OPERATIONS.md).
 
 ## Resource limits and remaining assumptions
+
+Tanod strictly bounds its managed admitted upstream exchanges under its
+defined lifecycle and deadline contract. It does not independently bound
+arbitrary backend application work that continues after a response or beyond
+the drain deadline.
 
 An admitted request holds its origin permit until the origin's response ends,
 including after its client disconnects: Tanod reads the rest of the response
@@ -92,7 +125,14 @@ route counter/histogram series can persist across changing route IDs until
 process restart. Keep IDs stable across reloads; arbitrary operator-driven
 route-ID churn is not a bounded-cardinality promise.
 
-## Dependency advisory review (2026-10-29)
+## Dependency advisory review (2026-10-29, rechecked 2026-10-30)
+
+Rechecked for the 0.4.0 candidate against advisory-db `ee1a49a` (2026-10-29):
+`cargo audit -D warnings` passes for `Cargo.lock` and `fuzz/Cargo.lock` with
+the exception set below, unchanged. The vendored `pingora-proxy` is a path
+package that `cargo audit` cannot match, so its advisories were checked by
+hand: RUSTSEC-2026-0390 is patched in `>= 0.9.0`, which is the vendored
+version, and no other advisory names the crate.
 
 The checked lockfile retains Pingora 0.9.0 and Tokio 1.53.3. Tokio's `~1.53.3`
 constraint remains: [Pingora issue 1059](https://github.com/cloudflare/pingora/issues/1059)

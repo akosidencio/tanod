@@ -276,6 +276,8 @@ The sharing rules include:
 
 - Requests with `Authorization`, unsafe methods, Next.js Server Actions, and draft-mode content bypass sharing
 - Cookie-bearing requests remain private by default; an explicit public-route override requires a privacy review
+- `coalesce.override_origin` shares within one in-flight render and never stores; like `cache.override_origin` it requires an explicit `class:`
+- Request targets with `.` or `..` path segments are refused (`400`) in protect mode, because the origin would resolve them to a different route
 - Responses with `Set-Cookie`, unsupported `Vary` headers, or unsafe statuses cannot be shared through an override
 - Origin privacy and cache directives remain authoritative unless a validated public route explicitly overrides them
 - Cache keys separate scheme, host, method, path, query, configured variants, Next.js variants, and deployment identity
@@ -399,6 +401,7 @@ Use these guides for the next step:
 | [Next.js production reference](./docs/NEXTJS-PRODUCTION-REFERENCE.md) | Deployment identity, shared Next.js state, replica limits, and verification |
 | [Threat model](./docs/THREAT-MODEL.md) | Protected assets, security assumptions, controls, and exclusions |
 | [Cache-key review brief](./docs/CACHE-KEY-REVIEW.md) | Claims and attack cases for an independent cache-safety review |
+| [v0.4.0 cache security review](./docs/reviews/CACHE-SECURITY-REVIEW-v0.4.0.md) | Maintainer-side review package, fixes, and the pending independent sign-off |
 | [Release gates](./docs/RELEASE-GATES.md) | Required checks and validation beyond CI |
 | [Roadmap](./docs/ROADMAP.md) | Remaining features, limitations, and validation work |
 | [Changelog](./CHANGELOG.md) | Release history and upgrade notes |
