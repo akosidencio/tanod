@@ -1,0 +1,78 @@
+{
+  "generated_from": "results.json and cases/*/{timeline,samples}.csv",
+  "matplotlib": "3.11.2",
+  "charts": [
+    {
+      "chart": "outcomes-cpu",
+      "files": [
+        "outcomes-cpu.svg",
+        "outcomes-cpu.png"
+      ],
+      "description": "Outcome of every attempted request, by workload and arm",
+      "cases": [
+        "cpu-unique-baseline-t1",
+        "cpu-unique-baseline-t2",
+        "cpu-unique-baseline-t3",
+        "cpu-unique-tanod-t1",
+        "cpu-unique-tanod-t2",
+        "cpu-unique-tanod-t3"
+      ]
+    },
+    {
+      "chart": "latency-cpu",
+      "files": [
+        "latency-cpu.svg",
+        "latency-cpu.png"
+      ],
+      "description": "p50/p95/p99 of successful responses, by workload and arm",
+      "cases": [
+        "cpu-unique-tanod-t1",
+        "cpu-unique-tanod-t2",
+        "cpu-unique-tanod-t3",
+        "cpu-unique-baseline-t1",
+        "cpu-unique-baseline-t2",
+        "cpu-unique-baseline-t3"
+      ]
+    },
+    {
+      "chart": "origin-concurrency-cpu",
+      "files": [
+        "origin-concurrency-cpu.svg",
+        "origin-concurrency-cpu.png"
+      ],
+      "description": "Renders in progress across the three origins over time (trial 1)",
+      "cases": [
+        "cpu-unique-baseline-t1",
+        "cpu-unique-tanod-t1"
+      ]
+    },
+    {
+      "chart": "goodput-cpu",
+      "files": [
+        "goodput-cpu.svg",
+        "goodput-cpu.png"
+      ],
+      "description": "HTTP 200 per second over time (trial 1)",
+      "cases": [
+        "cpu-unique-baseline-t1",
+        "cpu-unique-tanod-t1"
+      ]
+    },
+    {
+      "chart": "origin-work-cpu",
+      "files": [
+        "origin-work-cpu.svg",
+        "origin-work-cpu.png"
+      ],
+      "description": "Origin renders versus successful responses, by workload and arm",
+      "cases": [
+        "cpu-unique-baseline-t1",
+        "cpu-unique-baseline-t2",
+        "cpu-unique-baseline-t3",
+        "cpu-unique-tanod-t1",
+        "cpu-unique-tanod-t2",
+        "cpu-unique-tanod-t3"
+      ]
+    }
+  ]
+}

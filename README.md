@@ -359,8 +359,45 @@ The following scripts start fixtures, make assertions, and tear down their proce
 | Next.js HTTP behavior | `./bench/nextjs.sh` | Real framework responses across multiple origins |
 | Next.js browser behavior | `./bench/nextjs-browser.sh` | Client-generated navigation, prefetch, and Server Action requests |
 | Replica behavior | `./bench/nextjs-replicas.sh` | Combined budgets, affinity, purge fan-out, failure, and recovery |
+| NGINX alone vs NGINX with Tanod | `./bench/showcase/run.sh --mode cpu` | Outcomes, latency, and origin work under open-model overload ([method](./docs/demo/README.md)) |
 
 The local slow-origin fixture sleeps instead of performing a real render. Its results demonstrate mechanisms, not universal throughput or latency. `BENCH_REPORT_DIR` collects supported benchmark results with their workload parameters.
+
+### Next.js overload demonstration
+
+The same three Next.js origins ran two ways: behind NGINX alone, and behind the same NGINX with Tanod in front of them. Each origin had a 1-CPU quota and did a fixed amount of CPU work per page. Every request asked for a URL nobody had requested before, so caching and coalescing could not help; only admission control could. k6 offered 90 requests per second for 60 seconds, about three times what the origins could render. The arms ran separately, three trials each, on freshly started containers.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/demo/results/outcomes-cpu-dark.png">
+  <img alt="Outcome of every request. NGINX alone: 26% succeeded, 62% timed out, 12% could not be sent. With Tanod: 36% succeeded and 64% received a 503 from Tanod, with no timeouts." src="./docs/demo/results/outcomes-cpu.png" width="900">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/demo/results/origin-concurrency-cpu-dark.png">
+  <img alt="Renders in progress inside the origins over time. NGINX alone climbs to about 165 and keeps working for over 40 seconds after the load stops. With Tanod it stays at the ceiling of 6." src="./docs/demo/results/origin-concurrency-cpu.png" width="900">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/demo/results/latency-cpu-dark.png">
+  <img alt="Latency of successful responses. NGINX alone: p95 about 7.3 seconds. With Tanod: p95 about 1.35 seconds." src="./docs/demo/results/latency-cpu.png" width="640">
+</picture>
+
+Medians of three trials:
+
+| | NGINX → Next.js | NGINX → Tanod → Next.js |
+| --- | ---: | ---: |
+| Successful responses (HTTP 200) | 1,468 | 1,900 |
+| Client timeouts (10 s) | 3,293 | 0 |
+| Requests k6 could not send (all virtual users busy) | 633 | 0 |
+| Shed by Tanod (`503` with `Retry-After`) | — | 3,501 |
+| Successful-response p95 | 7.3 s | 1.35 s |
+| Peak renders in progress at the origins | 165 | 6 |
+| Origin renders started | 3,749 | 1,900 |
+| Origin work still running after the load stopped | 46 s | none |
+
+Without Tanod, the origins rendered almost twice as many pages but returned fewer of them, because most of that work was for visitors who had already timed out. With Tanod, most visitors received a `503` instead. Those requests were turned away within the 1-second queue limit, so sheds are a cost, not a free win. Successful responses through Tanod include up to 1 second in its queue.
+
+These numbers come from one desktop (Intel i5-9400F, 6 CPUs) running the repository's synthetic CPU-bound Next.js fixture, with NGINX's default settings and a Tanod ceiling of 6 chosen for this capacity. They show the mechanism under one set of conditions, not the gain to expect for your application. The raw results, environment, and parameters are in [`docs/demo/results/`](./docs/demo/results/). The [method and limitations](./docs/demo/README.md) describe how to reproduce the run on your own hardware.
 
 The repository's recorded DigitalOcean staging A/B test used one repeated public SSR product URL. A spike at 20 requests per second lasted 20 seconds, with baseline and recovery periods. Across each complete run, it reported 501 successful requests through Tanod versus 60 directly, with successful-response p95 latency of 166 ms versus 9.10 seconds.
 

@@ -190,8 +190,10 @@ def chart_outcomes(plt, t, results, mode, out, theme, manifest):
     rate = cases[0]['rate']
     top = heading(fig, t, f'What happened to every request · {rate} req/s offered for {cases[0]["duration_s"]}s',
                   MODE_LABEL[mode])
-    handles = [plt.Rectangle((0, 0), 1, 1, color=color) for _, _, color, _ in OUTCOME_STYLE]
-    ax.legend(handles, [label for _, label, _, _ in OUTCOME_STYLE], ncol=4, fontsize=8,
+    # Only outcomes that occurred: an empty category in the legend reads as a claim.
+    present = [style for style in OUTCOME_STYLE if any(totals[style[0]] for _, _, totals, _ in rows)]
+    handles = [plt.Rectangle((0, 0), 1, 1, color=color) for _, _, color, _ in present]
+    ax.legend(handles, [label for _, label, _, _ in present], ncol=4, fontsize=8,
               loc='upper left', bbox_to_anchor=(0, -0.12))
     footer(fig, t, results.get('metadata') or {}, 'Shares of attempted iterations (sent + dropped).')
     layout(fig, top)
@@ -205,10 +207,12 @@ def chart_latency(plt, t, results, mode, out, theme, manifest):
     cases = [c for c in results['cases'] if c['mode'] == mode]
     if not cases:
         return
-    fig, axes = plt.subplots(1, 2, figsize=(10, 3.6), sharex=True)
+    workloads = [w for w in ('unique', 'repeated') if any(c['workload'] == w for c in cases)]
+    fig, axes = plt.subplots(1, len(workloads), figsize=(max(8, 5 * len(workloads)), 3.6), sharex=True, squeeze=False)
+    axes = axes[0]
     sources = []
     measured = [c['ok_ms'][k] for c in cases for k in ('p50', 'p95', 'p99') if c['ok_ms'][k]]
-    for ax, workload in zip(axes, ('unique', 'repeated')):
+    for ax, workload in zip(axes, workloads):
         ax.set_title(WORKLOAD_LABEL[workload], fontsize=10)
         row_labels = []
         for row, arm in enumerate(('tanod', 'baseline')):
@@ -274,6 +278,11 @@ def origin_series(case_dir, interval):
 
 
 
+def trial_note(results, mode):
+    trials = max((c['trial'] for c in results['cases'] if c['mode'] == mode), default=1)
+    return f'Trial 1 of {trials} shown; every trial is in results.csv. ' if trials > 1 else ''
+
+
 def chart_origin_concurrency(plt, t, results, run_dir, mode, out, theme, manifest):
     cases = [c for c in results['cases'] if c['mode'] == mode and c['trial'] == 1]
     interval = results['params']['sample_interval_s']
@@ -304,15 +313,15 @@ def chart_origin_concurrency(plt, t, results, run_dir, mode, out, theme, manifes
             top = max(top, max(ys))
         if ceiling is not None:
             ax.axhline(ceiling, color=t['ink2'], linewidth=1, linestyle=(0, (4, 3)))
-            ax.annotate(f'Tanod ceiling: {ceiling}', (1.0, ceiling), xycoords=('axes fraction', 'data'),
-                        xytext=(-4, 4), textcoords='offset points', ha='right', fontsize=8, color=t['ink2'])
+            ax.annotate(f'Tanod ceiling: {ceiling}', (0.82, ceiling), xycoords=('axes fraction', 'data'),
+                        xytext=(0, 4), textcoords='offset points', ha='right', fontsize=8, color=t['ink2'])
         ax.set_ylim(0, max(top, ceiling or 0) * 1.15 + 1)
         ax.set_title(WORKLOAD_LABEL[workload], fontsize=10)
         ax.set_ylabel('Renders in progress\n(sum of 3 origins)')
     axes[-1, 0].set_xlabel('Seconds since the measured phase started (includes the post-load drain)')
     top = arm_legend(fig, t, heading(fig, t, 'Concurrent work inside the Next.js origins, reported by the origins themselves',
                                      MODE_LABEL[mode]))
-    source = ("From the origins' own render_start/render_end log; maximum per 100 ms."
+    source = trial_note(results, mode) + ("From the origins' own render_start/render_end log; maximum per 100 ms."
               if kinds == {'log'} else f'Includes sampled data (every {interval}s), which can miss brief peaks.')
     footer(fig, t, results.get('metadata') or {}, source)
     layout(fig, top)
@@ -349,7 +358,8 @@ def chart_goodput(plt, t, results, run_dir, mode, out, theme, manifest):
         ax.set_ylabel('HTTP 200 per second')
     axes[-1, 0].set_xlabel('Seconds since the measured phase started')
     top = arm_legend(fig, t, heading(fig, t, 'Successful responses per second, as k6 received them', MODE_LABEL[mode]))
-    footer(fig, t, results.get('metadata') or {}, 'Bucketed by the second each response completed.')
+    footer(fig, t, results.get('metadata') or {},
+           trial_note(results, mode) + 'Bucketed by the second each response completed.')
     layout(fig, top)
     save(fig, out, f'goodput-{mode}', theme, manifest, sources, 'HTTP 200 per second over time (trial 1)')
     plt.close(fig)
