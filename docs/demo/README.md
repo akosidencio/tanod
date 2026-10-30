@@ -10,7 +10,7 @@ The experiment counts what happens to every request. It records how many succeed
 The harness lives in [`bench/showcase/`](../../bench/showcase). This page explains how to run it, how the experiment is designed, what it can and cannot show, and how to present the results without overstating them.
 
 > [!IMPORTANT]
-> This page contains no benchmark results. Run the experiment on your own hardware: every chart and number it produces is derived from files that run writes. If you publish a result, publish it with its `metadata.json`, which records the hardware, versions and parameters.
+> The charts in the project README come from one three-trial run of `cpu` mode with unique URLs, on one desktop. That run's results, parameters and environment are in [`results/`](./results/). They show the mechanism under those conditions, not the gain to expect for your application. Run the experiment on your own hardware: every chart and number it produces is derived from files that run writes. If you publish a result, publish it with its `metadata.json`, which records the hardware, versions and parameters.
 
 ## Contents
 
@@ -264,13 +264,13 @@ Do not include `delay`-mode footage in a performance claim. If you show it, capt
 
 ## Embedding results in a README
 
-Commit charts only from a run that you are willing to stand behind. That means at least three trials, all checks passing, and its `metadata.json` and `results.csv` committed next to the charts. Then use a `<picture>` element so that GitHub serves the dark variant in dark mode:
+Commit charts only from a run that you are willing to stand behind. That means at least three trials, all checks passing, and its `metadata.json` and `results.csv` committed next to the charts. Prefer the PNG files: the SVGs name their font rather than embedding it, so they render with whatever font the viewer has. Then use a `<picture>` element so that GitHub serves the dark variant in dark mode:
 
 ```html
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/demo/results/outcomes-cpu-dark.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/demo/results/outcomes-cpu-dark.png">
   <img alt="Outcome of every request at 90 req/s against three CPU-bound Next.js origins, with and without Tanod"
-       src="docs/demo/results/outcomes-cpu.svg" width="900">
+       src="docs/demo/results/outcomes-cpu.png" width="900">
 </picture>
 ```
 
