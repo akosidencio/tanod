@@ -15,6 +15,10 @@
 //! response_body_filter  spool the body, so the origin is never paced by the
 //!                       client and the permit can go back when the origin is
 //!                       genuinely finished
+//! upstream_after_downstream_error
+//!                       a client that leaves does not end the origin's work,
+//!                       so an admitted response is read to its end and its
+//!                       permit held until then; see [`Drain`]
 //! ```
 //!
 //! Putting admission earlier would make cache hits and coalesced followers
@@ -71,6 +75,8 @@ pub struct Ctx {
     /// Without one, Pingora pairs upstream reads with downstream writes and a
     /// slow reader delays the observation — bounded only by
     /// `timeouts.downstream_write`. See [`spool`].
+    ///
+    /// A client disconnect does not release it: see [`Drain`].
     pub permit: Option<Permit>,
     /// Capacity for an upgraded connection, counted separately from renders
     /// because it is held for the life of a tunnel rather than a render.
@@ -137,6 +143,9 @@ pub struct Ctx {
     pub spool: Option<Spool>,
     /// Recorded before the spool is dropped, for the access log.
     pub spool_outcome: Option<SpoolOutcome>,
+    /// Present once the client has gone and the origin response is being read
+    /// to its end anyway.
+    pub drain: Option<Drain>,
 
     /// Correlation for this request: trace id, this request's span, and the
     /// child span the origin fetch runs under. Present on every request
@@ -191,6 +200,7 @@ impl Ctx {
             spool_enabled: false,
             spool: None,
             spool_outcome: None,
+            drain: None,
             // Replaced in `early_request_filter` once the peer's trust status
             // is known. Built here rather than left as an `Option` so that
             // every path out of the proxy — including the ones that never
@@ -200,6 +210,84 @@ impl Ctx {
             origin_wall_started: None,
         }
     }
+}
+
+/// An admitted origin exchange whose client has gone.
+///
+/// Pingora would otherwise abandon the upstream response at the client's
+/// error: the connection closes, `logging` drops the permit, and a queued
+/// request is admitted while the origin is still rendering the abandoned one.
+/// Closing a socket does not stop the work on the other end of it — an SSR
+/// server notices at its next write, if it checks at all — so that permit
+/// stopped bounding the origin's concurrency at exactly the moment a burst of
+/// disconnects made it matter.
+///
+/// Instead the response is read to its end and discarded, holding the permit,
+/// until the earlier of the origin finishing and the drain deadline. What that
+/// buys, and what it cannot:
+///
+/// * The permit now covers the whole upstream exchange, client or no client.
+///   Work that ends when its response ends — the ordinary SSR shape — is
+///   bounded by the ceiling.
+/// * An origin that keeps working after its own response ended, or after
+///   Tanod gives up at the deadline, is beyond what a proxy can observe. The
+///   deadline outcome is counted rather than presented as a recovery.
+///
+/// Created only for a request holding a permit, so exempt classes are
+/// unaffected. Counted in `tanod_origin_disconnect_drains_active` for exactly
+/// as long as it exists.
+pub struct Drain {
+    deadline: Instant,
+}
+
+impl Drain {
+    fn begin(deadline: Instant) -> Self {
+        metrics::ORIGIN_DRAINING.inc();
+        Drain { deadline }
+    }
+
+    /// How the drain ended, decided once on the way out.
+    ///
+    /// A read timeout is Tanod giving up on a silent origin, not the origin
+    /// finishing, so it is reported with the deadline: in both cases the
+    /// permit goes back without confirmation that the work stopped.
+    fn outcome(&self, origin_finished: bool, timed_out: bool, now: Instant) -> &'static str {
+        if origin_finished {
+            "completed"
+        } else if timed_out || now >= self.deadline {
+            "deadline"
+        } else {
+            "upstream_error"
+        }
+    }
+}
+
+impl Drop for Drain {
+    fn drop(&mut self) {
+        metrics::ORIGIN_DRAINING.dec();
+    }
+}
+
+/// How long an abandoned client's origin exchange may still hold its permit.
+///
+/// `timeouts.origin` already bounds one origin request end to end, so a drain
+/// ends there, never later than the request would have with its client
+/// connected. With that timeout disabled, `timeouts.downstream_write` — the
+/// bound a stalled client already had on holding a permit — applies from the
+/// disconnect. With both disabled there is no bound to honour, and the
+/// exchange is abandoned as before rather than held indefinitely.
+fn drain_deadline(
+    timeouts: &Timeouts,
+    origin_started: Option<Instant>,
+    now: Instant,
+) -> Option<Instant> {
+    let origin = timeouts.origin.as_duration();
+    let deadline = if origin.is_zero() {
+        now.checked_add(nonzero(timeouts.downstream_write.as_duration())?)?
+    } else {
+        origin_started?.checked_add(origin)?
+    };
+    (deadline > now).then_some(deadline)
 }
 
 pub struct Tanod {
@@ -1178,12 +1266,38 @@ impl ProxyHttp for Tanod {
         // `retry()`, which panics on an error whose retry is still undecided.
         e.retry
             .decide_reuse(client_reused && !session.as_ref().retry_buffer_truncated());
+        // Nobody is waiting for a retried answer, and a retry would start a
+        // second render on the strength of the first one's permit.
+        if ctx.drain.is_some() {
+            e.set_retry(false);
+            return e;
+        }
         // From here Tanod only ever narrows. A `false` is never turned into
         // a `true`.
         if e.retry() && !self.decide_retry(session, ctx).allowed() {
             e.set_retry(false);
         }
         e
+    }
+
+    /// The client went away during an admitted request. See [`Drain`].
+    fn upstream_after_downstream_error(
+        &self,
+        _session: &Session,
+        ctx: &mut Ctx,
+    ) -> Option<std::time::Instant> {
+        ctx.permit.as_ref()?;
+        let deadline = drain_deadline(
+            &ctx.policy.config.timeouts,
+            ctx.origin_started,
+            Instant::now(),
+        )?;
+        // Nothing buffered will ever be delivered; give the bytes back now
+        // rather than when the drain ends.
+        ctx.spool = None;
+        metrics::SPOOL_BYTES.set(self.spool_budget.used() as i64);
+        ctx.drain = Some(Drain::begin(deadline));
+        Some(deadline)
     }
 
     async fn upstream_request_filter(
@@ -1272,6 +1386,7 @@ impl ProxyHttp for Tanod {
                 // never that the origin has finished producing it. See
                 // `bench/slowclient.sh`.
                 ctx.permit_released_at = Some(match &ctx.spool {
+                    _ if ctx.drain.is_some() => "drain_end",
                     Some(spool) if spool.is_active() => "origin_end",
                     _ => "body_end",
                 });
@@ -1342,7 +1457,23 @@ impl ProxyHttp for Tanod {
         Ok(())
     }
 
-    async fn logging(&self, session: &mut Session, _e: Option<&Error>, ctx: &mut Ctx) {
+    async fn logging(&self, session: &mut Session, e: Option<&Error>, ctx: &mut Ctx) {
+        // Decided before anything below releases the permit, so that the
+        // access log names what the permit's release meant.
+        if let Some(drain) = ctx.drain.take() {
+            let timed_out = e.is_some_and(|e| {
+                matches!(e.etype, ErrorType::ReadTimedout | ErrorType::WriteTimedout)
+            });
+            let outcome =
+                drain.outcome(ctx.origin_finished_ms.is_some(), timed_out, Instant::now());
+            metrics::ORIGIN_DRAINS.with_label_values(&[outcome]).inc();
+            if ctx.permit.is_some() {
+                ctx.permit_released_at = Some(match outcome {
+                    "deadline" => "drain_deadline",
+                    _ => "drain_error",
+                });
+            }
+        }
         let status = session
             .response_written()
             .map(|r| r.status.as_u16())
@@ -1433,8 +1564,9 @@ impl ProxyHttp for Tanod {
         }
 
         // Normally already released at upstream end-of-stream; this covers
-        // the paths that never got there (shed, cache hit, upstream error,
-        // and a client that disconnected mid-body). Then republish the gauges:
+        // the paths that never got there (shed, cache hit, upstream error, a
+        // drain that hit its deadline, and a client that disconnected while
+        // no permit was held). Then republish the gauges:
         // updating them only on the way in leaves `in_flight` reading stale
         // while the proxy is idle, which is the moment an operator is most
         // likely to be looking at it.
@@ -1887,6 +2019,70 @@ mod tests {
             peer.options.read_timeout,
             Some(timeouts.first_byte.as_duration())
         );
+    }
+
+    fn timeouts(origin_secs: u64, downstream_write_secs: u64) -> Timeouts {
+        Timeouts {
+            origin: crate::config::units::Dur(std::time::Duration::from_secs(origin_secs)),
+            downstream_write: crate::config::units::Dur(std::time::Duration::from_secs(
+                downstream_write_secs,
+            )),
+            ..Timeouts::default()
+        }
+    }
+
+    #[test]
+    fn a_drain_ends_where_the_origin_request_would_have() {
+        let now = Instant::now();
+        let started = now - std::time::Duration::from_secs(4);
+        assert_eq!(
+            drain_deadline(&timeouts(30, 30), Some(started), now),
+            Some(started + std::time::Duration::from_secs(30)),
+            "a disconnect must not extend the end-to-end origin deadline"
+        );
+    }
+
+    #[test]
+    fn without_an_origin_timeout_a_drain_gets_the_stalled_client_bound() {
+        let now = Instant::now();
+        assert_eq!(
+            drain_deadline(&timeouts(0, 7), Some(now), now),
+            Some(now + std::time::Duration::from_secs(7))
+        );
+    }
+
+    #[test]
+    fn no_bound_means_no_drain() {
+        let now = Instant::now();
+        assert_eq!(drain_deadline(&timeouts(0, 0), Some(now), now), None);
+        // Already past its deadline: abandon now rather than hold for nothing.
+        let long_ago = now - std::time::Duration::from_secs(31);
+        assert_eq!(drain_deadline(&timeouts(30, 30), Some(long_ago), now), None);
+        // No origin attempt yet means nothing to drain.
+        assert_eq!(drain_deadline(&timeouts(30, 30), None, now), None);
+    }
+
+    #[test]
+    fn a_drain_that_hit_its_deadline_is_never_reported_as_completed() {
+        let now = Instant::now();
+        let drain = Drain::begin(now);
+        let before = now - std::time::Duration::from_millis(1);
+        assert_eq!(drain.outcome(true, false, now), "completed");
+        assert_eq!(drain.outcome(false, false, now), "deadline");
+        // Giving up on a silent origin before the deadline is no confirmation
+        // either.
+        assert_eq!(drain.outcome(false, true, before), "deadline");
+        assert_eq!(drain.outcome(false, false, before), "upstream_error");
+    }
+
+    #[test]
+    fn the_active_drain_gauge_counts_each_drain_exactly_once() {
+        // No other test creates a `Drain`, so the global gauge is this test's.
+        let before = metrics::ORIGIN_DRAINING.get();
+        let drains: Vec<Drain> = (0..3).map(|_| Drain::begin(Instant::now())).collect();
+        assert_eq!(metrics::ORIGIN_DRAINING.get(), before + 3);
+        drop(drains);
+        assert_eq!(metrics::ORIGIN_DRAINING.get(), before);
     }
 
     fn ctx() -> Ctx {

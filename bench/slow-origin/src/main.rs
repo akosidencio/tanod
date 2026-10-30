@@ -32,6 +32,11 @@
 //!   many bytes, wherever the segment appears in the path, so the performance
 //!   scenarios can sweep body sizes under any route prefix.
 //!
+//! `SLOW_ORIGIN_EVENTS=<file>` appends one line per render start and end —
+//! microseconds since start, event, render number, in-flight count, and the
+//! path and `traceparent` at start — so a failed ceiling can be attributed to
+//! the requests that overlapped. Counting is identical with or without it.
+//!
 //! `SLOW_ORIGIN_SLOTS=<n>` bounds how many renders run at once; the rest wait
 //! for a slot, the way requests queue behind a saturated SSR server's event
 //! loop. Unset, every render runs concurrently, as it always has.
@@ -60,6 +65,65 @@ struct Stats {
     sockets_total: AtomicUsize,
     /// Answer every render with `502` while `/healthz` keeps saying `ok`.
     failing: AtomicBool,
+    /// `SLOW_ORIGIN_EVENTS=<file>`: one line per render start and end, so a
+    /// failed concurrency assertion can name the requests that overlapped.
+    events: Option<std::sync::Mutex<std::fs::File>>,
+    epoch: std::time::Instant,
+}
+
+impl Stats {
+    fn trace(&self, event: &str, seq: usize, in_flight: usize, detail: &str) {
+        if let Some(file) = &self.events {
+            use std::io::Write;
+            let line = format!(
+                "{} {event} {seq} {in_flight} {detail}\n",
+                self.epoch.elapsed().as_micros()
+            );
+            if let Ok(mut file) = file.lock() {
+                let _ = file.write_all(line.as_bytes());
+            }
+        }
+    }
+}
+
+/// One render's share of `in_flight`.
+///
+/// `end` is called exactly where the work stops, which for `/rendered` is
+/// before its transport. `Drop` covers every other way out, so a path that
+/// returns early or panics cannot leave the count high.
+struct Render {
+    stats: Arc<Stats>,
+    seq: usize,
+    ended: bool,
+}
+
+impl Render {
+    fn begin(stats: &Arc<Stats>, path: &str, trace: &str) -> (Self, usize, usize) {
+        let now = stats.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        stats.peak.fetch_max(now, Ordering::SeqCst);
+        let seq = stats.total.fetch_add(1, Ordering::SeqCst) + 1;
+        stats.trace("start", seq, now, &format!("{path} {trace}"));
+        let render = Render {
+            stats: stats.clone(),
+            seq,
+            ended: false,
+        };
+        (render, now, seq)
+    }
+
+    fn end(&mut self) {
+        if !self.ended {
+            self.ended = true;
+            let left = self.stats.in_flight.fetch_sub(1, Ordering::SeqCst) - 1;
+            self.stats.trace("end", self.seq, left, "");
+        }
+    }
+}
+
+impl Drop for Render {
+    fn drop(&mut self) {
+        self.end();
+    }
 }
 
 #[tokio::main]
@@ -83,6 +147,16 @@ async fn main() -> std::io::Result<()> {
         sockets_open: AtomicUsize::new(0),
         sockets_total: AtomicUsize::new(0),
         failing: AtomicBool::new(false),
+        events: std::env::var_os("SLOW_ORIGIN_EVENTS").map(|path| {
+            std::sync::Mutex::new(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .expect("SLOW_ORIGIN_EVENTS must name a writable file"),
+            )
+        }),
+        epoch: std::time::Instant::now(),
     });
 
     // Mio's default backlog is 128. A 512-client fill burst can overflow
@@ -110,6 +184,10 @@ async fn main() -> std::io::Result<()> {
 
     loop {
         let (mut sock, _) = listener.accept().await?;
+        // `finish` sends a response's last byte on its own. Without this,
+        // Nagle's algorithm could hold that byte back for a delayed ACK and
+        // add tens of milliseconds to every render the benchmarks time.
+        let _ = sock.set_nodelay(true);
         let stats = stats.clone();
         let instance = instance.clone();
         let slots = slots.clone();
@@ -142,9 +220,8 @@ async fn main() -> std::io::Result<()> {
                 return;
             }
 
-            let now = stats.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
-            stats.peak.fetch_max(now, Ordering::SeqCst);
-            let seq = stats.total.fetch_add(1, Ordering::SeqCst) + 1;
+            let trace = header_value(&head, "traceparent").unwrap_or_default();
+            let (mut render, now, seq) = Render::begin(&stats, &path, &trace);
 
             // /stream/<n> emits n chunks with a render delay between each,
             // the way a server-rendered page streams a shell and then fills
@@ -165,7 +242,7 @@ async fn main() -> std::io::Result<()> {
                      Connection: close\r\n\r\n"
                 );
                 if sock.write_all(head.as_bytes()).await.is_err() {
-                    stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                    render.end();
                     return;
                 }
                 let _ = sock.flush().await;
@@ -189,9 +266,7 @@ async fn main() -> std::io::Result<()> {
                     }
                     let _ = sock.flush().await;
                 }
-                let _ = sock.write_all(b"0\r\n\r\n").await;
-                let _ = sock.flush().await;
-                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                finish(&mut sock, b"0\r\n\r\n", &mut render).await;
                 return;
             }
 
@@ -213,7 +288,7 @@ async fn main() -> std::io::Result<()> {
                 // Half of what was promised, then the connection closes.
                 let _ = sock.write_all(&vec![b'x'; promised / 2]).await;
                 let _ = sock.flush().await;
-                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                render.end();
                 return;
             }
             if path.starts_with("/badchunk") {
@@ -225,7 +300,7 @@ async fn main() -> std::io::Result<()> {
                 // One well-formed chunk, then no terminating `0\r\n\r\n`.
                 let _ = sock.write_all(b"10\r\n0123456789abcdef\r\n").await;
                 let _ = sock.flush().await;
-                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                render.end();
                 return;
             }
 
@@ -277,9 +352,7 @@ async fn main() -> std::io::Result<()> {
                      Connection: close\r\n\r\n{body}",
                     body.len()
                 );
-                let _ = sock.write_all(resp.as_bytes()).await;
-                let _ = sock.flush().await;
-                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                finish(&mut sock, resp.as_bytes(), &mut render).await;
                 return;
             }
 
@@ -301,7 +374,7 @@ async fn main() -> std::io::Result<()> {
                 tokio::time::sleep(Duration::from_millis(render_ms)).await;
                 // The render is over. Everything after this line is transport,
                 // and the counters must not attribute it to the origin.
-                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                render.end();
 
                 let head = format!(
                     "HTTP/1.1 200 OK\r\n\
@@ -345,9 +418,7 @@ async fn main() -> std::io::Result<()> {
                      Connection: close\r\n\r\n{body}",
                     body.len()
                 );
-                let _ = sock.write_all(resp.as_bytes()).await;
-                let _ = sock.flush().await;
-                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                finish(&mut sock, resp.as_bytes(), &mut render).await;
                 return;
             }
 
@@ -381,9 +452,7 @@ async fn main() -> std::io::Result<()> {
                         body.len()
                     )
                 };
-                let _ = sock.write_all(response.as_bytes()).await;
-                let _ = sock.flush().await;
-                stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+                finish(&mut sock, response.as_bytes(), &mut render).await;
                 return;
             }
 
@@ -451,11 +520,30 @@ async fn main() -> std::io::Result<()> {
                 body.len(),
                 stats.total.load(Ordering::SeqCst),
             );
-            let _ = sock.write_all(resp.as_bytes()).await;
-            let _ = sock.flush().await;
-            stats.in_flight.fetch_sub(1, Ordering::SeqCst);
+            finish(&mut sock, resp.as_bytes(), &mut render).await;
         });
     }
+}
+
+/// Write a render's last bytes so that its count is gone before they can be read.
+///
+/// A proxy returns capacity when it reads the end of a response. Decrementing
+/// after the final write returned left a window — this thread preempted
+/// between the write and the decrement — in which a proxy on another core had
+/// already read the end, admitted the next request, and had it counted here
+/// beside one whose output was complete. That is an overlap of bookkeeping,
+/// not of work, and it fired the soak ceiling with no client disconnecting.
+///
+/// Everything except the last byte is still written inside the render, so a
+/// slow reader still holds it for as long as it did before; only the one byte
+/// that makes the response observably complete goes out after the decrement.
+async fn finish(sock: &mut tokio::net::TcpStream, response: &[u8], render: &mut Render) {
+    let (most, last) = response.split_at(response.len().saturating_sub(1));
+    let _ = sock.write_all(most).await;
+    let _ = sock.flush().await;
+    render.end();
+    let _ = sock.write_all(last).await;
+    let _ = sock.flush().await;
 }
 
 /// Answer the non-render endpoints, or `None` if this path is a real render.

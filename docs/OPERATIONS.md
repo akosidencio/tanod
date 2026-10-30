@@ -161,6 +161,11 @@ flight reaches it to the end. Two things follow:
   longer than it are cut at the teardown, and a larger value buys nothing
   else: every restart pays it in full. `tanod check` prints
   the total and warns above 30 seconds.
+- **Responses drained for disconnected clients are in flight too.** They end
+  by `timeouts.origin`; if `shutdown_timeout` is shorter, the teardown cuts
+  them while the origin is still rendering, and a replacement process admits
+  new work beside it. Where the ceiling must hold across restarts, keep
+  `shutdown_timeout` above `timeouts.origin`.
 
 If `SIGUSR1` already started draining, the two windows overlap: `SIGTERM` waits
 only the unelapsed part of `drain_period`. A pre-stop hook that sleeps longer
@@ -655,6 +660,69 @@ Check the result during overload:
 
 ---
 
+## What the origin ceiling guarantees
+
+`origin.concurrency.max` bounds three different things to three different
+degrees. They are worth keeping apart, because only the first is entirely in
+Tanod's hands.
+
+| Quantity | Bound | Holds when |
+|---|---|---|
+| **Permits held** — weighted units Tanod has admitted (`tanod_origin_in_flight`) | **Strict.** Never above the limit except while a lowered limit drains after a reload. | Always. |
+| **Origin exchanges** — admitted requests whose origin response has not ended | **Strict.** A permit is held from admission until the origin's response ends, the origin fails or closes the connection, or Tanod gives up at the drain deadline. A client disconnect does not end it. | Always, for classes that take a permit. `static`, `streaming` and upgrades take none and are not bounded by this limit. |
+| **Origin work** — renders actually executing in the origin | **Conditional.** Bounded by the same ceiling. | The origin's work for a request ends no later than its response does, and the response ends before the drain deadline. |
+
+### When a client disconnects
+
+Closing a connection does not stop a render. A streaming SSR server notices a
+gone client at its next write, if it checks at all, so releasing capacity at
+the disconnect would admit the next request beside work still running.
+
+Tanod therefore keeps reading an admitted response after its client has gone,
+discards it, and holds the permit until the origin finishes. Pingora already
+does this for a response that is filling the cache; Tanod extends it to
+uncached responses and to responses the cache declined under memory pressure.
+The origin is never told to stop: it does the work it was given, and the
+capacity it uses comes back when it is done.
+
+The drain ends at the earlier of the origin finishing and the request's
+`timeouts.origin` deadline, measured from when the origin request began — never
+later than it would have ended with its client connected. With
+`timeouts.origin: 0`, `timeouts.downstream_write` applies from the disconnect;
+with both at 0, the exchange is abandoned at the disconnect as before. Nothing
+is buffered: each chunk is discarded as it arrives. A drained exchange that
+fails is not retried.
+
+| Signal | Means |
+|---|---|
+| `tanod_origin_disconnect_drains_active` | Admitted responses currently being read for a client that left. They are also in `tanod_origin_in_flight`. |
+| `tanod_origin_disconnect_drains_total{outcome="completed"}` | The origin finished; capacity came back when the work did. |
+| `tanod_origin_disconnect_drains_total{outcome="deadline"}` | Tanod stopped waiting before the origin finished — at the drain deadline, or because the origin went silent past its read timeout — and released the permit **without** knowing the origin stopped. Treat each one as possibly still-running work. |
+| `tanod_origin_disconnect_drains_total{outcome="upstream_error"}` | The origin failed or closed the connection first. |
+
+The access log's `permit_released` field says the same per request:
+`drain_end`, `drain_deadline` or `drain_error`.
+
+### What no proxy can bound
+
+- **Work the origin continues after its own response has ended** — background
+  revalidation, `after()` callbacks, queued jobs. Tanod sees the response end
+  and releases the permit; the work is invisible to it.
+- **Work past a deadline.** An origin that ignores a closed connection keeps
+  running after Tanod gives up on it. The `deadline` counter is how you learn
+  this happened.
+- **Requests that bypass Tanod**, and capacity shared with other replicas or
+  other proxies. Each Tanod process bounds its own admissions.
+
+If the origin must never exceed a number of concurrent renders whatever its
+clients and timeouts do, enforce that number in the origin as well — a
+semaphore around the render, sized to Tanod's ceiling — and size
+`timeouts.origin` to the longest render you are prepared to wait for. Tanod's
+ceiling then keeps that semaphore from queueing, and the semaphore makes the
+bound exact.
+
+---
+
 ## Forwarded headers
 
 Tanod restates the forwarding metadata the origin receives on **every**
@@ -783,6 +851,10 @@ Three that are easy to miss:
 - `tanod_cache_bytes` at `cache.max_memory` **with a low hit ratio** — the
   working set does not fit and eviction is destroying entries before they are
   reused. More memory, or a shorter TTL and a narrower key.
+- `tanod_origin_disconnect_drains_total{outcome="deadline"}` rising — origin
+  work for disconnected clients is outliving `timeouts.origin`, and the ceiling
+  no longer bounds it. See
+  [what the origin ceiling guarantees](#what-the-origin-ceiling-guarantees).
 
 ### Origin resilience
 

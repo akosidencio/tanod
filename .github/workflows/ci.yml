@@ -146,6 +146,10 @@ jobs:
         run: |
           cargo audit -D warnings
           cargo audit --file fuzz/Cargo.lock -D warnings
+      # A path package is invisible to cargo audit, so the vendored Pingora
+      # proxy is held to the published crate's checksum plus a reviewed diff.
+      - name: Vendored pingora-proxy is the published crate plus tanod.patch
+        run: ./scripts/check-vendored-pingora.sh
 
   # The static musl binary and `tanod-next start`, together, in an Alpine
   # Node image: the deployment @tanod/linux-x64 exists for. Built here as well

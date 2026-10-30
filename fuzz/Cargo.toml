@@ -23,6 +23,11 @@ features = ["fuzzing"]
 [workspace]
 members = ["."]
 
+# The same patched Pingora proxy as the main workspace, without which Tanod's
+# `ProxyHttp` implementation does not compile. See ../Cargo.toml.
+[patch.crates-io]
+pingora-proxy = { path = "../vendor/pingora-proxy" }
+
 [profile.release]
 debug = true
 

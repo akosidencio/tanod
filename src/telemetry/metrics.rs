@@ -332,6 +332,37 @@ pub static DRAINING: LazyLock<IntGauge> = LazyLock::new(|| {
     .expect("metric registration")
 });
 
+/// Admitted origin exchanges still being read after their client went away.
+///
+/// Each one still holds its origin permit, and is also counted in
+/// `tanod_origin_in_flight`: the origin is still working on it, whether or not
+/// anybody is left to read the answer.
+pub static ORIGIN_DRAINING: LazyLock<IntGauge> = LazyLock::new(|| {
+    register_int_gauge!(
+        "tanod_origin_disconnect_drains_active",
+        "Admitted origin responses still being read after their client disconnected"
+    )
+    .expect("metric registration")
+});
+
+/// How each of those drains ended.
+///
+/// * `completed` — the origin finished its response; capacity came back at
+///   the moment it stopped working, exactly as for a connected client.
+/// * `deadline` — Tanod stopped waiting before the origin finished, at the
+///   drain deadline or an origin read timeout, and released the permit
+///   **without** confirmation that the origin stopped. Its remaining work is
+///   unaccounted for.
+/// * `upstream_error` — the origin failed or closed the connection first.
+pub static ORIGIN_DRAINS: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "tanod_origin_disconnect_drains_total",
+        "Origin responses read to their end after a client disconnect, by outcome",
+        &["outcome"]
+    )
+    .expect("metric registration")
+});
+
 /// The configuration generation currently in force. Increments on every
 /// accepted `SIGHUP`; a reload that was refused leaves it unchanged, which is
 /// what makes "did my config actually apply" answerable from a dashboard.
@@ -602,6 +633,10 @@ pub fn preregister() {
     LazyLock::force(&UPGRADES_ACTIVE);
     LazyLock::force(&SPANS);
     LazyLock::force(&DRAINING);
+    LazyLock::force(&ORIGIN_DRAINING);
+    for outcome in ["completed", "deadline", "upstream_error"] {
+        ORIGIN_DRAINS.with_label_values(&[outcome]);
+    }
     LazyLock::force(&CONFIG_GENERATION);
     for outcome in ["success", "failure"] {
         CONFIG_RELOADS.with_label_values(&[outcome]);
