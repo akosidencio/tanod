@@ -624,6 +624,22 @@ impl Tanod {
         Ok(())
     }
 
+    /// See [`crate::classifier::has_dot_segment`].
+    async fn refuse_dot_segment(
+        &self,
+        session: &mut Session,
+        policy: &PolicySnapshot,
+    ) -> Result<()> {
+        let mut resp = ResponseHeader::build(400, Some(3))?;
+        resp.insert_header("Cache-Control", "no-store")?;
+        resp.insert_header("Content-Length", "0")?;
+        if policy.config.debug_headers {
+            resp.insert_header("X-Tanod", "DOT-SEGMENT")?;
+        }
+        session.write_response_header(Box::new(resp), true).await?;
+        Ok(())
+    }
+
     async fn refuse(&self, session: &mut Session, policy: &PolicySnapshot) -> Result<()> {
         let overload = &policy.config.overload;
         let req = session.req_header();
@@ -732,6 +748,17 @@ impl ProxyHttp for Tanod {
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Ctx) -> Result<bool> {
+        // Before routing, classification and keying, all of which read the
+        // path as it arrived while the origin resolves it. Observe mode
+        // neither shares nor limits, so it keeps passing everything through.
+        if ctx.policy.config.mode == Mode::Protect
+            && crate::classifier::has_dot_segment(session.req_header().uri.path())
+        {
+            ctx.local_response = true;
+            let policy = ctx.policy.clone();
+            self.refuse_dot_segment(session, &policy).await?;
+            return Ok(true);
+        }
         let req = session.req_header();
         let host = request_host(req);
         let path = req.uri.path().to_string();
