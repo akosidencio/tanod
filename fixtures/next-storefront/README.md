@@ -31,6 +31,18 @@ emits JSON `render_start` and `render_end` records carrying an instance id and a
 unique render id. Tanod's Prometheus origin counter is the machine-readable
 witness used by `bench/nextjs.sh` across all three origins.
 
+Two surfaces exist only for the overload showcase
+([`bench/showcase`](../../bench/showcase), [method](../../docs/demo/README.md))
+and are off unless their environment variable is set, so no other suite sees
+them. `TANOD_FIXTURE_STATS=1` enables `/api/fixture-stats`, which reports the
+renders in progress, the total count and, for each named `reader`, the peak
+since that reader last asked (JSON, or Prometheus text with
+`?format=prometheus`). `TANOD_FIXTURE_CPU_ROUTE=1` enables `/catalog/[slug]`,
+which does a fixed amount of CPU work per request (`CATALOG_WORK_UNITS`,
+default 40,000 synthetic items built, faceted and ranked) instead of the
+artificial delay used by every other route. The delay is a mechanism test: it
+occupies no CPU, so it never saturates the origin.
+
 Product responses also emit the public `X-Tanod-Cache-Tags` contract. The
 fixture therefore exercises tag invalidation without Next.js private minimal
 mode, which disables the image optimiser covered by the same scenario.
