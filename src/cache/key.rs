@@ -589,6 +589,20 @@ mod tests {
             canonical_query("utm%5fsource=fb&q=1", Some(&exclude)),
             "q=1"
         );
+        // A configured key is a decoded name. The origin reads `+` as a
+        // space, so `exclude: ["+"]` names a parameter no request can send,
+        // and `exclude: [" "]` is the one that drops `+=1` (fuzz finding).
+        let plus = QueryPolicy {
+            mode: QueryMode::Exclude,
+            keys: vec!["+".into()],
+        };
+        assert_eq!(canonical_query("+=1", Some(&plus)), "+=1");
+        assert_eq!(canonical_query("%2B=1", Some(&plus)), "");
+        let space = QueryPolicy {
+            mode: QueryMode::Exclude,
+            keys: vec![" ".into()],
+        };
+        assert_eq!(canonical_query("+=1&%20=2&q=3", Some(&space)), "q=3");
     }
 
     #[test]

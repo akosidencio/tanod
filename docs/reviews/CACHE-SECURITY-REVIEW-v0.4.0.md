@@ -40,6 +40,14 @@ No confirmed cross-user response-sharing defect remains open on the
 candidate, *under the tested assumptions in §8*. That is the maintainer
 side's conclusion, not an independent one.
 
+**Also affecting 0.3.2, outside this package's scope:** client-supplied
+forwarding headers (`X-Forwarded-Host` and others) reached the origin
+unchanged and outside the key. That was fixed earlier in the 0.4.0 cycle
+(`6f6b060`) and is covered by `bench/forwarded.sh` and
+`bench/nextjs-forwarded.sh`; it is listed with the three findings here in the
+[release notes](../RELEASE-NOTES-0.4.0.md#2-security-fixes). A reviewer of the
+key inputs should include it (`src/net/forwarded.rs`, `apply_forwarding`).
+
 ---
 
 ## 2. Threat model
@@ -364,7 +372,11 @@ request at 100 ms).
 3. **Is a time-based 25 ms handoff the right shape** (C11)? The alternative is
    an explicit "woken waiter" count, which would need Pingora internals.
 4. **Is refusing dot-segment targets (400) preferable to normalising them**
-   before routing and rewriting the upstream path?
+   before routing and rewriting the upstream path? Note the evidence is
+   per-origin: against Next.js 16.4.0 only the literal and `%2e` spellings
+   resolve to another page (backslash and `//` forms are redirected,
+   `%2F`/`%5C` forms are not resolved). An origin that decodes `%2F` before
+   routing would need its own check.
 5. **Query names:** is form-decoding (`+` → space) the right model for every
    supported origin, or should a policy match both the raw and the
    percent-only-decoded form?

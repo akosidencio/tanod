@@ -2,15 +2,18 @@
 
 What has to be true before a tag is cut, and what runs where.
 
-The current 0.4 candidate is **CONDITIONALLY READY**. The 0.4.0 cache security
-review ([package](reviews/CACHE-SECURITY-REVIEW-v0.4.0.md)) found and fixed
-three vulnerabilities that are also present in 0.3.2. Both required hour-long
-runs (CLOCK and TinyUFO, 24 workers) were repeated with the uncached-disconnect
-arm. Each held the origin ceiling at 8 against 8 and completed every
-disconnect drain inside the deadline. Still open before a tag: an independent
-sign-off on the cache security review, a Kubernetes staging run
+The current 0.4 candidate is **CONDITIONALLY READY**. It fixes four
+vulnerabilities present in 0.3.2 ([release notes](RELEASE-NOTES-0.4.0.md#2-security-fixes)):
+three found by the 0.4.0 cache security review
+([package](reviews/CACHE-SECURITY-REVIEW-v0.4.0.md)) and the forwarded-header
+defect fixed earlier in the cycle. Both required hour-long runs (CLOCK and
+TinyUFO, 24 workers) passed with the uncached-disconnect arm, holding the
+origin ceiling at 8 against 8 and completing every disconnect drain inside the
+deadline. The release image is now smoke-tested before it is pushed, and
+every workflow action is pinned by commit SHA. Still open before a tag: an
+independent sign-off on the cache security review, a Kubernetes staging run
 ([procedure](../ops/production/KUBERNETES-STAGING.md)), and green CI on the
-release ref.
+release commit.
 
 The distinction that matters: **a gate is something that fails the build**, not
 something a person reads afterwards. Every item below either exits non-zero on
@@ -35,6 +38,7 @@ must pass before merge.
 | Doc tests | `cargo test --workspace --doc --locked` | any failure |
 | Dependency advisories | `cargo audit -D warnings` | any advisory not listed in `.cargo/audit.toml` with a reason |
 | Vendored Pingora proxy | `scripts/check-vendored-pingora.sh` | `vendor/pingora-proxy` differing from the checksum-verified published crate plus `tanod.patch` (a path package is invisible to `cargo audit`) |
+| Workflow pins and gating | `python3 scripts/check-workflows.py` | an action not pinned to a full commit SHA, a job with write permission that does not wait for every check, a missing top-level `permissions`, an undeclared job or step output, or an input expanded inside a `run:` script |
 | End-to-end suite | `./bench/all.sh` | any script's own assertions |
 | Next.js compatibility | `bash bench/nextjs-compatibility.sh` for every declared Next.js/Node pair | actual version mismatch, generated policy rejection, or any HTTP, browser, invalidation, or replica assertion |
 | Fuzz targets | `cargo +nightly fuzz build`, then 60s per target | a crash, or a target that no longer builds |
@@ -167,7 +171,10 @@ is exactly the untrustworthy evidence this project spent a phase removing.
   that installs it.
 - `SHA256SUMS` is present and covers every published archive.
 - The CycloneDX SBOM is attached.
-- The image has BuildKit provenance metadata and an SBOM. Inspect the reviewed
+- The image was smoke-tested before publication and published under the
+  digest that was tested (the release page and the workflow summary name it;
+  `skopeo inspect --raw docker://ghcr.io/akosidencio/tanod:<version> | sha256sum`
+  must match). It has BuildKit provenance metadata and an SBOM. Inspect the reviewed
   digest with `docker buildx imagetools inspect IMAGE@sha256:DIGEST --format '{{ json .Provenance.SLSA }}'`
   and compare its inputs/revision with the release source. The workflow rejects
   missing provenance. These OCI attachments are not signed GitHub artifact
@@ -188,6 +195,97 @@ before — an audit once found seven wrong or dead claims in the README.
 - The project status table names what is still outstanding. The independent
   cache-key review has been outstanding since phase 1 and stays listed until
   someone takes it up.
+
+
+### 7. The release workflow itself
+
+[`release.yml`](../.github/workflows/release.yml) runs on a `v*` tag (or a
+`workflow_dispatch` re-cut of an existing tag). Nothing it publishes can go
+out before every check below has passed; `scripts/check-workflows.py` fails CI
+if a job with write permission could run without waiting for one of them.
+
+```text
+preflight      tag format, tag on main, one commit for the whole run,
+               clean source, Cargo/npm versions = tag, Cargo.lock in sync
+stability      extended.yml on that commit: one-hour soaks per policy,
+               memory, reload, upgrade, chaos, hardened container
+test           ci.yml on that commit: the full CI gate above
+binaries/musl  locked, reproducible builds; version, TLS and config smoke
+sbom           CycloneDX of the resolved tree, checked to name the version
+image          build once into an OCI archive (no registry credentials);
+               verify: one linux/amd64 image, provenance, SBOM, labels;
+               load and compare layers; scripts/image-smoke.sh;
+               rehearse the digest-preserving push to a loopback registry
+--------------------------------------- nothing is public before this line
+image-publish  `release` environment (approval point); same archive, same
+               digest: version tag (refused if it names another image),
+               verified, then MAJOR.MINOR and latest
+publish        GitHub release: every expected archive, each binary checked
+               against its recorded checksum, SBOM, SHA256SUMS
+npm            @tanod/linux-x64 (binary checked against the musl job's
+               hash), then @tanod/next
+```
+
+`scripts/image-smoke.sh` checks the image as production runs it (read-only
+root, uid 10001, no capabilities, no-new-privileges, pid and memory limits):
+metadata and labels; `tanod version` reports the tag's version with `tls`;
+`tanod check` accepts the production example and refuses a configuration
+0.4.0 must refuse; liveness and readiness; a proxied origin response; a
+dot-segment target refused with 400; admission past a ceiling of one against
+an origin that counts its own renders (some shed with `Retry-After`, origin
+peak at most 1); metrics; and SIGTERM (not ready while still serving, exit 0
+within the drain budget, no panic). Run it locally against any loaded image:
+
+```sh
+bash scripts/image-smoke.sh tanod:candidate 0.4.0
+```
+
+**Approval.** Configure Settings → Environments → `release` with required
+reviewers and a deployment rule for `v*` tags. The run then stops before
+`image-publish`, after every check has passed, until a maintainer approves.
+Without reviewers the environment is created on first use and does not wait.
+
+**Partial publication.** The three registries are written in order (GHCR,
+then the GitHub release, then npm) and cannot be written atomically. If a
+later step fails:
+
+- *GHCR pushed, GitHub release failed:* fix the cause and re-run the failed
+  jobs. `image-publish` re-verifies the stored archive and skips a version tag
+  that already names the same digest; it refuses one that names a different
+  image.
+- *GitHub release published, npm failed:* re-run the `npm` job; it skips any
+  package version already on npm.
+- *A published artifact is wrong:* do not move or reuse the version. Delete
+  the GitHub release assets and mark the release as a draft, point `latest`
+  and `MAJOR.MINOR` back at the previous digest
+  (`skopeo copy --all --preserve-digests docker://ghcr.io/akosidencio/tanod@<previous> docker://ghcr.io/akosidencio/tanod:latest`),
+  `npm deprecate` the affected npm versions, and publish a new patch version.
+  An npm version can never be republished.
+
+A `workflow_dispatch` re-cut of an existing tag builds a new image, whose
+digest differs (BuildKit provenance records the build), so `image-publish`
+refuses to overwrite the version tag. Re-running failed jobs of the original
+run is the way to resume a release.
+
+### Pinned actions
+
+Every `uses:` names a full commit SHA and, in a comment, the release it was
+resolved from (`# v4.4.0`, or `# stable` for dtolnay/rust-toolchain's branch).
+To update one deliberately:
+
+1. Pick the release and read its changelog.
+2. Resolve the commit from the action's own repository, peeling annotated
+   tags: `git ls-remote --tags https://github.com/<owner>/<action> 'refs/tags/<tag>*'`
+   (use the `^{}` line when present). For dtolnay/rust-toolchain use
+   `git ls-remote https://github.com/dtolnay/rust-toolchain refs/heads/stable`.
+3. Replace the SHA and the comment in every workflow that uses the action, in
+   one commit that names the old and new releases.
+4. Run `python3 scripts/check-workflows.py` and let CI run on the pull
+   request. A release-only action (docker/*, skopeo use) is first exercised
+   by the next tag; prefer updating those just after a release.
+
+Dependabot's `github-actions` ecosystem understands this format and can
+propose these updates; review its SHA against step 2 before merging.
 
 ---
 

@@ -11,3 +11,4 @@ fixtures/next-storefront/*.tsbuildinfo
 *.local.yaml
 compatibility-results/
 benchmark-results/
+intenal_docs
