@@ -125,6 +125,9 @@ jobs:
       - name: Check the operator artifacts
         run: |
           python3 -c "import json; json.load(open('ops/grafana/dashboard.json'))"
+          # The overload showcase's config rendering and result parsing; the
+          # rendered Tanod configs are checked by the binary built above.
+          TANOD_BIN=target/debug/tanod python3 -m unittest discover -s bench/showcase/tests -v
           python3 -c "import yaml; yaml.safe_load(open('ops/prometheus/alerts.yml'))"
           python3 -c "import yaml; yaml.safe_load(open('ops/prometheus/recording-rules.yml'))"
           curl -fsSL -o /tmp/prom.tar.gz \
