@@ -1617,6 +1617,10 @@ mod phase2_tests;
 mod phase3_tests;
 
 #[cfg(test)]
+#[path = "store_phase42_tests.rs"]
+mod phase42_tests;
+
+#[cfg(test)]
 #[path = "store_phase31_tests.rs"]
 mod phase31_tests;
 

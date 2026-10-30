@@ -2,13 +2,15 @@
 
 What has to be true before a tag is cut, and what runs where.
 
-The current 0.4 candidate is **CONDITIONALLY READY**. Both required hour-long
-runs (CLOCK and TinyUFO, 24 workers) now hold the origin ceiling at 8 against 8.
-Two fixes got them there: the disconnect drain, and `slow-origin` no longer
-counting renders that had already finished. The assertion itself is unchanged.
-Still open before a tag: a Kubernetes staging run
-([procedure](../ops/production/KUBERNETES-STAGING.md)), the external cache-key
-review, and green CI on the release ref.
+The current 0.4 candidate is **CONDITIONALLY READY**. The 0.4.0 cache security
+review ([package](reviews/CACHE-SECURITY-REVIEW-v0.4.0.md)) found and fixed
+three vulnerabilities that are also present in 0.3.2. Both required hour-long
+runs (CLOCK and TinyUFO, 24 workers) were repeated with the uncached-disconnect
+arm. Each held the origin ceiling at 8 against 8 and completed every
+disconnect drain inside the deadline. Still open before a tag: an independent
+sign-off on the cache security review, a Kubernetes staging run
+([procedure](../ops/production/KUBERNETES-STAGING.md)), and green CI on the
+release ref.
 
 The distinction that matters: **a gate is something that fails the build**, not
 something a person reads afterwards. Every item below either exits non-zero on
@@ -51,8 +53,11 @@ in this phase at CI-sized parameters:
 | [`admin.sh`](../bench/admin.sh) | readiness fails on drain **while traffic is still served**; liveness does not follow readiness; generation and the stable config fingerprint track a reload; metrics and endpoints agree |
 | [`upgrade.sh`](../bench/upgrade.sh) | `--test` fails on a config that cannot start; plain SIGTERM exposes a serving/not-ready drain window; on Linux, zero failed requests across a socket handover; everywhere, an explicit pre-drain is not paid twice |
 | [`tracing.sh`](../bench/tracing.sh) | trace context propagated and continued correctly; spans exported in a shape a collector accepts; log ids findable in the exported spans; a dead collector costs no request |
-| [`soak.sh`](../bench/soak.sh) | over a short run: no leak, no permit left held, no disconnect drain left active, the cache filled *and* stayed inside its budget, the origin's own peak within the ceiling, no panic |
+| [`soak.sh`](../bench/soak.sh) | over a short run: no leak, no permit left held, no disconnect drain left active, the cache filled *and* stayed inside its budget, the origin's own peak within the ceiling, no panic; with the uncached hang-up arm (default), completed drains > 0 and none cut off at the deadline |
 | [`origin-concurrency.py`](../bench/origin-concurrency.py) | with an origin whose render count cannot drift: the ceiling holds across client disconnects before and after headers, cache-pressure fallback, cache fills, disconnect storms and coalesced streams, and each case took the expected path (drain completed, cache fill, or none); an origin that works past its own response or past `timeouts.origin` produces exactly the documented overlap and a `deadline` count. Runs with CLOCK and TinyUFO |
+| `origin-concurrency.py --h2` | the same scenarios against [`h2-origin.mjs`](../bench/h2-origin.mjs), an h2c origin with the same witness, so the vendored drain's HTTP/2 upstream loop is driven directly; plus an origin reset during a drain (`upstream_error`, never `completed`), no retry after a reset once rendering began, and a connect failure retried onto the live backend. Needs `node` |
+| [`cache-isolation.py`](../bench/cache-isolation.py) | no response reaches a user it was not rendered for, across unclassified, public, private, coalescing-override and cache-override routes, eight origin answers, sequential and concurrent, `Authorization`, draft mode, Server Actions, RSC, a reload mid-flight and a cancelled shared stream; sharing only where the route's contract permits it, and those paths must be taken; query-name spellings cannot poison a key; dot-segment targets are refused before the origin. CLOCK and TinyUFO; with Docker also the Next.js fixture's cookie-reading `/account`, HTML and RSC |
+| [`query-cardinality.py`](../bench/query-cardinality.py) | under a unique-query flood (plain, 2 KiB names and values, with purges, and with an `include` policy): cache bytes within budget, fill bytes within budget plus one body, the origin within its ceiling, nothing held afterwards. Records RSS, CPU, evictions and hot-key latency. CLOCK and TinyUFO |
 | [`memory.sh`](../bench/memory.sh) | every configured budget holds while the workload exceeds it; an oversized body is served and not stored |
 | [`cache-pressure.sh`](../bench/cache-pressure.sh) | with no cache memory a coalesced herd is served uncached and complete; a fill that runs out mid-body finishes for its leader and follower and is not stored; a burst past the headroom aborts exactly the fills that exhausted it, and every other response is byte-exact; an oversized chunked body fails once, then streams uncached; pinned bytes return to zero. Runs with CLOCK and TinyUFO |
 | [`forwarded.sh`](../bench/forwarded.sh) | a client's forwarding headers move neither the origin's view nor the key; a forged host cannot poison a cacheable page (`/reflect`); a trusted proxy's chain is walked, a spoofed prefix chooses neither scheme nor host, and an opted-in public host is preserved and keyed; IPv6 peers |

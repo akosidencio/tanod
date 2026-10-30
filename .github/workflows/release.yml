@@ -14,6 +14,12 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Read-only unless a job says otherwise. image, publish and npm each declare
+# the one write they need; nothing else here, nor the CI and extended
+# workflows it calls, may write anything.
+permissions:
+  contents: read
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -291,9 +297,12 @@ jobs:
           path: dist/*.cdx.json
           if-no-files-found: error
 
+  # After every other artifact has built and passed its smoke test: the push
+  # below is a publication (the version tags, and `latest` for a stable
+  # tag), so it must not happen for a release whose binaries then fail.
   image:
     name: build + push image
-    needs: test
+    needs: [test, binaries, musl, sbom]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:
@@ -459,6 +468,7 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
             dist/*.tar.gz
+            dist/*.binary.sha256
             dist/*.cdx.json
             dist/SHA256SUMS
           fail_on_unmatched_files: true
@@ -490,7 +500,8 @@ jobs:
             A Linux binary reproduces from a clean checkout of this tag with
             [scripts/reproducible-build.sh](https://github.com/${{ github.repository }}/blob/${{ inputs.tag || github.ref_name }}/scripts/reproducible-build.sh).
             The `.tar.gz` archive is not: gzip stores a modification time, so
-            compare the checksum of the binary inside it. The image digest is
+            compare the checksum of the binary inside it with the attached
+            `*.binary.sha256`. The image digest is
             not reproducible either — pin its reviewed digest and inspect its
             recorded provenance instead.
 

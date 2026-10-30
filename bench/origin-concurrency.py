@@ -28,8 +28,12 @@ The origin behaviours are what the contract is stated against:
                after the first chunk, while the client is still connected
 
 Usage: bench/origin-concurrency.py [--tanod PATH] [--policy clock|tinyufo]
-       [--only NAME ...] [--json OUT]
+       [--only NAME ...] [--json OUT] [--h2]
        bench/origin-concurrency.py --stress [--seconds N] ...
+
+``--h2`` runs the same scenarios against ``bench/h2-origin.mjs``, an h2c
+origin with the same witness, with Tanod set to ``origin.http_version:
+http2``: the vendored drain patch's HTTP/2 upstream loop, driven directly.
 
 ``--stress`` replaces the deterministic scenarios with sustained concurrent
 traffic against the same exact witness: uncached and cache-pressure
@@ -51,6 +55,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 from collections import Counter
 from pathlib import Path
 
@@ -154,6 +159,14 @@ class Origin:
 
     async def render(self, rid, reader, writer, path, params):
         mode = params.get('mode', 'lazy')
+        # `once=<key>`: misbehave on the first request for the key only, so a
+        # retry of it can succeed.
+        once = params.get('once')
+        if once:
+            seen = self.__dict__.setdefault('seen_once', set())
+            if once in seen:
+                mode = 'lazy'
+            seen.add(once)
         chunks = int(params.get('chunks', 4))
         step = int(params.get('step', 50)) / 1000
         before = int(params.get('before', 0)) / 1000
@@ -185,14 +198,16 @@ class Origin:
                     return
             self.log(rid, 'header_sent')
             for i in range(chunks):
-                if i and mode == 'reset':
-                    self.reset(rid, writer)
-                    return
                 if i or mode == 'hang':
                     if await self.pause(step if mode != 'hang' else float(params.get('hang', 2)),
                                         closed, mode):
                         outcome = 'cancelled'
                         return
+                # After the step, so a client that hung up on the first chunk
+                # is already gone and the failure lands in the drain.
+                if i and mode == 'reset':
+                    self.reset(rid, writer)
+                    return
                 body = CHUNK * size
                 frame = b'%x\r\n' % len(body) + body + b'\r\n'
                 if not await self.write(rid, writer, frame, mode):
@@ -255,8 +270,55 @@ class Origin:
             return False
 
 
+class NodeOrigin:
+    """The same witness over prior-knowledge HTTP/2 (`bench/h2-origin.mjs`).
+
+    Node runs one thread, so its counters are as exact as the Python
+    origin's. They are read over its HTTP/1 control port on every access, so
+    scenarios can poll them exactly as they poll the in-process origin.
+    """
+
+    def __init__(self, lean=False):
+        self.lean = lean
+        self.t0 = time.monotonic()
+        self.tasks = set()
+        self.process = None
+        self.port = self.control = None
+
+    async def start(self):
+        self.process = subprocess.Popen(['node', str(ROOT / 'bench/h2-origin.mjs')],
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        line = await asyncio.to_thread(self.process.stdout.readline)
+        ports = json.loads(line)
+        self.port, self.control = ports['port'], ports['control']
+
+    async def stop(self):
+        self.process.terminate()
+        await asyncio.to_thread(self.process.wait, 5)
+
+    def stats(self):
+        with urllib.request.urlopen(f'http://127.0.0.1:{self.control}/__stats', timeout=5) as r:
+            return json.loads(r.read())
+
+    def __getattr__(self, name):
+        if name in ('events', 'renders', 'handlers', 'connections', 'peak_renders',
+                    'peak_handlers', 'started', 'completed', 'cancelled'):
+            return self.stats()[name]
+        raise AttributeError(name)
+
+    async def idle(self, seconds=10):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            s = await asyncio.to_thread(self.stats)
+            if s['renders'] == 0 and s['handlers'] == 0 and s['connections'] == 0:
+                return True
+            await asyncio.sleep(.01)
+        return False
+
+
 class Tanod:
-    def __init__(self, binary, folder, origin_port, policy, limit, extra=''):
+    def __init__(self, binary, folder, origin_port, policy, limit, extra='', http_version='http1',
+                 origin_extra='', dead_upstream=False):
         self.folder = Path(folder)
         self.listen, self.metrics, self.admin = free_port(), free_port(), free_port()
         config = self.folder / 'tanod.yaml'
@@ -270,8 +332,9 @@ server:
     pid_file: "{folder}/tanod.pid"
     upgrade_socket: "{folder}/upgrade.sock"
 origin:
-  upstreams: ["127.0.0.1:{origin_port}"]
-  concurrency:
+  upstreams: [{'"127.0.0.1:%d", ' % free_port() if dead_upstream else ''}"127.0.0.1:{origin_port}"]
+  http_version: {http_version}
+{origin_extra}  concurrency:
     max: {limit}
     queue: {{max: 256, timeout: 20s}}
 timeouts:
@@ -382,7 +445,8 @@ async def disconnect_after(port, path, wait_for, rst=True, seconds=None):
                     break
                 received += part
         else:
-            while wait_for not in received:
+            # Lowercased: an h2 upstream's header names arrive in lower case.
+            while wait_for.lower() not in received.lower():
                 part = await asyncio.wait_for(reader.read(4096), 10)
                 if not part:
                     break
@@ -415,8 +479,10 @@ def cache(policy, memory='8MiB', body='4MiB'):
 
 
 class Scenario:
-    def __init__(self, name, limit, run, extra=None, timeout=60):
+    def __init__(self, name, limit, run, extra=None, timeout=60, origin_extra='',
+                 dead_upstream=False):
         self.name, self.limit, self.run, self.extra, self.timeout = name, limit, run, extra, timeout
+        self.origin_extra, self.dead_upstream = origin_extra, dead_upstream
 
 
 async def released(tanod, seconds=10):
@@ -624,6 +690,58 @@ async def s_coalesce(t, o, facts, cut):
     await expect_drains(t, o, facts, completed=0, deadline=0, upstream_error=0)
 
 
+async def s_reset_while_draining(t, o, facts):
+    first = asyncio.ensure_future(disconnect_after(
+        t.listen, '/private/rd?id=first&mode=reset&chunks=4&step=150', b'X-Render'))
+    await first
+    second = await fetch(t.listen, '/private/rd?id=second&mode=lazy&chunks=1')
+    check(facts, second[0] == 200 and second[2], 'the queued request is served', result=second)
+    await o.idle()
+    events = o.events
+    reset_at = next(e['t_ms'] for e in events if e['event'] == 'origin_reset' and e['req'] == 'first')
+    second_start = next(e['t_ms'] for e in events if e['event'] == 'render_start' and e['req'] == 'second')
+    check(facts, second_start >= reset_at, 'the queued render began only after the origin failed',
+          reset_at=reset_at, second_start=second_start)
+    await expect_drains(t, o, facts, completed=0, deadline=0, upstream_error=1)
+
+
+async def s_retry_reused(t, o, facts):
+    """An origin reset before the header, with retries enabled.
+
+    Not retried, over either protocol: the origin had already started the
+    render, so a retry would be a second one for a request that holds one
+    permit. Pingora retries only an error on a reused connection that it can
+    attribute to the connection itself, and an h2 stream reset is not one,
+    even though the h2 connection is pooled. The client gets the 502.
+    """
+    warm = await fetch(t.listen, '/private/rt?id=warm&mode=lazy&chunks=1')
+    check(facts, warm[0] == 200, 'the warm-up request is served', result=warm)
+    result = await fetch(t.listen, '/private/rt?id=retried&mode=reset&at=head&once=rt')
+    text = await t.scrape()
+    allowed = sum(float(m[1]) for m in re.finditer(
+        r'^tanod_origin_retries_total\{[^}]*outcome="allowed"[^}]*\} (\S+)$', text, re.MULTILINE))
+    attempts = sum(1 for e in o.events if e['event'] == 'render_start' and e['req'] == 'retried')
+    check(facts, result[0] == 502 and allowed == 0 and attempts == 1,
+          'a reset after the render began is a 502, not a second render',
+          result=result, allowed=allowed, attempts=attempts)
+    await expect_drains(t, o, facts, completed=0, deadline=0, upstream_error=0)
+
+
+async def s_retry_connect(t, o, facts):
+    """A connect failure is retried onto the live backend; nothing else moves.
+
+    The first upstream refuses connections. Every request must be served,
+    some only after an allowed retry, without a drain and inside the ceiling.
+    """
+    results = [await fetch(t.listen, f'/private/rc?id=rc{i}&mode=lazy&chunks=1') for i in range(6)]
+    text = await t.scrape()
+    allowed = sum(float(m[1]) for m in re.finditer(
+        r'^tanod_origin_retries_total\{[^}]*outcome="allowed"[^}]*\} (\S+)$', text, re.MULTILINE))
+    check(facts, all(r[0] == 200 and r[2] for r in results) and allowed >= 1,
+          'connect failures were retried and every request served', results=results, allowed=allowed)
+    await expect_drains(t, o, facts, completed=0, deadline=0, upstream_error=0)
+
+
 def scenarios(policy):
     private = ROUTES + cache(policy)
     pressure = ROUTES + cache(policy, memory='64B', body='64B')
@@ -638,6 +756,12 @@ def scenarios(policy):
         Scenario('E-non-cooperative-detached-work', 1, s_detached, private),
         Scenario('E-origin-stops-responding', 1, s_hang, private),
         Scenario('E-origin-fails-client-connected', 1, s_origin_fails, private),
+        Scenario('E-origin-fails-while-draining', 1, s_reset_while_draining, private),
+        Scenario('E-retry-not-taken-after-origin-reset', 1, s_retry_reused, private,
+                 origin_extra='  retry: {enabled: true, max_attempts: 2, budget_min: 5}\n'),
+        Scenario('E-retry-after-connect-failure', 1, s_retry_connect, private,
+                 origin_extra='  retry: {enabled: true, max_attempts: 2, budget_min: 20}\n',
+                 dead_upstream=True),
         Scenario('F-disconnect-storm', 4, s_storm, private),
         Scenario('G-coalesced-follower-disconnects', 1, lambda t, o, f: s_coalesce(t, o, f, 'follower'), private),
         Scenario('G-coalesced-leader-disconnects', 1, lambda t, o, f: s_coalesce(t, o, f, 'leader'), private),
@@ -899,12 +1023,15 @@ def overlaps(events, limit):
     return found
 
 
-async def run_one(binary, policy, scenario, keep, lean=False):
-    origin = Origin(lean)
+async def run_one(binary, policy, scenario, keep, lean=False, h2=False):
+    origin = NodeOrigin(lean) if h2 else Origin(lean)
     await origin.start()
     folder = tempfile.mkdtemp(prefix='tanod-oc-', dir=os.environ.get('TMPDIR', '/tmp'))
-    tanod = Tanod(binary, folder, origin.port, policy, scenario.limit, scenario.extra)
-    facts = {'scenario': scenario.name, 'policy': policy, 'limit': scenario.limit}
+    tanod = Tanod(binary, folder, origin.port, policy, scenario.limit, scenario.extra,
+                  http_version='http2' if h2 else 'http1', origin_extra=scenario.origin_extra,
+                  dead_upstream=scenario.dead_upstream)
+    facts = {'scenario': scenario.name, 'policy': policy, 'limit': scenario.limit,
+             'origin_protocol': 'h2c' if h2 else 'http1'}
     try:
         await tanod.ready()
         await asyncio.wait_for(scenario.run(tanod, origin, facts), scenario.timeout)
@@ -958,8 +1085,8 @@ async def run_one(binary, policy, scenario, keep, lean=False):
         check(facts, code == 0, 'tanod exited cleanly', code=code)
         for task in list(origin.tasks):
             task.cancel()
-        await origin.stop()
         facts['events'] = origin.events if not lean else []
+        await origin.stop()
         if not keep:
             for item in Path(folder).iterdir():
                 if item.name != 'tanod.log':
@@ -978,6 +1105,8 @@ async def main():
     parser.add_argument('--keep', action='store_true')
     parser.add_argument('--stress', action='store_true')
     parser.add_argument('--seconds', type=int, default=60)
+    parser.add_argument('--h2', action='store_true',
+                        help='the same scenarios against a prior-knowledge HTTP/2 origin (needs node)')
     args = parser.parse_args()
     rows = []
     for policy in args.policy or ['clock', 'tinyufo']:
@@ -985,7 +1114,7 @@ async def main():
         for scenario in chosen:
             if args.only and not any(o in scenario.name for o in args.only):
                 continue
-            facts = await run_one(args.tanod, policy, scenario, args.keep, lean=args.stress)
+            facts = await run_one(args.tanod, policy, scenario, args.keep, lean=args.stress, h2=args.h2)
             rows.append(facts)
             mark = 'PASS' if facts['ok'] else 'FAIL'
             extra = ' (documented limitation reproduced)' if facts.get('documented_limitation') else ''

@@ -309,6 +309,21 @@ memory limit                   >  cache.max_memory + cache.max_body_size + spool
 The second is asserted by [`bench/memory.sh`](../bench/memory.sh), which drives
 every configured budget past its limit at once and measures resident set size.
 
+Capacity is per process. Two Tanod processes using the same partition at
+once admit up to twice it; Kubernetes prevents that only in the
+[fixed StatefulSet tier](../ops/production/kubernetes.yaml), and only while
+nothing force-deletes a pod that may still be running. A StatefulSet's
+rolling update does not create a replacement until the old pod object is
+gone, which happens after its process exits or is killed at
+`terminationGracePeriodSeconds`. A Deployment with `maxSurge`, an HPA, or a
+force delete (`--grace-period=0 --force`, or a partitioned node's pod removed
+from the API) can run more processes than the partition was divided for. Keep
+`timeouts.origin` below `shutdown_timeout`, so a draining pod's exchanges end
+before it exits, and the grace period above drain + shutdown + teardown. The
+staging procedure in
+[KUBERNETES-STAGING.md](../ops/production/KUBERNETES-STAGING.md) checks it on
+a real cluster.
+
 `maxUnavailable: 0` matters more than usual here. Each replica has its own
 process-local cache and its own admission ceiling, so a replacement pod starts
 cold: it has no cached entries and its first requests all reach the origin.
@@ -662,6 +677,12 @@ Check the result during overload:
 
 ## What the origin ceiling guarantees
 
+**Tanod strictly bounds its managed admitted upstream exchanges under its
+defined lifecycle and deadline contract. It does not independently bound
+arbitrary backend application work that continues after a response or beyond
+the drain deadline.** Where the application's work must never exceed a number,
+enforce that number in the origin too (see [below](#what-no-proxy-can-bound)).
+
 `origin.concurrency.max` bounds three different things to three different
 degrees. They are worth keeping apart, because only the first is entirely in
 Tanod's hands.
@@ -727,6 +748,21 @@ semaphore around the render, sized to Tanod's ceiling — and size
 `timeouts.origin` to the longest render you are prepared to wait for. Tanod's
 ceiling then keeps that semaphore from queueing, and the semaphore makes the
 bound exact.
+
+---
+
+## Request targets with dot segments
+
+In protect mode Tanod answers `400` to a request whose path contains a `.` or
+`..` segment, whether written literally or percent-encoded (`%2e`, `%2E`), and
+the request never reaches the origin. Routes, classes and cache keys are
+decided on the path as it arrived, while an origin resolves the segments
+before routing. Without the refusal, `/products/x/../../account` matched a
+public route and was cached, and `/_next/static/../../account` was classed
+static and took no origin permit. Browsers resolve dot segments before
+sending, so ordinary traffic never sees the refusal. With `debug_headers` the
+response carries `X-Tanod: DOT-SEGMENT`. Observe mode passes such requests
+through unchanged.
 
 ---
 

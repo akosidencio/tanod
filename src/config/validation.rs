@@ -1039,6 +1039,17 @@ fn check_route(route: &Route, cfg: &Config) -> Result<()> {
              per-user responses are never shared between requests"
         )));
     }
+    // The same fence as `cache.override_origin`. The override shares even a
+    // `private` response with every request in the flight, cookie-bearing
+    // ones included, so it needs the operator's statement that the route is
+    // not personalised — not a class inferred afresh for each request.
+    if route.coalesce.as_ref().is_some_and(|co| co.override_origin) && route.class.is_none() {
+        return Err(err(format!(
+            "route `{id}` sets coalesce.override_origin without declaring a class; \
+             add `class: public_ssr` to state that this route's responses may be shared \
+             between visitors"
+        )));
+    }
     if route
         .coalesce
         .as_ref()
@@ -1977,6 +1988,36 @@ routes:
         ));
         let e = validate(&cfg).unwrap_err();
         assert!(e.to_string().contains("without declaring a class"), "{e}");
+    }
+
+    #[test]
+    fn rejects_coalesce_override_without_declared_class() {
+        let cfg = parse(&format!(
+            "{BASE}
+routes:
+  - id: dashboard
+    match: \"/dashboard/**\"
+    coalesce:
+      override_origin: true
+"
+        ));
+        let e = validate(&cfg).unwrap_err();
+        assert!(e.to_string().contains("without declaring a class"), "{e}");
+    }
+
+    #[test]
+    fn accepts_a_declared_coalesce_override() {
+        let cfg = parse(&format!(
+            "{BASE}
+routes:
+  - id: products
+    match: \"/products/**\"
+    class: public_ssr
+    coalesce:
+      override_origin: true
+"
+        ));
+        validate(&cfg).unwrap();
     }
 
     #[test]

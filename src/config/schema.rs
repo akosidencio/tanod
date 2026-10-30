@@ -1161,7 +1161,10 @@ pub struct RouteCache {
     /// `Cache-Control: private, no-cache, no-store, max-age=0, must-revalidate`
     /// — so without an override, the microcache never engages on precisely the
     /// routes worth protecting. It is per-route, never global, and validation
-    /// refuses to combine it with a private class or a cookie-bearing route.
+    /// requires an explicit non-private class and a `ttl.max`. It also lifts
+    /// the cookie bypass: the declared class is the operator's statement that
+    /// the route is not personalised by cookies. `Authorization`, `Set-Cookie`,
+    /// an unsupported `Vary` and framework bypasses still refuse.
     #[serde(default)]
     pub override_origin: bool,
 }
@@ -1206,9 +1209,11 @@ pub struct RouteCoalesce {
     #[serde(default)]
     pub enabled: Option<bool>,
     /// Collapse concurrent equivalent requests even when the origin says
-    /// `no-store`. Weaker than `cache.override_origin`: nothing is persisted,
-    /// the window is one render, and every waiter would otherwise have
-    /// rendered against the same origin state anyway.
+    /// `no-store` or `private`, and even when they carry cookies. Weaker than
+    /// `cache.override_origin`: such a response, and any response to a
+    /// cookie-bearing request, is never persisted; the window is one render
+    /// plus the store's transient handoff. Validation requires an explicit
+    /// non-private class, as for `cache.override_origin`.
     #[serde(default)]
     pub override_origin: bool,
 }

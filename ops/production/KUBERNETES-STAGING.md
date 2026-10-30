@@ -6,6 +6,29 @@ NetworkPolicy. These checks do. Run them in a disposable namespace on a
 cluster whose CNI enforces NetworkPolicy, with a staging origin you may load.
 Record every command's output; a step that could not run is a gap, not a pass.
 
+**Status for 0.4.0: NOT EXECUTED.** No cluster belonging to this project was
+available; the only kubeconfig on the validation machine belongs to another
+project and was not used. The manifest and configuration were checked
+statically (see `PHASE4.2-DEPLOYMENT-VALIDATION`), which certifies nothing about
+a cluster's behaviour.
+
+Use a dedicated kubeconfig for the staging cluster and nothing else, so no
+command below can reach another cluster:
+
+```sh
+export KUBECONFIG=$PWD/staging.kubeconfig
+kubectl config current-context        # must name the Tanod staging cluster
+```
+
+Record cluster events and endpoint changes with timestamps for the whole run,
+in a second terminal, and keep the files:
+
+```sh
+kubectl -n "$NS" get events -w -o json > events.jsonl &
+kubectl -n "$NS" get endpointslices -l kubernetes.io/service-name=tanod -w -o json > endpoints.jsonl &
+kubectl -n "$NS" get pods -l app=tanod -w -o wide --output-watch-events > pods.txt &
+```
+
 Throughout: `NS=tanod-staging`, `kubectl` pointed at the staging cluster, and an
 origin Service `next-origin:3000` whose renders count themselves. `slow-origin`
 from this repository is suitable: its `/__stats` reports `in_flight` and
@@ -101,7 +124,74 @@ kubectl -n "$NS" get pod -l app=tanod \
 **Pass:** one worker thread at the 1-CPU limit; working-set memory stays below
 256 MiB with the cache full; zero restarts and no `OOMKilled`.
 
-## 6. Clean up
+## 6. Replacement with origin work in flight
+
+Each case below runs with the load from §1 and ends with `curl -s
+http://next-origin:3000/__stats`. **Pass** for all: `peak` ≤ 8, no pod killed
+at the grace period (`kubectl get events` shows no `Killing` after the
+termination grace), and the pod's final `/metrics` scrape shows
+`tanod_origin_disconnect_drains_active 0` and `tanod_origin_in_flight 0`.
+
+```sh
+# 6a. A pod terminating with uncached drains: hang up on /stream while it renders.
+kubectl -n "$NS" run hangup --image=curlimages/curl --restart=Never -- sh -c '
+  while true; do for i in $(seq 1 16); do
+    curl -s -o /dev/null --max-time 0.05 "http://tanod:8080/stream/8?d=$RANDOM" &
+  done; wait; done'
+kubectl -n "$NS" delete pod tanod-1          # graceful; StatefulSet recreates it
+# 6b. A pod terminating with active cache fills: the same with /bigstream/4.
+# 6c. A new image: the rolling update in §1 with an image digest change.
+kubectl -n "$NS" set image statefulset/tanod tanod="$TANOD_IMAGE_DIGEST_NEXT"
+kubectl -n "$NS" rollout status statefulset/tanod --timeout=10m
+```
+
+**Also pass:** in `pods.txt`, the new `tanod-1` is created only after the old
+one's `DELETED` event; at no time do three `tanod-*` pods exist.
+
+## 7. Forced deletion (the documented unsafe case)
+
+Do this only to measure the overlap, with load running:
+
+```sh
+kubectl -n "$NS" delete pod tanod-1 --grace-period=0 --force
+```
+
+**Expected, not a pass:** the replacement can start while the old process is
+still running on its node, so `peak` may exceed 8 by up to the old pod's
+partition (4). Record the observed peak; it is the reason the manifest says
+never to force-delete an unfenced pod. Confirm the cluster recovers: two pods
+Ready, `peak` back within 8 after `__reset`.
+
+## 8. CPU throttling and memory pressure
+
+```sh
+kubectl -n "$NS" exec tanod-0 -- cat /sys/fs/cgroup/cpu.stat   # nr_throttled before
+# run §1's load for 5 minutes
+kubectl -n "$NS" exec tanod-0 -- cat /sys/fs/cgroup/cpu.stat   # and after
+kubectl -n "$NS" exec tanod-0 -- cat /sys/fs/cgroup/memory.events
+```
+
+**Pass:** throttling may rise (one CPU under load); `peak` ≤ 8; `oom_kill 0`
+in `memory.events`; no restart. Repeat with the cache budget filled
+(`/big/1?u=$RANDOM` for 2 minutes): working set below the 256 MiB limit.
+
+## 9. Origin failure during rollout
+
+Start §1's rollout, then make the origin fail for 20 seconds
+(`curl http://next-origin:3000/__fail`, later `/__heal`).
+
+**Pass:** Tanod pods stay Ready (unless `require_healthy_upstream` is set),
+clients see 502/503 rather than hangs, the rollout completes, `peak` ≤ 8, and
+the breaker counters (`tanod_upstream_breaker_trips_total`) and
+`tanod_upstream_failures_total` account for the failure.
+
+## 10. Capacity allocation
+
+**Pass:** `kubectl exec` each pod's `/status` reports `concurrency.max` 4 and
+the `capacity` group 8/2; under saturating load both pods' `tanod_origin_in_flight`
+reach 4 and the origin's `peak` is 8, not more.
+
+## 11. Clean up
 
 ```sh
 kubectl delete namespace "$NS"

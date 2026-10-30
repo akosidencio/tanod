@@ -1,6 +1,10 @@
 # Cache keys and response shareability: a review brief
 
 **Status: prepared for an independent review that has not yet happened.**
+The v0.4.0 maintainer-side investigation of C7, C10, C11 and
+`coalesce.override_origin`, the three vulnerabilities it found and fixed, and
+the sign-off record are in
+[reviews/CACHE-SECURITY-REVIEW-v0.4.0.md](reviews/CACHE-SECURITY-REVIEW-v0.4.0.md).
 
 This document exists because "obtain an independent review of cache keys and
 response shareability" is a roadmap item the author cannot complete alone. What
@@ -136,6 +140,10 @@ sorted so ordering does not double entries.
 *Caveat worth attacking:* the default is to include everything, so a route with
 no query policy has an unbounded key space by design. Is defaulting that way
 defensible, given the component's purpose is to reduce origin work?
+*0.4.0 review:* measured bounded by the cache budget and the origin ceiling
+(`bench/query-cardinality.py`). Policies now match names as the origin decodes
+them. Matching raw names was a cache-poisoning path (`?%71=evil` past
+`include: [q]`).
 
 ### Shareability
 
@@ -175,6 +183,10 @@ because a Next.js dynamic route answers `max-age=0` and the minimum would pin
 the result to zero — silently disabling the override the operator asked for.
 *Worth attacking:* this is the single most dangerous configuration option in
 the project. Is the fence sufficient?
+*0.4.0 review:* the override also lifts the cookie bypass; the class is the
+operator's statement that the route is not personalised. `coalesce.override_origin`
+now has the same explicit-class fence and never stores. Before 0.4.0 it could
+store `private, max-age=N` with the route's cache enabled.
 
 **C11 — A response that cannot be stored is never quietly shared instead.**
 The three outcomes are `Shareable`, `TransientOnly` (collapsed within one
@@ -185,6 +197,14 @@ promoted and is dropped after a short handoff window.
 releases the cache lock when the miss handler is created, so removing the
 entry immediately races the woken followers. Is a time-based window the right
 shape, and is 25ms defensible?
+*0.4.0 review:* bounded from completion, not extended by attachment, closed by
+purge and retirement; pinned by `store_phase42_tests.rs`.
+
+**C12 — Every routing, class and key decision is made on a path the origin
+resolves the same way.** Targets with `.`/`..` segments (raw or `%2e`) are
+refused in protect mode. *Known history:* before 0.4.0, `/products/x/../../account`
+was cached under a public route and `/_next/static/../../account` took no
+origin permit.
 
 ---
 

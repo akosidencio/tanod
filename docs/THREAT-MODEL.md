@@ -177,7 +177,8 @@ The design position is that a config which parses must mean what it says.
   store), `server.tls` and `origin.tls` in a binary built without the `tls`
   feature, and `origin.http_version: auto` without TLS.
 * Combinations that would leak are refused: `override_origin` on a private
-  class, `override_origin` without an explicit class or TTL ceiling,
+  class, `cache.override_origin` without an explicit class or TTL ceiling,
+  `coalesce.override_origin` without an explicit class,
   `cache.vary` on `Cookie`/`Authorization`/`User-Agent`/`*`, a coalescing wait
   shorter than the origin timeout, spooling a streaming route.
 * `tanod check` prints the settings that trade a safety property for

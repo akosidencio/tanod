@@ -46,6 +46,10 @@ docs/*
 !docs/NEXTJS-PRODUCTION-REFERENCE.md
 !docs/STANDALONE.md
 !docs/DEPLOYMENT-GUIDE.md
+!docs/RELEASE-GATES.md
+!docs/PINGORA-REUSE.md
+!docs/RELEASE-NOTES-0.4.0.md
+!docs/reviews/
 !docs/data/
 docs/data/*
 !docs/data/pingora-eviction.csv
