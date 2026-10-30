@@ -190,8 +190,10 @@ def chart_outcomes(plt, t, results, mode, out, theme, manifest):
     rate = cases[0]['rate']
     top = heading(fig, t, f'What happened to every request · {rate} req/s offered for {cases[0]["duration_s"]}s',
                   MODE_LABEL[mode])
-    handles = [plt.Rectangle((0, 0), 1, 1, color=color) for _, _, color, _ in OUTCOME_STYLE]
-    ax.legend(handles, [label for _, label, _, _ in OUTCOME_STYLE], ncol=4, fontsize=8,
+    # Only outcomes that occurred: an empty category in the legend reads as a claim.
+    present = [style for style in OUTCOME_STYLE if any(totals[style[0]] for _, _, totals, _ in rows)]
+    handles = [plt.Rectangle((0, 0), 1, 1, color=color) for _, _, color, _ in present]
+    ax.legend(handles, [label for _, label, _, _ in present], ncol=4, fontsize=8,
               loc='upper left', bbox_to_anchor=(0, -0.12))
     footer(fig, t, results.get('metadata') or {}, 'Shares of attempted iterations (sent + dropped).')
     layout(fig, top)
@@ -311,8 +313,8 @@ def chart_origin_concurrency(plt, t, results, run_dir, mode, out, theme, manifes
             top = max(top, max(ys))
         if ceiling is not None:
             ax.axhline(ceiling, color=t['ink2'], linewidth=1, linestyle=(0, (4, 3)))
-            ax.annotate(f'Tanod ceiling: {ceiling}', (1.0, ceiling), xycoords=('axes fraction', 'data'),
-                        xytext=(-4, 4), textcoords='offset points', ha='right', fontsize=8, color=t['ink2'])
+            ax.annotate(f'Tanod ceiling: {ceiling}', (0.82, ceiling), xycoords=('axes fraction', 'data'),
+                        xytext=(0, 4), textcoords='offset points', ha='right', fontsize=8, color=t['ink2'])
         ax.set_ylim(0, max(top, ceiling or 0) * 1.15 + 1)
         ax.set_title(WORKLOAD_LABEL[workload], fontsize=10)
         ax.set_ylabel('Renders in progress\n(sum of 3 origins)')
