@@ -24,6 +24,8 @@ The origin behaviours are what the contract is stated against:
                no proxy can observe
 * ``hang``     sends a header and then nothing until it is cancelled or its own
                timer ends, which exercises Tanod's origin deadline
+* ``reset``    fails: resets its connection before the header (``at=head``) or
+               after the first chunk, while the client is still connected
 
 Usage: bench/origin-concurrency.py [--tanod PATH] [--policy clock|tinyufo]
        [--only NAME ...] [--json OUT]
@@ -171,6 +173,9 @@ class Origin:
                 if await self.pause(before, closed, mode):
                     outcome = 'cancelled'
                     return
+            if mode == 'reset' and params.get('at') == 'head':
+                self.reset(rid, writer)
+                return
             head = (f'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n'
                     f'Cache-Control: {cache}\r\nTransfer-Encoding: chunked\r\n'
                     f'X-Render: {rid}\r\nConnection: close\r\n\r\n').encode()
@@ -180,6 +185,9 @@ class Origin:
                     return
             self.log(rid, 'header_sent')
             for i in range(chunks):
+                if i and mode == 'reset':
+                    self.reset(rid, writer)
+                    return
                 if i or mode == 'hang':
                     if await self.pause(step if mode != 'hang' else float(params.get('hang', 2)),
                                         closed, mode):
@@ -211,6 +219,12 @@ class Origin:
                 self.completed += 1
             self.renders -= 1
             self.log(rid, 'render_end', outcome=outcome)
+
+    def reset(self, rid, writer):
+        writer.get_extra_info('socket').setsockopt(
+            socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+        writer.transport.abort()
+        self.log(rid, 'origin_reset')
 
     async def watch_close(self, reader):
         try:
@@ -547,6 +561,30 @@ async def s_hang(t, o, facts):
     facts['expect_overlap'] = True
 
 
+async def s_origin_fails(t, o, facts):
+    """The origin fails while its client is still connected.
+
+    That is an origin error, never a client disconnect: the client must see
+    it (a 502 before the header, a truncated body after it), the backend must
+    be charged with the failure that prevented a header, and no drain may be
+    recorded. A failure after a good header counts as the success it began as
+    (`record_origin_outcome`), so only the first is charged.
+    """
+    async def failures():
+        text = await t.scrape()
+        return sum(float(m[1]) for m in re.finditer(
+            r'^tanod_upstream_failures_total\{[^}]*kind="proxy"[^}]*\} (\S+)$', text, re.MULTILINE))
+    before = await failures()
+    head = await fetch(t.listen, '/private/r?id=head&mode=reset&at=head')
+    check(facts, head[0] == 502, 'an origin reset before the header is a 502 to the waiting client',
+          result=head)
+    charged = await failures() - before
+    check(facts, charged == 1, 'the failure was charged to the backend', recorded=charged)
+    body = await fetch(t.listen, '/private/r?id=body&mode=reset&chunks=3')
+    check(facts, not body[2], 'an origin reset mid-body is a visible truncation', result=body)
+    await expect_drains(t, o, facts, completed=0, deadline=0, upstream_error=0)
+
+
 async def s_storm(t, o, facts):
     """Admitted requests hang up together while new ones keep arriving."""
     for round_ in range(4):
@@ -599,6 +637,7 @@ def scenarios(policy):
         Scenario('D-cooperative-origin', 1, s_cooperative, private),
         Scenario('E-non-cooperative-detached-work', 1, s_detached, private),
         Scenario('E-origin-stops-responding', 1, s_hang, private),
+        Scenario('E-origin-fails-client-connected', 1, s_origin_fails, private),
         Scenario('F-disconnect-storm', 4, s_storm, private),
         Scenario('G-coalesced-follower-disconnects', 1, lambda t, o, f: s_coalesce(t, o, f, 'follower'), private),
         Scenario('G-coalesced-leader-disconnects', 1, lambda t, o, f: s_coalesce(t, o, f, 'leader'), private),

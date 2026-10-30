@@ -24,7 +24,7 @@ index 14e90a0..2f3a84d 100644
 +    Ok(end)
 +}
 diff --git a/src/proxy_h1.rs b/src/proxy_h1.rs
-index 7d0881f..10fa994 100644
+index 7d0881f..dd8a8f2 100644
 --- a/src/proxy_h1.rs
 +++ b/src/proxy_h1.rs
 @@ -369,6 +369,8 @@ where
@@ -36,7 +36,7 @@ index 7d0881f..10fa994 100644
      ) -> Result<Option<bool>>
      where
          SV: ProxyHttp + Send + Sync,
-@@ -433,11 +435,65 @@ where
+@@ -433,11 +435,71 @@ where
              return Ok(None);
          }
  
@@ -48,8 +48,14 @@ index 7d0881f..10fa994 100644
 +        }
 +
 +        let end = filtered_tasks.iter().any(HttpTask::is_end);
++        // Writing a failed task returns the upstream's own error. That is never a
++        // downstream failure, and there is nothing left to drain.
++        let upstream_failed = filtered_tasks
++            .iter()
++            .any(|t| matches!(t, HttpTask::Failed(_)));
 +        let response_done = match session.write_response_tasks(filtered_tasks).await {
 +            Ok(done) => done,
++            Err(e) if upstream_failed => return Err(e),
 +            // Tanod patch: a failed downstream write is a downstream error like a failed
 +            // read, and may drain in the same way.
 +            Err(e) => {
@@ -103,7 +109,7 @@ index 7d0881f..10fa994 100644
      // todo use this function to replace bidirection_1to2()
      // returns whether this server (downstream) session can be reused
      #[allow(clippy::too_many_arguments)]
-@@ -507,6 +563,9 @@ where
+@@ -507,6 +569,9 @@ where
  
          let mut next_upstream_task: Option<HttpTask> = None;
  
@@ -113,7 +119,7 @@ index 7d0881f..10fa994 100644
          /* duplex mode without caching
           * Read body from downstream while reading response from upstream
           * If response is done, only read body from downstream
-@@ -583,7 +642,17 @@ where
+@@ -583,7 +648,17 @@ where
                                  session.downstream_session.on_proxy_failure(e);
                                  continue;
                             } else {
@@ -132,7 +138,7 @@ index 7d0881f..10fa994 100644
                             }
                          }
                      };
-@@ -628,6 +697,8 @@ where
+@@ -628,6 +703,8 @@ where
                              &mut serve_from_cache,
                              &mut range_body_filter,
                              &mut response_state,
@@ -141,7 +147,7 @@ index 7d0881f..10fa994 100644
                          ).await? else {
                              // nothing sent downstream e.g. serve_from_cache
                              continue;
-@@ -653,6 +724,8 @@ where
+@@ -653,6 +730,8 @@ where
                              &mut serve_from_cache,
                              &mut range_body_filter,
                              &mut response_state,
@@ -150,7 +156,7 @@ index 7d0881f..10fa994 100644
                          ).await? else {
                              // nothing sent downstream e.g. serve_from_cache
                              continue;
-@@ -791,6 +864,15 @@ where
+@@ -791,6 +870,15 @@ where
                      }
                  }
  
@@ -167,7 +173,7 @@ index 7d0881f..10fa994 100644
                      let Some(data) = data.flatten() else {
                          downstream_custom_read = false;
 diff --git a/src/proxy_h2.rs b/src/proxy_h2.rs
-index 3842d19..40a0461 100644
+index 3842d19..e9355de 100644
 --- a/src/proxy_h2.rs
 +++ b/src/proxy_h2.rs
 @@ -409,6 +409,8 @@ where
@@ -179,7 +185,7 @@ index 3842d19..40a0461 100644
      ) -> Result<Option<bool>>
      where
          SV: ProxyHttp + Send + Sync,
-@@ -479,7 +481,19 @@ where
+@@ -479,7 +481,23 @@ where
              return Ok(None);
          }
  
@@ -190,8 +196,12 @@ index 3842d19..40a0461 100644
 +        }
 +
 +        let end = filtered_tasks.iter().any(HttpTask::is_end);
++        let upstream_failed = filtered_tasks
++            .iter()
++            .any(|t| matches!(t, HttpTask::Failed(_)));
 +        let response_done = match session.write_response_tasks(filtered_tasks).await {
 +            Ok(done) => done,
++            Err(e) if upstream_failed => return Err(e),
 +            Err(e) => {
 +                self.drain_after_downstream_error(session, ctx, downstream_state, e, drain_until)?;
 +                end
@@ -200,7 +210,7 @@ index 3842d19..40a0461 100644
  
          Ok(Some(response_done))
      }
-@@ -548,6 +562,9 @@ where
+@@ -548,6 +566,9 @@ where
  
          let mut next_upstream_task: Option<HttpTask> = None;
  
@@ -210,7 +220,7 @@ index 3842d19..40a0461 100644
          /* duplex mode
           * see the Same function for h1 for more comments
           */
-@@ -602,7 +619,17 @@ where
+@@ -602,7 +623,17 @@ where
                                  session.downstream_session.on_proxy_failure(e);
                                  continue;
                             } else {
@@ -229,7 +239,7 @@ index 3842d19..40a0461 100644
                             }
                          }
                      };
-@@ -620,7 +647,15 @@ where
+@@ -620,7 +651,15 @@ where
                              let wait_for_cache_fill = (!serve_from_cache.is_on() && support_cache_partial_read)
                                  || serve_from_cache.is_miss();
                              if !wait_for_cache_fill {
@@ -246,7 +256,7 @@ index 3842d19..40a0461 100644
                              }
                              // ignore downstream error so that upstream can continue to write cache
                              downstream_state.to_errored();
-@@ -662,6 +697,8 @@ where
+@@ -662,6 +701,8 @@ where
                              &mut serve_from_cache,
                              &mut range_body_filter,
                              &mut response_state,
@@ -255,7 +265,7 @@ index 3842d19..40a0461 100644
                          ).await? else {
                              // nothing sent downstream e.g. serve_from_cache
                              continue;
-@@ -687,6 +724,8 @@ where
+@@ -687,6 +728,8 @@ where
                              &mut serve_from_cache,
                              &mut range_body_filter,
                              &mut response_state,
@@ -264,7 +274,7 @@ index 3842d19..40a0461 100644
                          ).await? else {
                              // nothing sent downstream e.g. serve_from_cache
                              continue;
-@@ -815,6 +854,15 @@ where
+@@ -815,6 +858,15 @@ where
                          }
                      }
                  }

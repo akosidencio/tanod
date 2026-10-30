@@ -442,8 +442,14 @@ where
         }
 
         let end = filtered_tasks.iter().any(HttpTask::is_end);
+        // Writing a failed task returns the upstream's own error. That is never a
+        // downstream failure, and there is nothing left to drain.
+        let upstream_failed = filtered_tasks
+            .iter()
+            .any(|t| matches!(t, HttpTask::Failed(_)));
         let response_done = match session.write_response_tasks(filtered_tasks).await {
             Ok(done) => done,
+            Err(e) if upstream_failed => return Err(e),
             // Tanod patch: a failed downstream write is a downstream error like a failed
             // read, and may drain in the same way.
             Err(e) => {

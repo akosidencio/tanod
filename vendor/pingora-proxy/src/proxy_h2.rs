@@ -487,8 +487,12 @@ where
         }
 
         let end = filtered_tasks.iter().any(HttpTask::is_end);
+        let upstream_failed = filtered_tasks
+            .iter()
+            .any(|t| matches!(t, HttpTask::Failed(_)));
         let response_done = match session.write_response_tasks(filtered_tasks).await {
             Ok(done) => done,
+            Err(e) if upstream_failed => return Err(e),
             Err(e) => {
                 self.drain_after_downstream_error(session, ctx, downstream_state, e, drain_until)?;
                 end

@@ -41,6 +41,21 @@ passes through the upstream filters, its tasks are discarded instead of
 written, and the exchange fails with `ReadTimedout` if it has not ended by
 the deadline.
 
+A failed write is a downstream error only when the batch being written held
+no failed task. Pingora delivers an upstream failure (a reset, a premature
+end, a read timeout) as `HttpTask::Failed`, and writing that task returns the
+upstream's error. That error propagates exactly as before, so a client still
+connected gets its 502 or its visibly truncated body, and the backend is
+charged with the failure. `bench/origin-concurrency.py`'s
+`E-origin-fails-client-connected` scenario holds this. Errors from Tanod's own
+downstream filters would also take the write path; none of them fails in
+practice (`response_body_filter` cannot, `response_filter` only on a debug
+header).
+
+Pingora's queued proxy-task writes (`set_proxy_tasks_enabled`) have their own
+downstream error handling, which this patch does not touch. Only Pingora's
+tests enable them; Tanod does not.
+
 Not changed: cache-fill behaviour, custom upstream sessions, upgrades,
 requests whose body was still arriving, connection reuse rules, and every
 code path where the hook returns `None`.
