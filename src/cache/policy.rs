@@ -159,8 +159,13 @@ pub fn evaluate_request(
     if req.has_cookies() && !override_origin && !coalesce_override {
         return Disposition::Bypass(BypassReason::Cookie);
     }
+    // `coalesce.override_origin` lifts the cookie bypass for one flight and
+    // no further. Only `cache.override_origin` may persist the response to a
+    // cookie-bearing request; otherwise one visitor's render outlives the
+    // flight it was shared within.
+    let flight_only = req.has_cookies() && !override_origin;
     Disposition::Eligible {
-        may_store: cache_enabled && class.storable_in_principle(),
+        may_store: cache_enabled && class.storable_in_principle() && !flight_only,
         may_coalesce: coalesce_enabled && class.coalescible_in_principle(),
     }
 }
@@ -208,15 +213,26 @@ pub fn evaluate_response(
         .and_then(|t| t.max)
         .map(|d| d.as_duration());
 
-    if !override_origin && !coalesce_override {
-        if cc.no_store {
-            return Shareability::NotShareable(BypassReason::NoStore);
-        }
-        if cc.private {
-            return Shareability::NotShareable(BypassReason::CacheControlPrivate);
-        }
-        if cc.no_cache {
-            return Shareability::NotShareable(BypassReason::NoCache);
+    if !override_origin {
+        let refusal = if cc.no_store {
+            Some(BypassReason::NoStore)
+        } else if cc.private {
+            Some(BypassReason::CacheControlPrivate)
+        } else if cc.no_cache {
+            Some(BypassReason::NoCache)
+        } else {
+            None
+        };
+        if let Some(reason) = refusal {
+            // `coalesce.override_origin` outranks the refusal for the waiters
+            // of this one flight and never for storage. Falling through here
+            // used to let `private, max-age=60` become a stored entry whenever
+            // the route's cache was enabled.
+            return if coalesce_override {
+                Shareability::TransientOnly
+            } else {
+                Shareability::NotShareable(reason)
+            };
         }
     }
 
@@ -466,6 +482,79 @@ mod tests {
         assert_eq!(
             evaluate_response(&r, None, &[], true, true),
             Shareability::TransientOnly
+        );
+    }
+
+    /// Phase 4.2 P0. With the route's cache enabled, `coalesce_only` is false,
+    /// and a refusal the coalescing override had lifted fell through to the
+    /// origin's `max-age`: one visitor's private page became a stored entry
+    /// served to everyone for that long.
+    #[test]
+    fn coalesce_override_never_stores_a_refused_response() {
+        for cc in [
+            "private, max-age=60",
+            "no-store, max-age=60",
+            "no-cache, s-maxage=60",
+            "private, no-cache, no-store, max-age=0, must-revalidate",
+            "private",
+        ] {
+            let r = res(200, Some(cc));
+            for route in [None, Some(RouteCache::default())] {
+                assert_eq!(
+                    evaluate_response(&r, route.as_ref(), &[], false, true),
+                    Shareability::TransientOnly,
+                    "{cc}"
+                );
+            }
+        }
+    }
+
+    /// The other half of the same flaw: the override lifted the cookie
+    /// bypass, and the request stayed eligible for storage.
+    #[test]
+    fn coalesce_override_lifts_the_cookie_bypass_for_the_flight_only() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::COOKIE,
+            http::HeaderValue::from_static("session=user-a"),
+        );
+        let req = RequestMetadata {
+            method: &Method::GET,
+            host: "example.com",
+            path: "/dashboard",
+            query: None,
+            headers: &headers,
+        };
+        assert_eq!(
+            evaluate_request(
+                &req,
+                RequestClass::PublicDocument,
+                None,
+                None,
+                true,
+                true,
+                true,
+            ),
+            Disposition::Eligible {
+                may_store: false,
+                may_coalesce: true
+            }
+        );
+        // `cache.override_origin` is the option that claims storage.
+        assert_eq!(
+            evaluate_request(
+                &req,
+                RequestClass::PublicDocument,
+                None,
+                Some(&route_with_override(2)),
+                true,
+                true,
+                true,
+            ),
+            Disposition::Eligible {
+                may_store: true,
+                may_coalesce: true
+            }
         );
     }
 
@@ -769,6 +858,65 @@ mod proptests {
             prop_assert_eq!(
                 evaluate_response(&res, None, &[], false, false),
                 Shareability::NotShareable(BypassReason::NoStore)
+            );
+        }
+
+        /// `coalesce.override_origin` is weaker than `cache.override_origin`:
+        /// it may hand an origin-refused response to the waiters of one
+        /// flight, and may never turn one into a stored entry.
+        #[test]
+        fn coalesce_override_never_persists_a_refused_response(
+            refusal in prop::sample::select(vec!["no-store", "private", "no-cache"]),
+            extra in directive_list(),
+            status in prop::sample::select(CACHEABLE_STATUSES.to_vec()),
+            ttl_secs in prop::option::of(1u64..600),
+            coalesce_only in any::<bool>(),
+        ) {
+            let cc = format!("{refusal}, {extra}");
+            let route = RouteCache {
+                ttl: ttl_secs.map(|secs| Ttl { max: Some(Dur(Duration::from_secs(secs))) }),
+                ..Default::default()
+            };
+            let res = ResponseMetadata {
+                status,
+                cache_control: Some(&cc),
+                set_cookie: false,
+                vary: None,
+            };
+            prop_assert_eq!(
+                evaluate_response(&res, Some(&route), &[], coalesce_only, true),
+                Shareability::TransientOnly
+            );
+        }
+
+        /// A cookie-bearing request is never stored on the strength of the
+        /// coalescing override alone, whatever its class.
+        #[test]
+        fn coalesce_override_never_stores_for_a_cookie_bearing_request(
+            cookie in prop::string::string_regex("[a-z_]{1,8}=[a-zA-Z0-9]{0,10}").unwrap(),
+            class in prop::sample::select(vec![
+                RequestClass::Static,
+                RequestClass::PublicDocument,
+                RequestClass::PublicDynamic,
+            ]),
+            cache_enabled in any::<bool>(),
+            coalesce_enabled in any::<bool>(),
+        ) {
+            let mut headers = http::HeaderMap::new();
+            headers.insert(http::header::COOKIE, http::HeaderValue::from_str(&cookie).unwrap());
+            let req = RequestMetadata {
+                method: &http::Method::GET,
+                host: "shop.example.com",
+                path: "/p",
+                query: None,
+                headers: &headers,
+            };
+            let disposition = evaluate_request(
+                &req, class, None, Some(&RouteCache::default()), true, cache_enabled, coalesce_enabled,
+            );
+            prop_assert!(
+                !matches!(disposition, Disposition::Eligible { may_store: true, .. }),
+                "{:?}", disposition
             );
         }
 
