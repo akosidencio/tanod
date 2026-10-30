@@ -2,9 +2,13 @@
 
 What has to be true before a tag is cut, and what runs where.
 
-The current 0.4 candidate is **NOT READY**: both required hour-long runs observed
-an origin peak of 10 against a ceiling of 8. Keep that assertion unchanged and
-resolve the disconnect/work-lifetime boundary before repeating the gates.
+The current 0.4 candidate is **CONDITIONALLY READY**. Both required hour-long
+runs (CLOCK and TinyUFO, 24 workers) now hold the origin ceiling at 8 against 8.
+Two fixes got them there: the disconnect drain, and `slow-origin` no longer
+counting renders that had already finished. The assertion itself is unchanged.
+Still open before a tag: a Kubernetes staging run
+([procedure](../ops/production/KUBERNETES-STAGING.md)), the external cache-key
+review, and green CI on the release ref.
 
 The distinction that matters: **a gate is something that fails the build**, not
 something a person reads afterwards. Every item below either exits non-zero on
