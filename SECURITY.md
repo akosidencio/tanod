@@ -15,7 +15,7 @@ the [0.4.0 release notes](docs/RELEASE-NOTES-0.4.0.md#2-security-fixes).
 ## Reporting a vulnerability
 
 Report privately through
-[GitHub's private vulnerability reporting](https://github.com/akosidencio/tanod/security/advisories/new).
+[GitHub's private vulnerability reporting](https://github.com/tanod-sh/tanod/security/advisories/new).
 Do not open a public issue, pull request or discussion for a suspected
 vulnerability.
 

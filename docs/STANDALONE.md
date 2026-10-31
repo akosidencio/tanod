@@ -19,7 +19,7 @@ with the release you want to install.
 ```bash
 VERSION=0.3.1
 TARGET=x86_64-unknown-linux-gnu
-BASE="https://github.com/akosidencio/tanod/releases/download/v${VERSION}"
+BASE="https://github.com/tanod-sh/tanod/releases/download/v${VERSION}"
 
 curl -fsSLO "${BASE}/tanod-${VERSION}-${TARGET}.tar.gz"
 curl -fsSLO "${BASE}/SHA256SUMS"

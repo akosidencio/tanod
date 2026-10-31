@@ -173,7 +173,7 @@ is exactly the untrustworthy evidence this project spent a phase removing.
 - The CycloneDX SBOM is attached.
 - The image was smoke-tested before publication and published under the
   digest that was tested (the release page and the workflow summary name it;
-  `skopeo inspect --raw docker://ghcr.io/akosidencio/tanod:<version> | sha256sum`
+  `skopeo inspect --raw docker://ghcr.io/tanod-sh/tanod:<version> | sha256sum`
   must match). It has BuildKit provenance metadata and an SBOM. Inspect the reviewed
   digest with `docker buildx imagetools inspect IMAGE@sha256:DIGEST --format '{{ json .Provenance.SLSA }}'`
   and compare its inputs/revision with the release source. The workflow rejects
@@ -258,7 +258,7 @@ later step fails:
 - *A published artifact is wrong:* do not move or reuse the version. Delete
   the GitHub release assets and mark the release as a draft, point `latest`
   and `MAJOR.MINOR` back at the previous digest
-  (`skopeo copy --all --preserve-digests docker://ghcr.io/akosidencio/tanod@<previous> docker://ghcr.io/akosidencio/tanod:latest`),
+  (`skopeo copy --all --preserve-digests docker://ghcr.io/tanod-sh/tanod@<previous> docker://ghcr.io/tanod-sh/tanod:latest`),
   `npm deprecate` the affected npm versions, and publish a new patch version.
   An npm version can never be republished.
 

@@ -49,7 +49,7 @@ FROM scratch AS runtime
 
 ARG VCS_REF=unknown
 ARG SOURCE_ID=unknown
-LABEL org.opencontainers.image.source="https://github.com/akosidencio/tanod" \
+LABEL org.opencontainers.image.source="https://github.com/tanod-sh/tanod" \
       org.opencontainers.image.revision="${VCS_REF}" \
       io.tanod.build-inputs-sha256="${SOURCE_ID}"
 

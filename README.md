@@ -1,7 +1,7 @@
 # Tanod: Rust reverse proxy for SSR origin protection
 
-[![CI](https://github.com/akosidencio/tanod/actions/workflows/ci.yml/badge.svg)](https://github.com/akosidencio/tanod/actions/workflows/ci.yml)
-[![Version 0.3.1](https://img.shields.io/badge/version-0.3.1-blue)](https://github.com/akosidencio/tanod/releases/tag/v0.3.1)
+[![CI](https://github.com/tanod-sh/tanod/actions/workflows/ci.yml/badge.svg)](https://github.com/tanod-sh/tanod/actions/workflows/ci.yml)
+[![Version 0.3.1](https://img.shields.io/badge/version-0.3.1-blue)](https://github.com/tanod-sh/tanod/releases/tag/v0.3.1)
 [![Apache 2.0 license](https://img.shields.io/badge/license-Apache%202.0-green)](./LICENSE)
 [![Rust 1.88 or newer](https://img.shields.io/badge/Rust-1.88%2B-orange)](./Cargo.toml)
 [![Linux x64](https://img.shields.io/badge/platform-Linux%20x64-informational)](#installation)
@@ -129,7 +129,7 @@ Use Linux x64 and a working Rust toolchain. The package declares Rust 1.88 as it
 Clone and build Tanod from source:
 
 ```bash
-git clone https://github.com/akosidencio/tanod.git
+git clone https://github.com/tanod-sh/tanod.git
 cd tanod
 cargo build --release --locked
 ```
@@ -168,7 +168,7 @@ Choose the form that matches your deployment:
 | JavaScript application | Use [`@tanod/linux-x64`](./packages/tanod-linux-x64) for the binary and [`@tanod/next`](./packages/tanod-next) for the integration |
 | Build from source with TLS | Run `cargo build --release --locked --features tls` |
 
-The release workflow targets Linux x64 with GNU and static musl archives, a `linux/amd64` image at `ghcr.io/akosidencio/tanod`, and npm packages. Select an available version from [GitHub releases](https://github.com/akosidencio/tanod/releases). There are no macOS, Windows, or Linux ARM64 release artifacts in the current workflow.
+The release workflow targets Linux x64 with GNU and static musl archives, a `linux/amd64` image at `ghcr.io/tanod-sh/tanod`, and npm packages. Images for 0.2.0 through 0.4.0 were published before the project moved to the `tanod-sh` organization and remain at `ghcr.io/akosidencio/tanod`. Select an available version from [GitHub releases](https://github.com/tanod-sh/tanod/releases). There are no macOS, Windows, or Linux ARM64 release artifacts in the current workflow.
 
 The container runs on `scratch` and has no shell or application runtime. Use your application's image when supervising Node, Bun, or another server inside the same container.
 
@@ -447,7 +447,7 @@ Use these guides for the next step:
 
 ## Contributing and security
 
-Report reproducible bugs or propose improvements through [GitHub issues](https://github.com/akosidencio/tanod/issues). Include the Tanod version, a redacted configuration, the request pattern, and the observed behavior. Review the relevant [release gates](./docs/RELEASE-GATES.md) when contributing code.
+Report reproducible bugs or propose improvements through [GitHub issues](https://github.com/tanod-sh/tanod/issues). Include the Tanod version, a redacted configuration, the request pattern, and the observed behavior. Review the relevant [release gates](./docs/RELEASE-GATES.md) when contributing code.
 
 Report suspected vulnerabilities privately, as described in [SECURITY.md](./SECURITY.md), never in a public issue. Versions before 0.4.0 are affected by the vulnerabilities listed in the [0.4.0 release notes](./docs/RELEASE-NOTES-0.4.0.md#2-security-fixes).
 

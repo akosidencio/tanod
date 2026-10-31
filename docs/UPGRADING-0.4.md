@@ -33,8 +33,9 @@ they reduce exposure but are not equivalent to the fixes.
 6. **Supervisor deadline.** Set the stop timeout above
    `drain_period + shutdown_timeout` plus a margin (examples: 50 s for 5 s +
    35 s).
-7. **Roll out.** Pin the image by digest (`ghcr.io/akosidencio/tanod@sha256:…`
-   from the release page) or verify the archive against `SHA256SUMS`. Roll one
+7. **Roll out.** Pin the image by digest (`ghcr.io/tanod-sh/tanod@sha256:…`
+   from the release page; 0.4.0 itself was published as
+   `ghcr.io/akosidencio/tanod`) or verify the archive against `SHA256SUMS`. Roll one
    instance, watch readiness, origin in-flight work, queue depth, cache
    pressure and error rates, then the rest.
 8. **Rollback.** Keep the 0.3.2 binary and its configuration together. A
