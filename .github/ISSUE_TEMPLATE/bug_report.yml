@@ -1,0 +1,52 @@
+name: Bug report
+description: Tanod behaves differently from its documentation or configuration
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **A suspected vulnerability goes through [private reporting](https://github.com/tanod-sh/tanod/security/advisories/new), not here.**
+
+        Remove credentials, cookies, authorization headers, purge tokens and other users' data from everything below.
+  - type: input
+    id: version
+    attributes:
+      label: Tanod version
+      description: Output of `tanod version`, and the `@tanod/next` version if you use it.
+      placeholder: tanod 0.4.1 (features: tls)
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Deployment
+      description: How Tanod runs (binary, image, npm, `origin.command`), what sits in front of it, and the origin framework and version.
+      placeholder: ghcr.io/tanod-sh/tanod image behind NGINX; Next.js 16.4.0 on Node 22; 2 replicas
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: The relevant part of tanod.yaml, redacted. Routes, `cache`, `coalesce` and `server.trusted_proxies` matter most.
+      render: yaml
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The requests or load that trigger it (curl commands, a k6 script, a request pattern).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened, with relevant log lines, `/status` output or metrics.
+    validations:
+      required: true
