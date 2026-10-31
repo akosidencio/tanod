@@ -258,7 +258,7 @@ spec:
       terminationGracePeriodSeconds: 35
       containers:
         - name: tanod
-          image: ghcr.io/OWNER/tanod:0.1.1
+          image: ghcr.io/tanod-sh/tanod:0.4.1
           args: ["run", "--config", "/etc/tanod/tanod.yaml"]
           ports:
             - { name: http, containerPort: 8080 }

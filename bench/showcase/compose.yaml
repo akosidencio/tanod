@@ -11,7 +11,7 @@ x-next-build: &next-build
   context: ../../fixtures/next-storefront
   args:
     NODE_VERSION: ${TANOD_NEXT_NODE:-22}
-    NEXT_VERSION: ${TANOD_NEXT_VERSION:-16.4.0}
+    NEXT_VERSION: ${TANOD_NEXT_VERSION:-16.4.3}
     TANOD_BUILD_ID: next-fixture-v1
     NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
 

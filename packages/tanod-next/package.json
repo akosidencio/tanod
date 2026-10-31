@@ -1,16 +1,16 @@
 {
   "name": "@tanod/next",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Generate Tanod route configuration from a Next.js build, and route revalidateTag()/revalidatePath() to Tanod's purge API",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/akosidencio/tanod/tree/main/packages/tanod-next#readme",
+  "homepage": "https://github.com/tanod-sh/tanod/tree/main/packages/tanod-next#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/akosidencio/tanod.git",
+    "url": "git+https://github.com/tanod-sh/tanod.git",
     "directory": "packages/tanod-next"
   },
   "bugs": {
-    "url": "https://github.com/akosidencio/tanod/issues"
+    "url": "https://github.com/tanod-sh/tanod/issues"
   },
   "publishConfig": {
     "access": "public"
@@ -52,7 +52,7 @@
     }
   },
   "optionalDependencies": {
-    "@tanod/linux-x64": "0.4.0"
+    "@tanod/linux-x64": "0.4.1"
   },
   "keywords": [
     "tanod",

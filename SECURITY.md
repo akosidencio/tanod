@@ -6,7 +6,7 @@ Security fixes are released for the latest minor version only.
 
 | Version | Supported |
 |---|---|
-| 0.4.x | yes, once released |
+| 0.4.x | yes |
 | 0.3.x and earlier | no: affected by the vulnerabilities fixed in 0.4.0; upgrade |
 
 The vulnerabilities fixed in 0.4.0, with mitigations for 0.3.2, are listed in
@@ -15,7 +15,7 @@ the [0.4.0 release notes](docs/RELEASE-NOTES-0.4.0.md#2-security-fixes).
 ## Reporting a vulnerability
 
 Report privately through
-[GitHub's private vulnerability reporting](https://github.com/akosidencio/tanod/security/advisories/new).
+[GitHub's private vulnerability reporting](https://github.com/tanod-sh/tanod/security/advisories/new).
 Do not open a public issue, pull request or discussion for a suspected
 vulnerability.
 

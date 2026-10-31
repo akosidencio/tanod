@@ -1,6 +1,6 @@
 # @tanod/linux-x64
 
-The [Tanod](https://github.com/akosidencio/tanod) binary for Linux x64,
+The [Tanod](https://github.com/tanod-sh/tanod) binary for Linux x64,
 published so JavaScript projects can install Tanod with their package manager
 instead of a separate image or download.
 

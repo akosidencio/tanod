@@ -1,16 +1,16 @@
 {
   "name": "@tanod/linux-x64",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "The Tanod binary for Linux x64: statically linked, so it runs on glibc and musl (Alpine) alike",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/akosidencio/tanod#readme",
+  "homepage": "https://github.com/tanod-sh/tanod#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/akosidencio/tanod.git",
+    "url": "git+https://github.com/tanod-sh/tanod.git",
     "directory": "packages/tanod-linux-x64"
   },
   "bugs": {
-    "url": "https://github.com/akosidencio/tanod/issues"
+    "url": "https://github.com/tanod-sh/tanod/issues"
   },
   "publishConfig": {
     "access": "public"

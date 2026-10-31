@@ -1,15 +1,24 @@
-# Upgrading to 0.4.0
+# Upgrading to 0.4
 
-The 0.4.0 metadata in this tree is an unpublished candidate. No tag, npm package,
-container push or release is implied. Review the [release gates](RELEASE-GATES.md)
-and run them against the reviewed clean commit before publishing.
+## From 0.4.0 to 0.4.1
+
+0.4.1 changes no configuration, runtime behavior or CLI argument. A 0.4.0
+configuration runs unchanged; replace the binary, image or npm packages. What
+moved is where the image is published: 0.4.1 and later are at
+`ghcr.io/tanod-sh/tanod`, while 0.4.0 and earlier stay at
+`ghcr.io/akosidencio/tanod`. Update image references when you change the
+version, and pin the digest from the release page. The npm package names
+(`@tanod/next`, `@tanod/linux-x64`) are unchanged.
+
+## From 0.3.2 to 0.4.0
 
 **0.4.0 fixes four vulnerabilities that affect 0.3.2 and every earlier
-release.** There is no 0.3.3. Until you can upgrade, apply the mitigations in
+release.** There is no 0.3.3. Upgrading from 0.3.2 straight to 0.4.1 follows
+the same steps. Until you can upgrade, apply the mitigations in
 the [release notes](RELEASE-NOTES-0.4.0.md#mitigations-for-032-until-you-upgrade);
 they reduce exposure but are not equivalent to the fixes.
 
-## From 0.3.2, in order
+### In order
 
 1. **Validate the configuration with the 0.4.0 binary** before deploying it:
    `tanod check --config tanod.yaml`. 0.4.0 refuses
@@ -33,15 +42,16 @@ they reduce exposure but are not equivalent to the fixes.
 6. **Supervisor deadline.** Set the stop timeout above
    `drain_period + shutdown_timeout` plus a margin (examples: 50 s for 5 s +
    35 s).
-7. **Roll out.** Pin the image by digest (`ghcr.io/akosidencio/tanod@sha256:…`
-   from the release page) or verify the archive against `SHA256SUMS`. Roll one
+7. **Roll out.** Pin the image by digest (`ghcr.io/tanod-sh/tanod@sha256:…`
+   from the release page; 0.4.0 itself was published as
+   `ghcr.io/akosidencio/tanod`) or verify the archive against `SHA256SUMS`. Roll one
    instance, watch readiness, origin in-flight work, queue depth, cache
    pressure and error rates, then the rest.
 8. **Rollback.** Keep the 0.3.2 binary and its configuration together. A
    rollback starts with a cold cache and **re-exposes the vulnerabilities
    fixed in 0.4.0**; reapply the 0.3.2 mitigations if you roll back.
 
-## Every change from 0.3.2
+### Every change from 0.3.2
 
 | Change from released 0.3.2 | Automatic behavior | Operator action |
 |---|---|---|
@@ -57,7 +67,7 @@ they reduce exposure but are not equivalent to the fixes.
 | Dot segments | In protect mode a target whose path has a `.` or `..` segment, literal or `%2e`-encoded, gets `400` and never reaches the origin. Observe mode is unchanged. | None for browsers, which resolve them first. Check non-browser clients and health checkers that send raw `/./` or `/../` paths. |
 | Shutdown | SIGTERM withdraws readiness while serving for `drain_period`, then Pingora closes listeners and drains. SIGINT is fast shutdown. | Set the supervisor deadline above drain + shutdown timeout + teardown. The production examples use 50 seconds for 5 + 35 + 1 seconds. Streams/tunnels need reconnect or an appropriate deadline. |
 
-Before rollout, validate configuration with the candidate binary, record the
+Before rollout, validate configuration with the new binary, record the
 image/binary checksum, test on a staging origin, then roll one instance while
 watching readiness, origin work, queue depth, pressure and response errors.
 Keep the preceding binary and configuration together for rollback. A downgrade
