@@ -19,7 +19,7 @@ BENCH_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$BENCH_ROOT/bench/lib.sh"
 
 IMAGE=${TANOD_NEXT_IMAGE:-tanod-next-origin:reference}
-NEXT_VERSION=${TANOD_NEXT_VERSION:-16.4.0}
+NEXT_VERSION=${TANOD_NEXT_VERSION:-16.4.3}
 CONTAINER="tanod-nextjs-forwarded-$$"
 
 bench_init nextjs_forwarded

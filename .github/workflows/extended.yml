@@ -93,7 +93,7 @@ jobs:
             --build-arg SOURCE_ID="$source_inputs" \
             -t "$TANOD_IMAGE" .
           docker build -t tanod-next-origin:reference \
-            --build-arg NODE_VERSION=22 --build-arg NEXT_VERSION=16.4.0 \
+            --build-arg NODE_VERSION=22 --build-arg NEXT_VERSION=16.4.3 \
             --build-arg TANOD_BUILD_ID=next-fixture-v1 \
             --build-arg NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
             fixtures/next-storefront

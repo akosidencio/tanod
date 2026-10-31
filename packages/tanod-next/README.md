@@ -316,8 +316,14 @@ The maintained integration targets are:
 
 | Next.js | Node.js | Routers | Required CI coverage |
 |---|---|---|---|
-| 16.4.0 | 22.x, 24.x | App + Pages | Full integration suite on both runtimes |
+| 16.4.3 | 22.x, 24.x | App + Pages | Full integration suite on both runtimes |
 | 16.3.8 | 22.x, 24.x | App + Pages | Full integration suite on both runtimes |
+
+Tested is not the same as safe to run. Next.js 16.0.0 through 16.4.0, 16.3.8
+included, are affected by GHSA-673q-mjm6-r5xr and GHSA-2464-fhr4-w9xw
+(unauthenticated remote code execution) and GHSA-p3m5-59mp-jv5r (denial of
+service), fixed only in 16.4.1. Run 16.4.1 or later; Tanod cannot mitigate
+them. 16.3.8 stays in the matrix for applications still moving off 16.3.
 
 The [compatibility declaration](./src/compatibility.json) drives CI and CLI
 help. Every combination builds a real standalone application, confirms its

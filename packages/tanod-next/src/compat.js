@@ -48,6 +48,12 @@ export const SUPPORTED_MANIFESTS = Object.freeze({
  */
 export const VERIFIED_NEXT_RELEASES = Object.freeze([
   Object.freeze({
+    next: '16.4.3',
+    router: 'app + pages',
+    routesManifest: 3,
+    prerenderManifest: 4,
+  }),
+  Object.freeze({
     next: '16.4.0',
     router: 'app + pages',
     routesManifest: 3,

@@ -47,7 +47,7 @@ must pass before merge.
 
 The separate Next.js matrix is generated from
 [`packages/tanod-next/src/compatibility.json`](../packages/tanod-next/src/compatibility.json).
-It covers Next 16.4.0 and 16.3.8 on Node 22 and 24. Adapter unit tests also run
+It covers Next 16.4.3 and 16.3.8 on Node 22 and 24. Adapter unit tests also run
 on both Node lines and the declared Bun version. A copied manifest fixture is
 not evidence that the full integration passed on another framework release.
 

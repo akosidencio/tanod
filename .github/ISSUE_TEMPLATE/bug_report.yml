@@ -21,7 +21,7 @@ body:
     attributes:
       label: Deployment
       description: How Tanod runs (binary, image, npm, `origin.command`), what sits in front of it, and the origin framework and version.
-      placeholder: ghcr.io/tanod-sh/tanod image behind NGINX; Next.js 16.4.0 on Node 22; 2 replicas
+      placeholder: ghcr.io/tanod-sh/tanod image behind NGINX; Next.js 16.4.3 on Node 22; 2 replicas
     validations:
       required: true
   - type: textarea

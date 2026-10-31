@@ -224,7 +224,7 @@ For setups that use a Node or Bun runner, [`tanod-next start`](./packages/tanod-
 
 ## Using Tanod with Next.js
 
-The `@tanod/next` package reads your production build to generate route policy and coordinates Tanod invalidation with Next.js invalidation. The maintained integration matrix covers Next.js 16.4.0 and 16.3.8 on Node 22 and 24, with adapter tests on Bun 1.4.0. Its broader npm installation ranges do not imply equivalent testing; see the [compatibility policy](./packages/tanod-next/README.md#compatibility).
+The `@tanod/next` package reads your production build to generate route policy and coordinates Tanod invalidation with Next.js invalidation. The maintained integration matrix covers Next.js 16.4.3 and 16.3.8 on Node 22 and 24, with adapter tests on Bun 1.4.0. Its broader npm installation ranges do not imply equivalent testing; see the [compatibility policy](./packages/tanod-next/README.md#compatibility).
 
 Install the build integration in your Next.js project and generate policy after building:
 
