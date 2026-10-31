@@ -2,18 +2,20 @@
 
 What has to be true before a tag is cut, and what runs where.
 
-The current 0.4 candidate is **CONDITIONALLY READY**. It fixes four
-vulnerabilities present in 0.3.2 ([release notes](RELEASE-NOTES-0.4.0.md#2-security-fixes)):
-three found by the 0.4.0 cache security review
+0.4.0 was published on 2026-10-31. It fixes four vulnerabilities present in
+0.3.2 ([release notes](RELEASE-NOTES-0.4.0.md#2-security-fixes)): three found
+by the 0.4.0 cache security review
 ([package](reviews/CACHE-SECURITY-REVIEW-v0.4.0.md)) and the forwarded-header
 defect fixed earlier in the cycle. Both required hour-long runs (CLOCK and
 TinyUFO, 24 workers) passed with the uncached-disconnect arm, holding the
 origin ceiling at 8 against 8 and completing every disconnect drain inside the
-deadline. The release image is now smoke-tested before it is pushed, and
-every workflow action is pinned by commit SHA. Still open before a tag: an
-independent sign-off on the cache security review, a Kubernetes staging run
-([procedure](../ops/production/KUBERNETES-STAGING.md)), and green CI on the
-release commit.
+deadline. Two items were open at publication and remain open: an independent
+sign-off on the cache security review and a Kubernetes staging run
+([procedure](../ops/production/KUBERNETES-STAGING.md)).
+
+0.4.1 is a maintenance release with no runtime change: the move to the
+`tanod-sh` organization, and with it the image's new location (see
+[the first release under tanod-sh](#the-first-release-under-tanod-sh)).
 
 The distinction that matters: **a gate is something that fails the build**, not
 something a person reads afterwards. Every item below either exits non-zero on
@@ -219,7 +221,8 @@ image          build once into an OCI archive (no registry credentials);
 --------------------------------------- nothing is public before this line
 image-publish  `release` environment (approval point); same archive, same
                digest: version tag (refused if it names another image),
-               verified, then MAJOR.MINOR and latest
+               verified and pullable anonymously, then MAJOR.MINOR and
+               latest
 publish        GitHub release: every expected archive, each binary checked
                against its recorded checksum, SBOM, SHA256SUMS
 npm            @tanod/linux-x64 (binary checked against the musl job's
@@ -237,13 +240,36 @@ peak at most 1); metrics; and SIGTERM (not ready while still serving, exit 0
 within the drain budget, no panic). Run it locally against any loaded image:
 
 ```sh
-bash scripts/image-smoke.sh tanod:candidate 0.4.0
+bash scripts/image-smoke.sh tanod:candidate <version>
 ```
 
 **Approval.** Configure Settings → Environments → `release` with required
 reviewers and a deployment rule for `v*` tags. The run then stops before
 `image-publish`, after every check has passed, until a maintainer approves.
 Without reviewers the environment is created on first use and does not wait.
+
+<a id="the-first-release-under-tanod-sh"></a>**The first release under tanod-sh.**
+Images up to 0.4.0 belong to the `akosidencio` account and stay at
+`ghcr.io/akosidencio/tanod`; moving the repository did not move them, and
+nothing should copy them to the organization, where they were never
+published. `IMAGE_NAME` is `github.repository`, so 0.4.1 creates
+`ghcr.io/tanod-sh/tanod` on its first push, and GHCR creates a package
+private. `image-publish` stops after the version tag if that tag cannot be
+pulled anonymously. Then:
+
+1. Open the package (Organization → Packages → `tanod`) and confirm it is
+   linked to `tanod-sh/tanod`. The image's `org.opencontainers.image.source`
+   label links it, so it inherits the repository's access.
+2. Package settings → Change visibility → Public. A public package cannot be
+   made private again.
+3. Re-run the failed jobs. The version tag is skipped as already pushed with
+   the same digest; the moving tags, the GitHub release and npm follow.
+
+The organization must allow members to create public packages
+(Organization settings → Packages); without that the first push fails before
+anything is public. There is no earlier digest at the new location to roll
+`latest` back to, so a wrong 0.4.1 image is withdrawn by deleting its package
+versions and publishing 0.4.2, not by pointing `latest` at 0.4.0.
 
 **Partial publication.** The three registries are written in order (GHCR,
 then the GitHub release, then npm) and cannot be written atomically. If a
