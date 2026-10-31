@@ -6,7 +6,18 @@ work and [operations guide](./docs/OPERATIONS.md) for deployment details.
 Tanod was released as Harmost up to 0.1.4. Entries below 0.2.0 use the current
 names.
 
-## 0.4.0 - Unreleased
+## 0.4.1 - Unreleased
+
+**Maintenance release: organization migration.** No runtime, configuration or CLI change; a 0.4.0 configuration runs unchanged. The repository moved from `akosidencio/tanod` to [`tanod-sh/tanod`](https://github.com/tanod-sh/tanod), and this is the first release published from it.
+
+- Distribution: the container image is published to `ghcr.io/tanod-sh/tanod` from this release on. Images for 0.2.0 through 0.4.0 remain at `ghcr.io/akosidencio/tanod`, unchanged; nothing was moved or re-tagged. The release workflow derives the image name from the repository, so it needed no change to the name. The npm package names `@tanod/next` and `@tanod/linux-x64` are unchanged.
+- Metadata: the npm packages' `repository`, `homepage` and `bugs` fields, the Dockerfile's `org.opencontainers.image.source` label, and the security reporting link name `tanod-sh/tanod`. npm provenance requires `repository.url` to match the repository that publishes. `Cargo.toml` declares `repository`.
+- Release workflow: `image-publish` checks that the pushed version tag can be pulled without credentials before moving `MAJOR.MINOR` and `latest` and before the GitHub release and npm publish. GHCR creates a package private on its first push, so the first organization release stops there until the package is made public; [release gates](./docs/RELEASE-GATES.md#the-first-release-under-tanod-sh) give the steps. The smoke-before-push, digest, provenance, SBOM and tag-overwrite checks are unchanged.
+- Docs: the README shows the latest release from GitHub instead of a fixed 0.3.1 badge, and no longer calls 0.4.0 an unpublished candidate. The standalone guide installs 0.4.1 instead of 0.3.1, and the deployment and operations examples use the new image location. [Upgrading](./docs/UPGRADING-0.4.md#from-040-to-041) covers 0.4.0 to 0.4.1.
+- Contributing: add `CONTRIBUTING.md`, issue forms for bugs and feature requests (with a link to private vulnerability reporting), and a pull request template.
+- CI: `scripts/check-repository-identity.py` (with tests, in the `audit` job) fails on a link to the old repository in an active file, on the old image location without the versions it holds, on a tag that was never published at either location, and on package, Cargo, OCI-label, security-link or CI-badge metadata that does not name `tanod-sh/tanod`. Records of 0.4.0 and earlier releases keep their history.
+
+## 0.4.0 - 2026-10-31
 
 **Security release.** Fixes four vulnerabilities present in every earlier release, 0.3.2 included: `coalesce.override_origin` persisting responses the origin refused to share, `cache.query` lists matching undecoded parameter names, dot-segment paths routed differently from the origin, and client-supplied forwarding headers reaching the origin outside the cache key. There is no 0.3.3. See the [release notes](./docs/RELEASE-NOTES-0.4.0.md#2-security-fixes) for affected configurations and mitigations for 0.3.2, and [SECURITY.md](./SECURITY.md) to report a vulnerability.
 
