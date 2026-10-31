@@ -166,6 +166,12 @@ jobs:
       # change under every future run, including the release's.
       - name: Workflow actions are pinned by commit SHA
         run: python3 scripts/check-workflows.py
+      # The repository moved to tanod-sh after 0.4.0 and GitHub redirects the
+      # old URLs, so a stale link or image name would otherwise go unnoticed.
+      - name: Active files name the tanod-sh repository and image
+        run: |
+          python3 scripts/check-repository-identity.py
+          python3 -m unittest discover -s scripts/tests -v
 
   # The static musl binary and `tanod-next start`, together, in an Alpine
   # Node image: the deployment @tanod/linux-x64 exists for. Built here as well
