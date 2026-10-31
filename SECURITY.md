@@ -6,7 +6,7 @@ Security fixes are released for the latest minor version only.
 
 | Version | Supported |
 |---|---|
-| 0.4.x | yes, once released |
+| 0.4.x | yes |
 | 0.3.x and earlier | no: affected by the vulnerabilities fixed in 0.4.0; upgrade |
 
 The vulnerabilities fixed in 0.4.0, with mitigations for 0.3.2, are listed in

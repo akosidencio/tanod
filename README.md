@@ -1,7 +1,7 @@
 # Tanod: Rust reverse proxy for SSR origin protection
 
 [![CI](https://github.com/tanod-sh/tanod/actions/workflows/ci.yml/badge.svg)](https://github.com/tanod-sh/tanod/actions/workflows/ci.yml)
-[![Version 0.3.1](https://img.shields.io/badge/version-0.3.1-blue)](https://github.com/tanod-sh/tanod/releases/tag/v0.3.1)
+[![Latest release](https://img.shields.io/github/v/release/tanod-sh/tanod?sort=semver&label=release)](https://github.com/tanod-sh/tanod/releases/latest)
 [![Apache 2.0 license](https://img.shields.io/badge/license-Apache%202.0-green)](./LICENSE)
 [![Rust 1.88 or newer](https://img.shields.io/badge/Rust-1.88%2B-orange)](./Cargo.toml)
 [![Linux x64](https://img.shields.io/badge/platform-Linux%20x64-informational)](#installation)
@@ -14,7 +14,7 @@ Tanod is an open-source Rust reverse proxy that protects self-hosted server-side
 **Stop traffic spikes from becoming render spikes.**
 
 > [!IMPORTANT]
-> Tanod is pre-1.0. This source tree contains an **unpublished 0.4.0 candidate**. Repository tests and bounded staging tests support its mechanisms, but release validation, sustained production validation and an independent cache-safety review remain open. Configuration and behavior may change between releases. See the [upgrade notes](./docs/UPGRADING-0.4.md) before deploying this candidate.
+> Tanod is pre-1.0. Releases are listed on [GitHub releases](https://github.com/tanod-sh/tanod/releases). 0.4.0 fixed four vulnerabilities present in every earlier release; read the [upgrade notes](./docs/UPGRADING-0.4.md) before moving from 0.3.x. Repository tests and bounded staging tests support Tanod's mechanisms, but sustained production validation and an independent cache-safety review remain open. Configuration and behavior may change between minor releases.
 
 [Get started](#getting-started) · [Next.js integration](#using-tanod-with-nextjs) · [Standalone server](./docs/STANDALONE.md) · [Operations](./docs/OPERATIONS.md) · [Roadmap](./docs/ROADMAP.md) · [Changelog](./CHANGELOG.md)
 
@@ -168,7 +168,14 @@ Choose the form that matches your deployment:
 | JavaScript application | Use [`@tanod/linux-x64`](./packages/tanod-linux-x64) for the binary and [`@tanod/next`](./packages/tanod-next) for the integration |
 | Build from source with TLS | Run `cargo build --release --locked --features tls` |
 
-The release workflow targets Linux x64 with GNU and static musl archives, a `linux/amd64` image at `ghcr.io/tanod-sh/tanod`, and npm packages. Images for 0.2.0 through 0.4.0 were published before the project moved to the `tanod-sh` organization and remain at `ghcr.io/akosidencio/tanod`. Select an available version from [GitHub releases](https://github.com/tanod-sh/tanod/releases). There are no macOS, Windows, or Linux ARM64 release artifacts in the current workflow.
+The release workflow targets Linux x64 with GNU and static musl archives, a `linux/amd64` image, and npm packages. Select an available version from [GitHub releases](https://github.com/tanod-sh/tanod/releases); each release page names its image digest. There are no macOS, Windows, or Linux ARM64 release artifacts in the current workflow.
+
+Releases from 0.4.1 publish the image to `ghcr.io/tanod-sh/tanod`. Images for 0.2.0 through 0.4.0 were published before the project moved to the `tanod-sh` organization and remain at `ghcr.io/akosidencio/tanod`:
+
+```bash
+docker pull ghcr.io/tanod-sh/tanod:0.4.1       # 0.4.1 and later
+docker pull ghcr.io/akosidencio/tanod:0.4.0    # 0.4.0 and earlier
+```
 
 The container runs on `scratch` and has no shell or application runtime. Use your application's image when supervising Node, Bun, or another server inside the same container.
 
@@ -217,7 +224,7 @@ For setups that use a Node or Bun runner, [`tanod-next start`](./packages/tanod-
 
 ## Using Tanod with Next.js
 
-The `@tanod/next` package reads your production build to generate route policy and coordinates Tanod invalidation with Next.js invalidation. The maintained integration matrix covers Next.js 16.4.0 and 16.3.8 on Node 22 and 24, with adapter tests on Bun 1.4.0. Its broader npm installation ranges do not imply equivalent testing; see the [compatibility policy](./packages/tanod-next/README.md#compatibility).
+The `@tanod/next` package reads your production build to generate route policy and coordinates Tanod invalidation with Next.js invalidation. The maintained integration matrix covers Next.js 16.4.3 and 16.3.8 on Node 22 and 24, with adapter tests on Bun 1.4.0. Its broader npm installation ranges do not imply equivalent testing; see the [compatibility policy](./packages/tanod-next/README.md#compatibility).
 
 Install the build integration in your Next.js project and generate policy after building:
 
@@ -407,7 +414,7 @@ That result is a workload-specific observation, not a general speed claim. Separ
 
 ## Project status and roadmap
 
-The 0.4.0 candidate includes the core proxy, admission controls, local cache, request coalescing, telemetry, and application supervision. The [changelog](./CHANGELOG.md) records release history; the [roadmap](./docs/ROADMAP.md) tracks remaining work. See the [release gates](./docs/RELEASE-GATES.md) for the candidate's current status and publication requirements.
+Tanod 0.4 includes the core proxy, admission controls, local cache, request coalescing, telemetry, and application supervision. The [changelog](./CHANGELOG.md) records release history; the [roadmap](./docs/ROADMAP.md) tracks remaining work. See the [release gates](./docs/RELEASE-GATES.md) for what every release must pass.
 
 Current boundaries and validation gaps include:
 
@@ -447,7 +454,7 @@ Use these guides for the next step:
 
 ## Contributing and security
 
-Report reproducible bugs or propose improvements through [GitHub issues](https://github.com/tanod-sh/tanod/issues). Include the Tanod version, a redacted configuration, the request pattern, and the observed behavior. Review the relevant [release gates](./docs/RELEASE-GATES.md) when contributing code.
+Report reproducible bugs or propose improvements through [GitHub issues](https://github.com/tanod-sh/tanod/issues). Include the Tanod version, a redacted configuration, the request pattern, and the observed behavior. [CONTRIBUTING.md](./CONTRIBUTING.md) lists the local checks a pull request must pass; the [release gates](./docs/RELEASE-GATES.md) describe the rest.
 
 Report suspected vulnerabilities privately, as described in [SECURITY.md](./SECURITY.md), never in a public issue. Versions before 0.4.0 are affected by the vulnerabilities listed in the [0.4.0 release notes](./docs/RELEASE-NOTES-0.4.0.md#2-security-fixes).
 

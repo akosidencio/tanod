@@ -17,9 +17,9 @@ See the [production reference](./NEXTJS-PRODUCTION-REFERENCE.md), [standalone gu
 
 The next visitor-facing improvements are:
 
-- Add opt-in, per-route stale responses when admission sheds a request; currently stale content is served during revalidation or upstream failure, not overload shedding
+- Add opt-in, per-route stale responses when admission sheds a request; currently stale content is served during revalidation, upstream failure, or a timed-out coalescing wait (`coalesce.on_timeout: stale_or_shed`), not when admission sheds
 - Estimate distinct client addresses over one- and five-minute windows without exporting addresses, and report open downstream connections
-- Measure queue wait, successful-response latency, throughput and rejections under sustained overload; if a tuned queue still adds too much delay, add queue-delay control (a short wait cap once the queue has not emptied recently) and adaptive LIFO, which needs a custom wait list in place of the FIFO semaphore
+- Measure queue wait, successful-response latency, throughput and rejections under sustained overload on representative workloads. The [overload showcase](./demo/README.md) measures them on one host with a synthetic CPU-bound fixture (successful-response p95 of 1.35 s under a 1 s queue timeout); if a tuned queue still adds too much delay, add queue-delay control (a short wait cap once the queue has not emptied recently) and adaptive LIFO, which needs a custom wait list in place of the FIFO semaphore
 
 ## Expand integrations and distribution
 
@@ -38,6 +38,7 @@ Account for these limits when deploying:
 - Cache and coalescing are local; replica capacity is statically partitioned, and purges must reach every cache-holding instance
 - Path purges match exact paths, without dynamic route-pattern invalidation
 - Slow readers can retain origin capacity; bounded response spooling trades progressive rendering for earlier capacity release
+- A render whose client disconnects runs to completion and keeps its permit, bounded by `timeouts.origin` ([what the origin ceiling guarantees](./OPERATIONS.md#what-the-origin-ceiling-guarantees))
 - An edge server, CDN, authentication, and client rate limiting remain separate responsibilities
 
 See [operations](./OPERATIONS.md) for deployment and monitoring guidance.

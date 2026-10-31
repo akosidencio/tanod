@@ -587,6 +587,25 @@ jobs:
           jq -e 'type == "object" and ((.buildType // .buildDefinition.buildType) | type == "string" and length > 0)' \
             "$RUNNER_TEMP/provenance.json" > /dev/null
 
+      # GHCR creates a package private on its first push, whatever the
+      # repository's visibility, and 0.4.1 is the first release pushed under
+      # the tanod-sh organization. Stop before the moving tags, the GitHub
+      # release and npm point users at an image they cannot pull. Resuming is
+      # re-running the failed jobs: the version tag above is skipped as a re-run.
+      - name: Verify the version tag can be pulled without credentials
+        if: ${{ !github.event.repository.private }}
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          token="$(curl -fsS "https://${REGISTRY}/token?scope=repository:${IMAGE_NAME}:pull" | jq -r '.token // empty')" || token=""
+          if [ -z "$token" ] || ! curl -fsS -o /dev/null \
+              -H "Authorization: Bearer $token" \
+              -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json" \
+              "https://${REGISTRY}/v2/${IMAGE_NAME}/manifests/${VERSION}"; then
+            echo "::error::${REGISTRY}/${IMAGE_NAME}:${VERSION} was pushed but cannot be pulled anonymously. Make the package public (Package settings → Change visibility), then re-run the failed jobs"
+            exit 1
+          fi
+
       - name: Point the moving tags at the verified digest
         env:
           DIGEST: ${{ needs.image.outputs.digest }}

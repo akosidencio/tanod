@@ -14,11 +14,12 @@ pingora-proxy = { path = "vendor/pingora-proxy" }
 
 [package]
 name = "tanod"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Origin workload governor for server-rendered applications"
 license = "Apache-2.0"
+repository = "https://github.com/tanod-sh/tanod"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
