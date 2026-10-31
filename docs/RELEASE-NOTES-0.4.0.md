@@ -242,7 +242,7 @@ Follow the [upgrade guide](UPGRADING-0.4.md). In short:
 ## 14. Security disclosure
 
 Advisories for A–D will be published on the repository's
-[security advisories page](https://github.com/akosidencio/tanod/security/advisories)
+[security advisories page](https://github.com/tanod-sh/tanod/security/advisories)
 once 0.4.0 is available. Report vulnerabilities privately as described in
 [SECURITY.md](../SECURITY.md), not in public issues.
 

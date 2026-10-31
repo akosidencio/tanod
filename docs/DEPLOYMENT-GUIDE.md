@@ -194,7 +194,8 @@ For a Next.js standalone image (the Tanod image is `linux/amd64` only):
 ```dockerfile
 FROM node:22-alpine
 # ... your existing Next.js standalone build ...
-COPY --from=ghcr.io/akosidencio/tanod:0.3.1 /usr/local/bin/tanod /usr/local/bin/tanod
+# 0.4.0 and earlier live at ghcr.io/akosidencio/tanod; later releases at ghcr.io/tanod-sh/tanod.
+COPY --from=ghcr.io/akosidencio/tanod:0.4.0 /usr/local/bin/tanod /usr/local/bin/tanod
 COPY tanod.yaml /etc/tanod/tanod.yaml
 RUN apk add --no-cache tini
 ENTRYPOINT ["/sbin/tini", "--", "tanod"]
